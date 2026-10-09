@@ -1,0 +1,1420 @@
+import ApiError from "../utils/ApiError.js";
+import { pool } from "../config/db.js";
+import { encryptCnic, decryptCnic, hashCnic } from "../utils/personCrypto.js";
+import { recordPersonDocument } from "../utils/personDocuments.js";
+import { assertDocumentValid, VALIDATION_FLAGGED, VALIDATION_PASSED } from "../utils/documentValidate.js";
+import { created, ok } from "../utils/response.js";
+import { assertUuid } from "../utils/publicResponse.js";
+import { parsePagination, paginatedResponse } from "../utils/pagination.js";
+import { createNotificationForOrgUsers, createNotificationForUsers } from "./notification.controller.js";
+import { assertOrganizationActive } from "./admin/organizations.controller.js";
+import { enforceRequestQuota } from "../utils/requestQuota.js";
+import { resolveUnmatchedOrg } from "../utils/unmatchedOrg.js";
+import { logAudit, getActorFromReq } from "../utils/auditLog.js";
+import { generateQrForRequest, withVerifyUrl, withVerifyUrls } from "../utils/qrCertificate.js";
+import { VERIFIED_STATUS_SQL, isVerifiedStatus } from "../utils/verifiedStatuses.js";
+import { runSlaChecks } from "../utils/slaChecks.js";
+import { runAutoMatchChecks, hasMatchMismatchRisk, computeMatchConfidence, autoApprove } from "../utils/autoMatch.js";
+import { buildDocumentCrossCheck } from "../utils/documentConsistency.js";
+import { sendVerificationResultEmailToOrg } from "../utils/mailer.js";
+import { firstFrontendUrl } from "../utils/frontendUrl.js";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { DOCS_DIR } from "../config/uploadPaths.js";
+import { requirePermission } from "../utils/permissions.js";
+
+// Map an upload's mime onto the short format label stored in
+// verification_requests.document_format and shown in the Format column. Kept in
+// step with the upload allow-list in middleware/uploadDocs.js; previously every
+// non-PDF was labelled "jpeg", so a PNG or DOCX request displayed a wrong type.
+function docFormatFromMime(m, originalname = "") {
+  const map = {
+    "application/pdf": "pdf",
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/bmp": "bmp",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "text/plain": "txt",
+    "text/csv": "csv",
+    "application/zip": "zip",
+  };
+  if (map[m]) return map[m];
+  // Browsers and older clients send a generic blob marker for some types. The
+  // allow-list tolerates it for known extensions, so derive the label from the
+  // declared extension rather than degrading every such file to "file".
+  if (m === "application/octet-stream" || !m) {
+    const ext = String(originalname || "").toLowerCase().match(/\.[a-z0-9]+$/);
+    if (ext && map[`application/${ext[0].slice(1)}`]) return ext[0].slice(1);
+  }
+  return "file";
+}
+
+function generateFileHash(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new ApiError(400, "Uploaded document file is missing — please upload the document again");
+  }
+  const buffer = fs.readFileSync(filePath);
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+/**
+ * Resolve the reference document a request should be matched against, for the
+ * TARGET organization only.
+ *
+ * A reference document is private to the organization that uploaded it, so both
+ * lookups below are filtered on organization_id. There is deliberately no
+ * platform-wide fallback: an organization that holds no reference for a person
+ * owes a human decision on that request, and borrowing another organization's
+ * reference would both leak that organization's document and let it approve on
+ * evidence it never had. Requests that end up with no reference are recorded as
+ * 'manual_review' when the org knows the person (a human can confirm quickly)
+ * and 'no_reference_found' when it does not.
+ *
+ * `executor` is the transaction connection on the create path (so it reads its
+ * own uncommitted INSERT) and the pool elsewhere.
+ *
+ * @returns {{matchStatus: string, matchedEmployeeDocumentId: number|null}}
+ */
+async function stageReferenceMatch(executor, orgId, normalizedCnic) {
+  if (!orgId) {
+    return { matchStatus: "no_reference_found", matchedEmployeeDocumentId: null };
+  }
+
+  // ORDER BY, NOT a WHERE filter — this is a PREFERENCE ranking, and it has to
+  // stay one. A current employee's document is preferred as the match
+  // candidate, but an ex-employee's is a perfectly valid fallback: their
+  // reference documents are exactly what the auto-match engine exists to
+  // compare against. Turning this into `AND status = 'current_employee'` would
+  // drop that fallback and silently downgrade every request verified against an
+  // ex-employee to manual review, with no error anywhere.
+  //
+  // 'inactive' (deactivated) sorts last alongside ex-employee deliberately: a
+  // deactivated employee's documents are still on file, but a live colleague's
+  // is the better first choice.
+  const preferCurrent =
+    "(e.status IN ('active','current_employee'))";
+
+  const [refRows] = await executor.query(
+    `SELECT e.uuid AS employee_uuid, ed.id AS doc_id, ed.document_hash
+     FROM employees e
+     JOIN employee_documents ed ON ed.employee_uuid = e.uuid
+     WHERE e.organization_id = ?
+       AND REPLACE(REPLACE(e.cnic, '-', ''), ' ', '') = ?
+     ORDER BY ${preferCurrent} DESC
+     LIMIT 1`,
+    [orgId, normalizedCnic]
+  );
+  if (refRows.length) {
+    return { matchStatus: "not_attempted", matchedEmployeeDocumentId: refRows[0].doc_id };
+  }
+
+  const [empRows] = await executor.query(
+    `SELECT emp.uuid FROM employees emp
+     WHERE emp.organization_id = ?
+       AND REPLACE(REPLACE(emp.cnic, '-', ''), ' ', '') = ?
+     ORDER BY (emp.status IN ('active','current_employee')) DESC
+     LIMIT 1`,
+    [orgId, normalizedCnic]
+  );
+  return {
+    matchStatus: empRows.length ? "manual_review" : "no_reference_found",
+    matchedEmployeeDocumentId: null,
+  };
+}
+
+/**
+ * The document owner's CNIC as the 13 bare digits the employee lookup compares
+ * against, read back from the request's linked person.
+ *
+ * The request row itself stores no CNIC by design (only the encrypted copy on
+ * `persons`), and re-addressing a request has to re-resolve its reference
+ * against the new target org using the SAME identity it was created with.
+ * Returns null — rather than throwing — when there is no linked person or the
+ * payload cannot be decrypted (missing/rotated PERSON_DATA_ENCRYPTION_KEY);
+ * callers treat that as "cannot stage", which resolves to a human decision.
+ */
+async function readOwnerCnicNormalized(linkedPersonId) {
+  if (!linkedPersonId) return null;
+  const [rows] = await pool.query(
+    "SELECT cnic_encrypted FROM persons WHERE id=?",
+    [linkedPersonId]
+  );
+  if (!rows.length || !rows[0].cnic_encrypted) return null;
+  try {
+    return String(decryptCnic(rows[0].cnic_encrypted)).replace(/\D/g, "") || null;
+  } catch (e) {
+    console.warn(`Could not read the document owner's CNIC for person ${linkedPersonId}: ${e.message}`);
+    return null;
+  }
+}
+
+async function resolveOrganizationUuid(uuid, required = false) {
+  if (!uuid) {
+    if (required) throw new ApiError(400, "Organization UUID is required");
+    return null;
+  }
+  assertUuid(uuid, "Organization UUID");
+  const [rows] = await pool.query("SELECT id FROM organizations WHERE uuid=?", [uuid]);
+  if (!rows.length) throw new ApiError(404, "Organization not found");
+  return rows[0].id;
+}
+
+export async function createRequest(req, res) {
+  requirePermission(req.user, "generate_request");
+  const { document_type, issuing_organization_uuid,
+          other_organization_name, submission_remarks,
+          other_organization_email, other_organization_phone, other_organization_website,
+          document_owner_cnic, document_owner_name } = req.body;
+
+  if ("issuing_organization_id" in req.body) {
+    throw new ApiError(400, "issuing_organization_uuid is required; integer IDs are not accepted");
+  }
+  if (!document_type) throw new ApiError(400, "document_type is required");
+  if (!req.file) throw new ApiError(400, "document file is required");
+
+  // NOTE: daily quota is deliberately NOT consumed here. It is consumed inside
+  // the single transaction below, together with the request INSERT, so a
+  // rejected document rolls the counter back instead of burning it.
+  const orgId = await resolveOrganizationUuid(issuing_organization_uuid || null);
+
+  const otherOrgName = other_organization_name ? String(other_organization_name).trim() : null;
+  const remarks = submission_remarks ? String(submission_remarks).trim() : null;
+
+  const documentOwnerName = document_owner_name ? String(document_owner_name).trim() : "";
+  if (!documentOwnerName) {
+    throw new ApiError(400, "document_owner_name is required");
+  }
+  if (documentOwnerName.length > 200) {
+    throw new ApiError(400, "document_owner_name must be 200 characters or fewer");
+  }
+
+  const rawOwnerCnic = document_owner_cnic ? String(document_owner_cnic).trim() : "";
+  if (!rawOwnerCnic) {
+    throw new ApiError(400, "document_owner_cnic is required");
+  }
+  const normalized = rawOwnerCnic.replace(/\D/g, "");
+  if (!/^\d{13}$/.test(normalized)) {
+    throw new ApiError(400, "document_owner_cnic must be a valid CNIC (XXXXX-XXXXXXX-X)");
+  }
+  const documentOwnerCnic = encryptCnic(normalized);
+  const documentOwnerCnicHash = hashCnic(normalized);
+
+  if (!orgId && !otherOrgName) {
+    throw new ApiError(400, "other_organization_name is required when no organization is selected");
+  }
+  if (otherOrgName && otherOrgName.length > 200) {
+    throw new ApiError(400, "other_organization_name must be 200 characters or fewer");
+  }
+  if (remarks && remarks.length > 500) {
+    throw new ApiError(400, "submission_remarks must be 500 characters or fewer");
+  }
+
+  const otherEmail = other_organization_email ? String(other_organization_email).trim() : null;
+  const otherPhone = other_organization_phone ? String(other_organization_phone).trim() : null;
+  const otherWebsite = other_organization_website ? String(other_organization_website).trim() : null;
+
+  if (otherEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(otherEmail)) {
+    throw new ApiError(400, "other_organization_email must be a valid email address");
+  }
+  if (otherWebsite && otherWebsite.length > 500) {
+    throw new ApiError(400, "other_organization_website must be 500 characters or fewer");
+  }
+
+  const docPath = `/uploads/documents/${req.file.filename}`;
+  const fullPath = path.join(DOCS_DIR, req.file.filename);
+  const docFormat = docFormatFromMime(req.file.mimetype, req.file.originalname);
+  const documentHash = generateFileHash(fullPath);
+
+  // Corrupt-file guard: reject definitively corrupt uploads before they reach
+  // the DB. Fails open (warn-only) only when the service is unreachable
+  // (timeout / connection refused); any other service failure rejects with 400.
+  //
+  // Runs BEFORE the transaction opens, not inside it. This call renders the
+  // document and runs OCR, so it can take seconds; running it inside would hold
+  // the organization's FOR UPDATE row locks (taken by enforceRequestQuota) for
+  // that whole window, serializing every concurrent request from the org and
+  // blocking the lifecycle job, which locks the same org rows.
+  //
+  // The ordering requirement is still fully met: validation is a pure external
+  // check that touches no database state, so when it rejects here the quota
+  // counter has not been touched at all. This is the strongest form of the
+  // guarantee -- rollback-inside-a-transaction would merely undo the increment,
+  // whereas this never performs it.
+  //
+  // Throws only for a STRUCTURAL failure (unparseable / truncated /
+  // extension-or-mimetype-spoofed) or a fail-closed service error. A heuristic
+  // quality flag resolves instead, and is stored on the request row below so
+  // the reviewing organization sees a warning rather than losing a valid
+  // submission over a tuning-sensitive threshold.
+  const { status: validationStatus, reason: validationReason } = await assertDocumentValid(fullPath);
+  if (validationStatus === VALIDATION_FLAGGED) {
+    console.warn(
+      `[createRequest] Document flagged by a heuristic check for requester ${req.user.id} (${docPath}): ${validationReason}`
+    );
+  }
+
+  // Resolve unmatched organization if "Other" was selected
+  let unmatchedOrgId = null;
+  if (!orgId && otherOrgName) {
+    unmatchedOrgId = await resolveUnmatchedOrg(otherOrgName, otherEmail, otherPhone, otherWebsite);
+  }
+
+  // Repeat submission of a document this organization has already verified
+  // FOR THE SAME PERSON.
+  //
+  // Keyed on the SHA-256 of the uploaded file, the same issuing org, a prior
+  // 'verified' outcome, AND that prior verification belonging to the same
+  // identity. Identical hash means byte-for-byte the same file the org already
+  // signed off on, so there is nothing left to re-check about the ARTIFACT. A
+  // different scan of the same document has a different hash and falls through
+  // to the normal reference-match flow instead.
+  //
+  // The identity clause is load-bearing, not an extra filter. A document hash
+  // identifies a FILE, never a person: without `p.cnic_hash = ?` this path
+  // granted any person the ability to present a document somebody else had
+  // already had approved and be auto-verified on the spot, with no human review
+  // and no OCR. That is a document-replay / identity-spoofing hole, and because
+  // the row is born 'verified' it also mints a publicly signed QR certificate
+  // for a document the submitter never held. The org's prior approval of a
+  // document is a statement about WHO presented it, so it can only be inherited
+  // by the same identity.
+  //
+  // The join is an INNER join on `persons` via `linked_person_id`, which means a
+  // legacy 'verified' row with no linked person (or with a person that no longer
+  // exists) can never confer credit. That is deliberate and fail-closed: such a
+  // row proves only that the org approved some document once, and carries no
+  // identity to compare against, so the repeat submission must go to a human.
+  //
+  // This previously required `organization_conserned_for_future='yes'` as well,
+  // but that column was only ever written on an auto-verified insert — never on
+  // the ordinary approve paths — so the condition could never become true and
+  // the whole path was dead. Matching on the verified outcome itself is both
+  // simpler and what the behavior was always meant to be.
+  let autoVerify = false;
+  if (orgId) {
+    const [previousVerified] = await pool.query(
+      `SELECT vr.id
+       FROM verification_requests vr
+       JOIN persons p ON p.id = vr.linked_person_id
+       WHERE vr.document_hash=?
+         AND vr.issuing_organization_id=?
+         AND vr.status IN (${VERIFIED_STATUS_SQL})
+         AND p.cnic_hash=?
+       ORDER BY vr.verified_at DESC, vr.id DESC
+       LIMIT 1`,
+      [documentHash, orgId, documentOwnerCnicHash]
+    );
+    autoVerify = previousVerified.length > 0;
+  }
+
+  // ── Single atomic block: quota consumption + request creation ──────────────
+  //
+  // Everything from the quota decrement to the fully-formed request row shares
+  // one transaction on one connection. If ANY step here throws -- the quota
+  // being exhausted, the INSERT failing, a constraint violation on the person
+  // link -- the rollback unwinds the daily_request_usage increment too. The
+  // counter is therefore permanently decremented only when the request row is
+  // genuinely committed.
+  //
+  // Note the SELECT at the end MUST run on this connection, not on `pool`: it
+  // has to see the uncommitted INSERT above (read-your-writes), which a second
+  // connection's snapshot would not.
+  const connection = await pool.getConnection();
+  let result;
+  let rows;
+  let matchStatus;
+  let matchedEmployeeDocumentId = null;
+  let linkedPersonId = null;
+  let personExists = false;
+  try {
+    await connection.beginTransaction();
+
+    if (req.user.organization) {
+      await enforceRequestQuota(req.user.organization, connection);
+    }
+
+    [result] = await connection.query(
+      `INSERT INTO verification_requests
+       (user_id, document_type, issuing_organization_id, unmatched_org_id, status, submitted_at,
+        document_path, document_format, document_hash,
+        document_validation_status, document_validation_reason,
+        organization_conserned_for_future, submission_remarks,
+        verification_method, verified_at, document_owner_name, created_at)
+       VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        req.user.id,
+        document_type,
+        orgId,
+        unmatchedOrgId,
+        // A repeat of a file this organization has already verified is closed on
+        // the spot, with no reviewer involved — so it is recorded as
+        // 'auto_verified' rather than a plain 'verified'. The submitter can then
+        // see that the system made this decision, which a plain 'verified'
+        // (always meaning "a person approved it") would have misrepresented.
+        autoVerify ? "auto_verified" : "under_review",
+        docPath,
+        docFormat,
+        documentHash,
+        // Which tier of the automated document check spoke, and why. 'flagged'
+        // means a heuristic quality signal fired and the request was allowed
+        // through anyway; the reviewing org is shown a warning from these.
+        validationStatus,
+        validationReason,
+        // No longer the auto-verify gate (see the lookup above). It now simply
+        // records that this particular row was itself created by a repeat
+        // auto-verification rather than by a fresh submission.
+        autoVerify ? "yes" : "no",
+        remarks,
+        autoVerify ? "auto" : "manual",
+        autoVerify ? new Date() : null,
+        documentOwnerName
+      ]
+    );
+
+    // Reference-match setup: after the request is saved, locate a roster (or, as a
+    // fallback, learned_reference) employee in the TARGET org whose CNIC matches
+    // the document owner, and stage the document match. The lookup is scoped to
+    // that one org — see stageReferenceMatch. The actual document match
+    // (auto-approve/manual-review decision) happens lazily, not here.
+    ({
+      matchStatus,
+      matchedEmployeeDocumentId,
+    } = await stageReferenceMatch(connection, orgId, normalized));
+
+    await connection.query(
+      `UPDATE verification_requests
+       SET match_status=?, matched_employee_document_id=?
+       WHERE id=?`,
+      [matchStatus, matchedEmployeeDocumentId, result.insertId]
+    );
+
+    // Link the request to a persons row when a document owner CNIC was given.
+    // Case A: no matching person yet -> create one (full_name taken from the
+    // unverified claim; never trusted over an existing record).
+    // Case B: person already exists -> reuse it, keep the original name.
+    if (documentOwnerCnicHash) {
+      const [personRows] = await connection.query(
+        `SELECT id FROM persons WHERE cnic_hash=? LIMIT 1`,
+        [documentOwnerCnicHash]
+      );
+
+      if (personRows.length) {
+        linkedPersonId = personRows[0].id;
+        personExists = true;
+      } else {
+        const [personInsert] = await connection.query(
+          `INSERT INTO persons (cnic_encrypted, cnic_hash, full_name, is_nadra_verified, created_at)
+           VALUES (?, ?, ?, 'no', NOW())`,
+          [documentOwnerCnic, documentOwnerCnicHash, documentOwnerName]
+        );
+        linkedPersonId = personInsert.insertId;
+      }
+
+      await connection.query(
+        `UPDATE verification_requests SET linked_person_id=? WHERE id=?`,
+        [linkedPersonId, result.insertId]
+      );
+    }
+
+    [rows] = await connection.query(
+      `SELECT vr.*, o.uuid AS issuing_organization_uuid, o.name AS issuing_org_name,
+              uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name,
+              requester.uuid AS requester_uuid,
+              requester.organization AS requester_organization
+       FROM verification_requests vr
+       LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+       LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+       JOIN users requester ON requester.id = vr.user_id
+       WHERE vr.id=?`,
+      [result.insertId]
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+  // ── end atomic block ───────────────────────────────────────────────────────
+
+  // Everything below is post-commit enrichment: QR signing, inline auto-match
+  // and notifications. These either make no database claims that must be atomic
+  // with creation, or already carry their own failure tolerance, so they stay
+  // outside the transaction and cannot cause a committed request to be lost.
+
+  // Person identity context for the submitter side. A CNIC hash that already
+  // existed before this submission means a "known" identity; any verified
+  // person_documents row (from any organization) means the person has been
+  // verified before. Both are informational context only and never drive the
+  // verification status or auto-verify eligibility.
+  rows[0].person_known = Boolean(personExists);
+  rows[0].person_has_prior_verification = false;
+  rows[0].person_prior_verified_at = null;
+
+  if (linkedPersonId) {
+    const [priorPersonDocs] = await pool.query(
+      `SELECT verified_at
+       FROM person_documents
+       WHERE person_id=? AND status='verified'
+       ORDER BY verified_at DESC
+       LIMIT 1`,
+      [linkedPersonId]
+    );
+    if (priorPersonDocs.length) {
+      rows[0].person_has_prior_verification = true;
+      rows[0].person_prior_verified_at = priorPersonDocs[0].verified_at;
+    }
+  }
+
+  // Ledger completeness: a creation-time auto-verification is a successful
+  // verification and must leave a person_documents row exactly like every
+  // portal / auto-match / admin approval does. The anchoring issuing org is
+  // the verifying organization.
+  //
+  // The form-vs-document cross-check runs here too, exactly as it does on the
+  // manual approve path and inside autoApprove(). It used to be skipped on this
+  // one path (`null` was passed through), which left every creation-time
+  // auto-verification with match_status stuck on its 'not_checked' DEFAULT — so
+  // the identity ledger recorded a "verified" outcome while holding no evidence
+  // of which document or person it had actually verified. That is exactly the
+  // row a reviewer would consult to spot a replayed document, so leaving it
+  // empty was the wrong default. buildDocumentCrossCheck() never throws and
+  // falls back to 'not_checked' with a logged reason on any OCR/service failure,
+  // so this cannot fail a request that has already been created.
+  //
+  // Cost note: this adds one OCR pass to the auto-verify path. That is the same
+  // work the other two approval paths already do, and the identity is now
+  // bound by the cnic_hash clause above, so the marginal latency is bought for
+  // a complete audit trail rather than for the decision itself.
+  if (autoVerify && linkedPersonId) {
+    const creationCrossCheck = await buildDocumentCrossCheck(rows[0]);
+    await recordPersonDocument(rows[0], orgId, creationCrossCheck);
+  }
+
+  // Auto-verified requests also get a public QR certificate. Capture the
+  // generated token/signature so the response exposes the QR link to the
+  // submitter instead of leaving them null in the payload.
+  if (autoVerify) {
+    const qr = await generateQrForRequest(rows[0]);
+    if (qr && qr.qr_token) {
+      rows[0].qr_token = qr.qr_token;
+      rows[0].qr_signature = qr.qr_signature;
+    }
+  }
+
+  // Inline reference match: when a reference employee document was staged for
+  // the target org, run the actual document match right now at submission. A
+  // 100% match auto-verifies immediately — the request never lands in the
+  // target org's inbox — and the submitter is shown an "Auto Verified" modal.
+  let autoMatched = false;
+  if (orgId && !autoVerify && matchStatus === "not_attempted" && matchedEmployeeDocumentId) {
+    let confidence = null;
+    try {
+      confidence = await computeMatchConfidence(rows[0]);
+    } catch (e) {
+      console.error(`Inline auto-match failed for request ${rows[0].uuid}:`, e.message);
+    }
+    if (confidence === 100) {
+      const personContext = {
+        person_known: rows[0].person_known,
+        person_has_prior_verification: rows[0].person_has_prior_verification,
+        person_prior_verified_at: rows[0].person_prior_verified_at,
+      };
+      await autoApprove(rows[0], confidence);
+      const [freshRows] = await pool.query(
+        `SELECT vr.*, o.uuid AS issuing_organization_uuid, o.name AS issuing_org_name,
+                uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name
+         FROM verification_requests vr
+         LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+         LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+         WHERE vr.id=?`,
+        [result.insertId]
+      );
+      if (freshRows.length) {
+        rows[0] = freshRows[0];
+        Object.assign(rows[0], personContext);
+      }
+      rows[0].auto_verified = true;
+      autoMatched = true;
+    }
+  }
+
+  // A repeat submission of an already-verified file is also auto-verified from
+  // the submitter's point of view: it is born 'verified' and never reaches the
+  // target org's inbox. Flag it so the client shows the same "Auto Verified"
+  // confirmation instead of a generic "request submitted" toast.
+  if (autoVerify) {
+    rows[0].auto_verified = true;
+  }
+
+  if (orgId && !autoVerify && !autoMatched) {
+    const senderName = req.user.full_name || "Someone";
+    createNotificationForOrgUsers({
+      orgId,
+      type: "verification_request",
+      title: "New verification request",
+      message: `${senderName} sent a "${document_type}" document for your verification.`,
+      link: "/inbox",
+      referenceId: rows[0].uuid,
+      excludeUserId: req.user.id,
+      requirePermission: "approve_request",
+    }).catch((e) => console.error("Failed to create notification:", e.message));
+  }
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "request.create",
+    entityType: "verification_request",
+    entityId: rows[0].uuid,
+    details: { document_type, status: rows[0].status },
+    req,
+  });
+
+  // withVerifyUrl runs LAST, after every branch that can replace rows[0]: the
+  // exact-hash path assigns qr_token above, and the inline auto-match path
+  // swaps in a freshly-read row (which has no token on it). Attaching earlier
+  // would be silently dropped by that reassignment.
+  return created(res, { request: withVerifyUrl(rows[0]) }, "Request created");
+}
+
+export async function mySentRequests(req, res) {
+  const { page, limit, offset } = parsePagination(req.query);
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
+  const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : "";
+
+  // An org_admin is accountable for everything their organization submitted, not
+  // just their own uploads. Scoping to user_id made a sub-admin's submissions
+  // invisible to them with no way to discover they existed — the request would
+  // simply be missing from the org's own history.
+  //
+  // The requester is identified via the joined `users` row (requester.organization),
+  // NOT via the issuing organization: "who sent it" and "who it was sent to" are
+  // different questions, and only the former decides what the sender may see.
+  //
+  // Sub-admins keep seeing only their own submissions. That is the narrower,
+  // already-shipped behaviour, and widening it is a permission-model decision
+  // rather than a bug fix, so it is deliberately not changed here.
+  const seesWholeOrg = req.user.org_role === "org_admin" && Boolean(req.user.organization);
+
+  let whereClause;
+  let params;
+  if (seesWholeOrg) {
+    whereClause = "WHERE requester.organization = ?";
+    params = [req.user.organization];
+  } else {
+    whereClause = "WHERE vr.user_id = ?";
+    params = [req.user.id];
+  }
+
+  if (search) {
+    whereClause += ` AND (vr.document_type LIKE ? OR o.name LIKE ? OR vr.document_format LIKE ? OR vr.status LIKE ?)`;
+    const like = `%${search}%`;
+    params.push(like, like, like, like);
+  }
+  if (dateFrom) {
+    whereClause += ` AND vr.created_at >= ?`;
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    whereClause += ` AND vr.created_at <= ?`;
+    params.push(`${dateTo} 23:59:59`);
+  }
+
+  // The join below MUST match the row query's join exactly. Both sides run the
+  // same whereClause, so a join present in one and missing from the other would
+  // make COUNT and the page disagree and produce phantom/empty pages.
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total
+       FROM verification_requests vr
+       JOIN users requester ON requester.id = vr.user_id
+       LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+     ${whereClause}`,
+    params
+  );
+  const [rows] = await pool.query(
+    `SELECT vr.*, o.uuid AS issuing_organization_uuid, o.name AS issuing_org_name,
+            o.logo AS issuing_org_logo,
+            uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name,
+            requester.full_name AS requester_name,
+            requester_org.uuid AS requester_organization_uuid,
+            requester_org.name AS requester_organization,
+            requester_org.logo AS requester_org_logo,
+            admin_locker.full_name AS locked_by_name
+     FROM verification_requests vr
+     JOIN users requester ON requester.id = vr.user_id
+     LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+     LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+     LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+     LEFT JOIN admin_profiles admin_locker ON admin_locker.id = vr.locked_by
+     ${whereClause}
+     ORDER BY vr.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  return ok(res, paginatedResponse(withVerifyUrls(rows), total, page, limit), "Sent requests");
+}
+
+export async function deleteMySentRequest(req, res) {
+  const { uuid } = req.params;
+  assertUuid(uuid, "Request UUID");
+
+  // TODO: re-enable when org admins are allowed to delete requests.
+  // if (req.user.org_role === "org_admin" || req.user.org_role === "sub_admin") {
+  //   throw new ApiError(403, "Organization admins cannot delete verification requests.");
+  // }
+
+  const [allRows] = await pool.query(
+    `SELECT id, status, user_id, locked_by
+     FROM verification_requests
+     WHERE uuid=?`,
+    [uuid]
+  );
+
+  if (!allRows.length) throw new ApiError(404, "Request not found");
+  if (allRows[0].user_id !== req.user.id) throw new ApiError(403, "Forbidden");
+
+  if (allRows[0].status === "verified") {
+    throw new ApiError(403, "Verified requests cannot be deleted — they are a permanent record.");
+  }
+  if (allRows[0].status === "unverified") {
+    throw new ApiError(409, "Finalized request cannot be deleted");
+  }
+  if (allRows[0].locked_by) {
+    throw new ApiError(403, "This request is locked and cannot be deleted.");
+  }
+
+  await pool.query("DELETE FROM verification_requests WHERE uuid=?", [uuid]);
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "request.delete",
+    entityType: "verification_request",
+    entityId: uuid,
+    details: { status: allRows[0].status },
+    req,
+  });
+
+  return ok(res, {}, "Sent request deleted");
+}
+
+export async function updateMySentRequest(req, res) {
+  const { uuid } = req.params;
+  assertUuid(uuid, "Request UUID");
+
+  const [allRows] = await pool.query(
+    `SELECT id, status, user_id, document_path, document_format, document_hash, document_owner_name,
+            issuing_organization_id, unmatched_org_id, linked_person_id, match_status,
+            matched_employee_document_id
+     FROM verification_requests WHERE uuid=?`,
+    [uuid]
+  );
+
+  if (!allRows.length) throw new ApiError(404, "Request not found");
+  if (allRows[0].user_id !== req.user.id) throw new ApiError(403, "Forbidden");
+  if (allRows[0].status !== "under_review") {
+    throw new ApiError(409, "Only under_review requests can be edited");
+  }
+
+  const { document_type, issuing_organization_uuid,
+          other_organization_name, submission_remarks,
+          other_organization_email, other_organization_phone, other_organization_website,
+          document_owner_name } = req.body;
+
+  if (!document_type) throw new ApiError(400, "document_type is required");
+
+  const orgId = await resolveOrganizationUuid(issuing_organization_uuid || null);
+  const otherOrgName = other_organization_name ? String(other_organization_name).trim() : null;
+  const remarks = submission_remarks ? String(submission_remarks).trim() : null;
+
+  // Owner-field enforcement on the edit path, backward compatible: validate
+  // ONLY what the caller provides. Old records whose fields were null before
+  // this change stay editable — an omitted field (or an explicitly empty one
+  // on an already-null record) is left untouched, never rejected.
+  let documentOwnerName = allRows[0].document_owner_name ?? null;
+  if ("document_owner_name" in req.body) {
+    const submitted = String(req.body.document_owner_name ?? "").trim();
+    if (submitted) {
+      if (submitted.length > 200) {
+        throw new ApiError(400, "document_owner_name must be 200 characters or fewer");
+      }
+      documentOwnerName = submitted;
+    } else if (documentOwnerName) {
+      // The owner name is required once set — it cannot be cleared to empty.
+      throw new ApiError(400, "document_owner_name is required");
+    }
+    // submitted empty + previously null -> keep null, no error
+  }
+
+  if ("document_owner_cnic" in req.body) {
+    const submittedCnic = String(req.body.document_owner_cnic ?? "").trim();
+    if (submittedCnic) {
+      const normalized = submittedCnic.replace(/\D/g, "");
+      if (!/^\d{13}$/.test(normalized)) {
+        throw new ApiError(400, "document_owner_cnic must be a valid CNIC (XXXXX-XXXXXXX-X)");
+      }
+    }
+    // empty submitted cnic -> ignored (validation only; the request row has no
+    // cnic column — a person link, if any, is managed at the create/verify side)
+  }
+
+  if (!orgId && !otherOrgName) {
+    throw new ApiError(400, "other_organization_name is required when no organization is selected");
+  }
+  if (otherOrgName && otherOrgName.length > 200) {
+    throw new ApiError(400, "other_organization_name must be 200 characters or fewer");
+  }
+  if (remarks && remarks.length > 500) {
+    throw new ApiError(400, "submission_remarks must be 500 characters or fewer");
+  }
+
+  const otherEmail = other_organization_email ? String(other_organization_email).trim() : null;
+  const otherPhone = other_organization_phone ? String(other_organization_phone).trim() : null;
+  const otherWebsite = other_organization_website ? String(other_organization_website).trim() : null;
+
+  if (otherEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(otherEmail)) {
+    throw new ApiError(400, "other_organization_email must be a valid email address");
+  }
+  if (otherWebsite && otherWebsite.length > 500) {
+    throw new ApiError(400, "other_organization_website must be 500 characters or fewer");
+  }
+
+  let docPath = allRows[0].document_path;
+  let docFormat = allRows[0].document_format;
+  let documentHash = allRows[0].document_hash;
+
+  // When no new file is uploaded the stored verdict still describes the
+  // document on disk, so it is carried over untouched.
+  let validationStatus = allRows[0].document_validation_status ?? VALIDATION_PASSED;
+  let validationReason = allRows[0].document_validation_reason ?? null;
+
+  if (req.file) {
+    docPath = `/uploads/documents/${req.file.filename}`;
+    docFormat = docFormatFromMime(req.file.mimetype, req.file.originalname);
+    const fullPath = path.join(DOCS_DIR, req.file.filename);
+    documentHash = generateFileHash(fullPath);
+    // Re-upload validation guard. Structural failures throw (fails closed);
+    // only a service timeout / connection-refused fails open.
+    //
+    // A fresh verdict REPLACES the stored one: the reviewer will be looking at
+    // the newly uploaded file, so keeping the previous file's "passed" would be
+    // describing a document that is no longer there.
+    const verdict = await assertDocumentValid(fullPath);
+    validationStatus = verdict.status;
+    validationReason = verdict.reason;
+  }
+
+  // Resolve unmatched organization if "Other" was selected
+  let unmatchedOrgId = null;
+  if (!orgId && otherOrgName) {
+    unmatchedOrgId = await resolveUnmatchedOrg(otherOrgName, otherEmail, otherPhone, otherWebsite);
+  }
+
+  // Re-addressing a request invalidates whatever reference was staged for it.
+  //
+  // The target organization is what decides WHICH reference pool a request may
+  // be matched against, so a staged matched_employee_document_id belongs to the
+  // PREVIOUS target's employee files. Keeping it would let the new target
+  // auto-approve against another organization's reference — both a cross-tenant
+  // leak and a decision made on evidence the new target never held. The
+  // staging is therefore recomputed from scratch, scoped to the new target.
+  //
+  // A document re-upload alone does NOT invalidate the staging: staging is
+  // resolved from the owner's CNIC, not from the file, so it stays correct.
+  const targetChanged = (allRows[0].issuing_organization_id ?? null) !== (orgId ?? null);
+  let matchStatus = allRows[0].match_status ?? "not_attempted";
+  let matchedEmployeeDocumentId = allRows[0].matched_employee_document_id ?? null;
+
+  if (targetChanged) {
+    const normalizedOwnerCnic = await readOwnerCnicNormalized(allRows[0].linked_person_id);
+    if (orgId && normalizedOwnerCnic) {
+      ({ matchStatus, matchedEmployeeDocumentId } = await stageReferenceMatch(
+        pool,
+        orgId,
+        normalizedOwnerCnic
+      ));
+    } else {
+      // No target org, or the owner's CNIC can no longer be read: there is
+      // nothing to stage against, which is honestly 'no_reference_found'.
+      matchStatus = "no_reference_found";
+      matchedEmployeeDocumentId = null;
+    }
+  }
+
+  await pool.query(
+    `UPDATE verification_requests
+     SET document_type=?, issuing_organization_id=?, unmatched_org_id=?,
+         submission_remarks=?, document_owner_name=?,
+         document_path=?, document_format=?, document_hash=?,
+         document_validation_status=?, document_validation_reason=?,
+         match_status=?, matched_employee_document_id=?
+     WHERE uuid=?`,
+    [document_type, orgId, unmatchedOrgId, remarks, documentOwnerName,
+      docPath, docFormat, documentHash, validationStatus, validationReason,
+      matchStatus, matchedEmployeeDocumentId, uuid]
+  );
+
+  const [rows] = await pool.query(
+    `SELECT vr.*, o.uuid AS issuing_organization_uuid, o.name AS issuing_org_name,
+            uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name
+     FROM verification_requests vr
+     LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+     LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+     WHERE vr.uuid=?`,
+    [uuid]
+  );
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "request.update",
+    entityType: "verification_request",
+    entityId: uuid,
+    req,
+  });
+
+  return ok(res, { request: withVerifyUrl(rows[0]) }, "Request updated");
+}
+
+export async function myInboxRequests(req, res) {
+  requirePermission(req.user, "approve_request");
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+
+  // Lazy SLA check on read (reminder + flag overdue requests)
+  runSlaChecks().catch(() => {});
+
+  // Lazy reference-match check on read (same fire-and-forget pattern)
+  runAutoMatchChecks({ orgId: req.user.organization }).catch(() => {});
+
+  const { page, limit, offset } = parsePagination(req.query);
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
+  const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : "";
+
+  // The inbox is the organization's ACTIONABLE queue. An automatic outcome has
+  // already been decided by the engine, so listing it here meant the queue
+  // carried rows nobody could act on, mixed in with the ones that needed a
+  // human — and the automatic ones looked identical to manual ones, so a
+  // verifier could spend time "reviewing" a decision the system had made.
+  //
+  // Those outcomes are not lost: myAutoVerifiedRequests serves them as their own
+  // read-only ledger (now selected by the same 'auto_verified' status).
+  //
+  // Filtered by STATUS, not by verification_method. The method list was the
+  // pre-migration workaround for automatic outcomes having no status of their
+  // own; keeping it would mean any future automatic path that set some other
+  // method value silently started appearing in a queue of work nobody can
+  // complete. The status is the one thing every automatic path sets.
+  let whereClause = "WHERE vr.issuing_organization_id = ? AND vr.status <> 'auto_verified'";
+  const params = [req.user.organization];
+
+  if (search) {
+    whereClause += ` AND (requester.full_name LIKE ? OR requester.email LIKE ? OR vr.document_type LIKE ? OR vr.status LIKE ? OR requester_org.name LIKE ?)`;
+    const like = `%${search}%`;
+    params.push(like, like, like, like, like);
+  }
+  if (dateFrom) {
+    whereClause += ` AND vr.created_at >= ?`;
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    whereClause += ` AND vr.created_at <= ?`;
+    params.push(`${dateTo} 23:59:59`);
+  }
+
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM verification_requests vr
+     JOIN users requester ON requester.id = vr.user_id
+     LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+     ${whereClause}`,
+    params
+  );
+  const [rows] = await pool.query(
+    `SELECT vr.*,
+            requester.uuid AS requester_uuid,
+            requester.full_name AS requester_name,
+            requester.email AS requester_email,
+            requester_org.uuid AS requester_organization_uuid,
+            requester_org.name AS requester_organization,
+            requester_org.logo AS requester_org_logo,
+            issuing_org.uuid AS issuing_organization_uuid,
+            issuing_org.name AS issuing_org_name,
+            issuing_org.logo AS issuing_org_logo,
+            uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name,
+            verifier.uuid AS verified_by_uuid,
+            verifier.full_name AS verified_by_name,
+            verifier.email AS verified_by_email,
+            med.uuid AS matched_document_uuid,
+            med.file_name AS matched_document_name,
+            med.file_path AS matched_document_path,
+            med.document_type AS matched_document_type,
+            memp.full_name AS matched_employee_name,
+            (SELECT MAX(pd.verified_at)
+               FROM person_documents pd
+              WHERE pd.person_id = vr.linked_person_id
+                AND pd.status = 'verified'
+                AND (pd.verified_by_verification_request_id IS NULL
+                     OR pd.verified_by_verification_request_id <> vr.id)
+            ) AS person_prior_verified_at
+     FROM verification_requests vr
+     JOIN users requester ON requester.id = vr.user_id
+     LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+     LEFT JOIN organizations issuing_org ON issuing_org.id = vr.issuing_organization_id
+     LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+     LEFT JOIN users verifier ON verifier.id = vr.verified_by
+     -- The matched reference is exposed only when it belongs to the request's
+     -- OWN target organization. matched_employee_document_id is a plain int
+     -- with no cross-table guarantee, so without this predicate a stale pointer
+     -- would render another organization's reference file name and employee
+     -- name in this organization's inbox.
+     LEFT JOIN employee_documents med ON med.id = vr.matched_employee_document_id
+          AND med.employee_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id = vr.issuing_organization_id)
+     LEFT JOIN employees memp ON memp.uuid = med.employee_uuid
+     ${whereClause}
+     ORDER BY vr.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  const enriched = withVerifyUrls(rows.map(r => ({
+    ...r,
+    person_known: Boolean(r.linked_person_id),
+    person_has_prior_verification: r.person_prior_verified_at != null,
+    match_mismatch_risk: hasMatchMismatchRisk(r),
+  })));
+  return ok(res, paginatedResponse(enriched, total, page, limit), "Inbox requests");
+}
+
+export async function getMyInboxRequestDetail(req, res) {
+  requirePermission(req.user, "approve_request");
+  assertUuid(req.params.uuid, "Request UUID");
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+
+  const [rows] = await pool.query(
+    `SELECT vr.*,
+            requester.uuid AS requester_uuid,
+            requester.full_name AS requester_name,
+            requester.email AS requester_email,
+            requester_org.uuid AS requester_organization_uuid,
+            requester_org.name AS requester_organization,
+            requester_org.logo AS requester_org_logo,
+            issuing_org.uuid AS issuing_organization_uuid,
+            issuing_org.name AS issuing_org_name,
+            issuing_org.logo AS issuing_org_logo,
+            uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name,
+            verifier.uuid AS verified_by_uuid,
+            verifier.full_name AS verified_by_name,
+            verifier.email AS verified_by_email,
+            med.uuid AS matched_document_uuid,
+            med.file_name AS matched_document_name,
+            med.file_path AS matched_document_path,
+            med.document_type AS matched_document_type,
+            memp.full_name AS matched_employee_name
+     FROM verification_requests vr
+     JOIN users requester ON requester.id = vr.user_id
+     LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+     LEFT JOIN organizations issuing_org ON issuing_org.id = vr.issuing_organization_id
+     LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+     LEFT JOIN users verifier ON verifier.id = vr.verified_by
+     LEFT JOIN employee_documents med ON med.id = vr.matched_employee_document_id
+          AND med.employee_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id = vr.issuing_organization_id)
+     LEFT JOIN employees memp ON memp.uuid = med.employee_uuid
+     WHERE vr.uuid=?`,
+    [req.params.uuid]
+  );
+
+  if (!rows.length) throw new ApiError(404, "Request not found");
+  const vr = rows[0];
+  if (vr.issuing_organization_id !== req.user.organization) {
+    throw new ApiError(403, "You are not allowed to view this request");
+  }
+
+  // Lazy reference-match check on read (fire-and-forget; results appear on next fetch).
+  // Scoped to the caller's own organization as well as the request: the sweep must
+  // never be able to act on this organization's behalf on a reference that belongs
+  // to another one.
+  runAutoMatchChecks({ requestId: vr.id, orgId: req.user.organization }).catch(() => {});
+
+  const detail = { ...vr, has_prior_verification: false, prior_verified_at: null };
+
+  // Prior-verification hint: if the request was linked to a person at creation
+  // time, check whether this exact document was already verified for that
+  // person. Deliberately generic — the verifying organization is not exposed.
+  if (vr.linked_person_id && vr.document_hash) {
+    const [priorRows] = await pool.query(
+      `SELECT verified_at
+       FROM person_documents
+       WHERE person_id=? AND document_hash=? AND status='verified'
+       ORDER BY verified_at DESC
+       LIMIT 1`,
+      [vr.linked_person_id, vr.document_hash]
+    );
+    if (priorRows.length) {
+      detail.has_prior_verification = true;
+      detail.prior_verified_at = priorRows[0].verified_at;
+    }
+  }
+
+  // Person-level prior-verification context: has this person (by CNIC) been
+  // verified for ANY document before, at any organization? The current
+  // request's own ledger row is excluded so this reads as a true prior-history
+  // signal. Informational context only — never an approval signal.
+  detail.person_known = Boolean(vr.linked_person_id);
+  detail.person_has_prior_verification = false;
+  detail.person_prior_verified_at = null;
+
+  if (vr.linked_person_id) {
+    const [personPriorRows] = await pool.query(
+      `SELECT verified_at
+       FROM person_documents
+       WHERE person_id=? AND status='verified'
+         AND (verified_by_verification_request_id IS NULL
+              OR verified_by_verification_request_id <> ?)
+       ORDER BY verified_at DESC
+       LIMIT 1`,
+      [vr.linked_person_id, vr.id]
+    );
+    if (personPriorRows.length) {
+      detail.person_has_prior_verification = true;
+      detail.person_prior_verified_at = personPriorRows[0].verified_at;
+    }
+  }
+
+  detail.match_mismatch_risk = hasMatchMismatchRisk(vr);
+
+  return ok(res, { request: withVerifyUrl(detail) }, "Request detail");
+}
+
+export async function myInboxCount(req, res) {
+  requirePermission(req.user, "approve_request");
+  if (!req.user.organization) return ok(res, { count: 0 }, "Inbox count");
+
+  // Lazy SLA check on read
+  runSlaChecks().catch(() => {});
+
+  const [[{ count }]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM verification_requests
+     WHERE issuing_organization_id = ? AND status = 'under_review'`,
+    [req.user.organization]
+  );
+
+  return ok(res, { count }, "Inbox count");
+}
+
+/**
+ * Auto-verified requests for the caller's own organization.
+ *
+ * These are the requests this organization auto-verified itself: the reference
+ * match scored 100% against a stored employee document, so the request was
+ * approved at submission time and never appeared in the inbox. This is the
+ * read-only ledger of those outcomes.
+ *
+ * doc_verification_count is a cross-organization total: how many times this
+ * same person's document of this type has been verified anywhere on the
+ * platform (2 by one company + 3 by another = 5).
+ *
+ * Results are grouped by (person, document type) so a document verified ten
+ * times occupies a single row showing "10", rather than ten near-identical rows.
+ */
+export async function myAutoVerifiedRequests(req, res) {
+  requirePermission(req.user, "approve_request");
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+
+  const { page, limit, offset } = parsePagination(req.query);
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
+  const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : "";
+
+  // This ledger is now selected purely by status. It used to mean "verified AND
+  // one of the two automatic methods", which was the pre-migration workaround
+  // for automatic outcomes having no status of their own; the backfill in
+  // 20260930_add_auto_verified_status.sql moved every such row onto
+  // 'auto_verified', so the status alone identifies them. Keeping the old
+  // method filter as well would now be redundant and would hide a future method
+  // value that produced the same status.
+  let whereClause = "WHERE vr2.issuing_organization_id = ? AND vr2.status = 'auto_verified'";
+  const params = [req.user.organization];
+
+  if (search) {
+    whereClause += ` AND (vr2.document_type LIKE ? OR vr2.document_owner_name LIKE ? OR requester.full_name LIKE ? OR requester_org.name LIKE ?)`;
+    const like = `%${search}%`;
+    params.push(like, like, like, like);
+  }
+  if (dateFrom) {
+    whereClause += ` AND vr2.verified_at >= ?`;
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    whereClause += ` AND vr2.verified_at <= ?`;
+    params.push(`${dateTo} 23:59:59`);
+  }
+
+  // One row per (person, document type): repeated verifications of the same
+  // document collapse into a single line whose doc_verification_count reports
+  // the total. `latest_id` is the newest request in the group and supplies all
+  // the row-level detail (requester, owner, QR, timestamps).
+  const groupedSql = `
+    SELECT MAX(vr2.id) AS latest_id, vr2.linked_person_id, vr2.document_type
+    FROM verification_requests vr2
+    JOIN users requester ON requester.id = vr2.user_id
+    LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+    ${whereClause}
+    GROUP BY vr2.linked_person_id, vr2.document_type`;
+
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM (${groupedSql}) grouped`,
+    params
+  );
+
+  const [rows] = await pool.query(
+    `SELECT vr.*,
+            requester.uuid AS requester_uuid,
+            requester.full_name AS requester_name,
+            requester.email AS requester_email,
+            requester_org.uuid AS requester_organization_uuid,
+            requester_org.name AS requester_organization,
+            requester_org.logo AS requester_org_logo,
+            issuing_org.uuid AS issuing_organization_uuid,
+            issuing_org.name AS issuing_org_name,
+            issuing_org.logo AS issuing_org_logo,
+            (SELECT COUNT(*) FROM person_documents pd
+              WHERE pd.person_id = vr.linked_person_id
+                AND pd.document_type = vr.document_type
+                AND pd.status = 'verified'
+            ) AS doc_verification_count
+     FROM verification_requests vr
+     JOIN (${groupedSql}) g ON g.latest_id = vr.id
+     JOIN users requester ON requester.id = vr.user_id
+     LEFT JOIN organizations requester_org ON requester_org.id = requester.organization
+     LEFT JOIN organizations issuing_org ON issuing_org.id = vr.issuing_organization_id
+     ORDER BY vr.verified_at DESC, vr.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  return ok(res, paginatedResponse(withVerifyUrls(rows), total, page, limit), "Auto-verified requests");
+}
+
+/**
+ * Full verification history for one auto-verified request's document.
+ *
+ * Reads the person_documents ledger for the same person + document type across
+ * EVERY organization, newest first, so the caller can see which companies have
+ * verified this document and how many times. Read-only: no delete, no mutation.
+ */
+export async function getAutoVerifiedRequestHistory(req, res) {
+  requirePermission(req.user, "approve_request");
+  const { uuid } = req.params;
+  assertUuid(uuid, "Request UUID");
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+
+  const [rows] = await pool.query(
+    `SELECT vr.id, vr.uuid, vr.issuing_organization_id, vr.linked_person_id,
+            vr.document_type, vr.document_owner_name, p.uuid AS person_uuid
+     FROM verification_requests vr
+     LEFT JOIN persons p ON p.id = vr.linked_person_id
+     WHERE vr.uuid = ?`,
+    [uuid]
+  );
+  if (!rows.length) throw new ApiError(404, "Request not found");
+
+  const vr = rows[0];
+  if (vr.issuing_organization_id !== req.user.organization) {
+    throw new ApiError(403, "You are not allowed to view this request");
+  }
+  if (!vr.linked_person_id) {
+    return ok(res, { history: [], total_verifications: 0 }, "Verification history");
+  }
+
+  const [history] = await pool.query(
+    `SELECT pd.id, pd.uuid, pd.document_type, pd.document_hash, pd.verified_at, pd.status,
+            pd.match_status AS cross_check_status,
+            org.uuid AS verified_by_organization_uuid,
+            org.name AS verified_by_organization,
+            org.logo AS verified_by_organization_logo,
+            vr.uuid AS verification_request_uuid,
+            vr.verification_method
+     FROM person_documents pd
+     LEFT JOIN organizations org ON org.id = pd.verified_by_organization_id
+     LEFT JOIN verification_requests vr ON vr.id = pd.verified_by_verification_request_id
+     WHERE pd.person_id = ? AND pd.document_type <=> ? AND pd.status = 'verified'
+     ORDER BY pd.verified_at DESC, pd.id DESC`,
+    [vr.linked_person_id, vr.document_type]
+  );
+
+  return ok(
+    res,
+    {
+      person_uuid: vr.person_uuid,
+      document_type: vr.document_type,
+      document_owner_name: vr.document_owner_name,
+      total_verifications: history.length,
+      history,
+    },
+    "Verification history"
+  );
+}
+
+export async function verifyRequest(req, res) {
+  const { uuid } = req.params;
+  const { status, verification_remarks } = req.body;
+
+  requirePermission(req.user, "approve_request");
+  assertUuid(uuid, "Request UUID");
+  if (!["verified", "unverified"].includes(status)) throw new ApiError(400, "status must be verified or unverified");
+
+  // A rejection is a statement ABOUT someone's document, and the requester is
+  // entitled to know what was wrong with it. Without a reason the row is
+  // `status=unverified` and nothing else — useless to the requester, unactionable
+  // for support, and indistinguishable from an oversight. So a reason is
+  // mandatory on this one path.
+  //
+  // Approve stays optional on purpose: a clean match needs no justification, and
+  // forcing one would just collect noise. (The product intent for approve was
+  // confirmed as "keep current behaviour" — optional.)
+  const remarks = typeof verification_remarks === "string" ? verification_remarks.trim() : "";
+  if (status === "unverified" && !remarks) {
+    throw new ApiError(
+      400,
+      "Verification remarks are required when rejecting a request — please explain what is wrong with the document."
+    );
+  }
+  // verification_remarks is varchar(500); reject early with a clear message
+  // instead of letting the driver throw a truncation error.
+  if (remarks.length > 500) {
+    throw new ApiError(400, "Verification remarks must be 500 characters or fewer");
+  }
+
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+
+  await assertOrganizationActive(req.user.organization);
+
+  const [rows] = await pool.query("SELECT * FROM verification_requests WHERE uuid=?", [uuid]);
+  if (!rows.length) throw new ApiError(404, "Request not found");
+
+  const vr = rows[0];
+  if (vr.issuing_organization_id !== req.user.organization) {
+    throw new ApiError(403, "You are not allowed to verify this request");
+  }
+  if (["verified", "unverified"].includes(vr.status)) throw new ApiError(409, "Request already finalized");
+
+  await pool.query(
+    `UPDATE verification_requests
+     SET status=?, verified_at=NOW(), verified_by=?, verification_remarks=?,
+         verification_method='portal',
+         unmatched_org_id=CASE WHEN ?='verified' THEN NULL ELSE unmatched_org_id END
+     WHERE uuid=?`,
+    [status, req.user.id, remarks || null, status, uuid]
+  );
+
+  const [updated] = await pool.query(
+    `SELECT vr.*, o.uuid AS issuing_organization_uuid, o.name AS issuing_org_name,
+            uo.uuid AS unmatched_org_uuid, uo.name AS unmatched_org_name
+     FROM verification_requests vr
+     LEFT JOIN organizations o ON o.id = vr.issuing_organization_id
+     LEFT JOIN unmatched_organizations uo ON uo.id = vr.unmatched_org_id
+     WHERE vr.uuid=?`,
+    [uuid]
+  );
+
+  // Verified requests get a tamper-evident public QR certificate.
+  // The token is written back onto the row: the re-read above happened BEFORE
+  // the token existed, so without this the response would carry a null
+  // qr_token and the frontend would have no verify_url to show.
+  if (status === "verified") {
+    const qr = await generateQrForRequest(updated[0]);
+    if (qr && qr.qr_token) {
+      updated[0].qr_token = qr.qr_token;
+      updated[0].qr_signature = qr.qr_signature;
+    }
+  }
+
+  // Append to the person's document history (accumulates across re-verifications)
+  if (status === "verified") {
+    // Data-quality signal (never a blocker): OCR the submitted document once
+    // and cross-check the extracted identity fields against the form-entered
+    // ones, caching the result on the person_documents row so a future NADRA
+    // script can re-verify without OCR. Service outage -> 'not_checked', the
+    // approval itself is unaffected.
+    const crossCheck = await buildDocumentCrossCheck(updated[0]);
+    await recordPersonDocument(updated[0], req.user.organization, crossCheck);
+    updated[0].document_consistency = crossCheck;
+  }
+
+  // Notify the requester
+  const [requester] = await pool.query(
+    `SELECT u.uuid, u.organization FROM users u WHERE u.id=?`,
+    [vr.user_id]
+  );
+  if (requester.length) {
+    const requesterUuid = requester[0].uuid;
+    const senderOrg = await pool.query("SELECT name FROM organizations WHERE id=?", [req.user.organization]);
+    const orgName = senderOrg[0].length ? senderOrg[0][0].name : "An organization";
+    const statusText = status === "verified" ? "Approved" : "Rejected";
+    try {
+      await createNotificationForUsers({
+        userIds: [requesterUuid],
+        type: "request_verified",
+        title: `Request ${statusText.toLowerCase()}`,
+        message: `Your "${vr.document_type}" request was ${statusText} by ${orgName}.`,
+        link: "/requests",
+        referenceId: uuid,
+      });
+    } catch (e) {
+      console.error("Failed to create requester notification:", e.message);
+    }
+  } else {
+    console.error(`Could not notify requester: user_id ${vr.user_id} not found`);
+  }
+
+  // Email the org the request came FROM once it is approved — to the org's
+  // business email + its org admins (deduplicated).
+  if (status === "verified") {
+    const reqOrgId = requester.length ? requester[0].organization : null;
+    if (reqOrgId) {
+      try {
+        await sendVerificationResultEmailToOrg({
+          orgId: reqOrgId,
+          documentType: vr.document_type,
+          portalLink: `${firstFrontendUrl(process.env.FRONTEND_URL, "http://localhost:8080")}/requests`,
+        });
+      } catch (e) {
+        console.error("Failed to send verification result email to org:", e.message);
+      }
+    }
+  }
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: status === "verified" ? "request.verify" : "request.reject",
+    entityType: "verification_request",
+    entityId: uuid,
+    details: { status, method: "portal" },
+    req,
+  });
+
+  return ok(res, { request: withVerifyUrl(updated[0]) }, "Request updated");
+}
+
+export async function listOrganizations(req, res) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT o.uuid, o.name, o.verified, o.logo,
+            COALESCE(ot.name, o.organization_type) AS organization_type, o.created_at
+     FROM organizations o
+     LEFT JOIN organization_types ot ON ot.id = o.organization_type
+     WHERE o.verified='yes'
+       AND o.deleted_at IS NULL
+       AND o.id <> ?
+     ORDER BY o.created_at DESC`,
+    [req.user.organization]
+  );
+
+  return ok(res, { items: rows }, "Organizations list");
+}

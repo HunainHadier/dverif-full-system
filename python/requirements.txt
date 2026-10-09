@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pytesseract
+Pillow
+PyMuPDF
+python-docx
+rapidfuzz
+python-multipart
+pydantic
+pydantic-settings
+
+# --- dev / test ---
+pytest
+httpx

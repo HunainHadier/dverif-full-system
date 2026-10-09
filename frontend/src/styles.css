@@ -1,0 +1,383 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.995 0.002 250);
+  --foreground: oklch(0.18 0.02 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 260);
+  --primary: oklch(0.44 0.19 262);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.965 0.005 250);
+  --secondary-foreground: oklch(0.25 0.02 260);
+  --muted: oklch(0.965 0.005 250);
+  --muted-foreground: oklch(0.52 0.02 260);
+  --accent: oklch(0.955 0.012 260);
+  --accent-foreground: oklch(0.25 0.03 260);
+  --destructive: oklch(0.58 0.19 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.62 0.14 155);
+  --success-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.75 0.14 75);
+  --warning-foreground: oklch(0.2 0.05 60);
+  --border: oklch(0.92 0.008 255);
+  --input: oklch(0.92 0.008 255);
+  --ring: oklch(0.44 0.19 262);
+  --sidebar: oklch(0.99 0.003 250);
+  --sidebar-foreground: oklch(0.28 0.02 260);
+  --sidebar-primary: oklch(0.44 0.19 262);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.955 0.008 255);
+  --sidebar-accent-foreground: oklch(0.25 0.03 260);
+  --sidebar-border: oklch(0.92 0.008 255);
+  --sidebar-ring: oklch(0.44 0.19 262);
+}
+
+.dark {
+  --background: oklch(0.16 0.015 260);
+  --foreground: oklch(0.96 0.003 250);
+  --card: oklch(0.20 0.018 260);
+  --card-foreground: oklch(0.96 0.003 250);
+  --popover: oklch(0.20 0.018 260);
+  --popover-foreground: oklch(0.96 0.003 250);
+  --primary: oklch(0.65 0.18 258);
+  --primary-foreground: oklch(0.14 0.02 260);
+  --secondary: oklch(0.25 0.02 260);
+  --secondary-foreground: oklch(0.96 0.003 250);
+  --muted: oklch(0.25 0.02 260);
+  --muted-foreground: oklch(0.68 0.02 260);
+  --accent: oklch(0.28 0.03 260);
+  --accent-foreground: oklch(0.96 0.003 250);
+  --destructive: oklch(0.65 0.19 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --success: oklch(0.68 0.14 155);
+  --success-foreground: oklch(0.14 0.02 260);
+  --warning: oklch(0.78 0.14 78);
+  --warning-foreground: oklch(0.18 0.03 60);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.65 0.18 258);
+  --sidebar: oklch(0.18 0.018 260);
+  --sidebar-foreground: oklch(0.92 0.005 250);
+  --sidebar-primary: oklch(0.65 0.18 258);
+  --sidebar-primary-foreground: oklch(0.14 0.02 260);
+  --sidebar-accent: oklch(0.24 0.025 260);
+  --sidebar-accent-foreground: oklch(0.96 0.003 250);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.65 0.18 258);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@layer components {
+  @media (max-width: 639px) {
+    table:has(td[data-label]) {
+      display: block;
+    }
+
+    table:has(td[data-label]) thead {
+      display: none;
+    }
+
+    table:has(td[data-label]) tbody {
+      display: grid;
+      gap: 0.75rem;
+      padding: 1rem;
+    }
+
+    table:has(td[data-label]) tr {
+      display: grid;
+      gap: 0.625rem;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: color-mix(in oklab, var(--color-card) 96%, var(--color-muted));
+      padding: 0.875rem;
+    }
+
+    table:has(td[data-label]) td {
+      display: grid;
+      grid-template-columns: minmax(5.75rem, 42%) minmax(0, 1fr);
+      align-items: start;
+      gap: 0.75rem;
+      min-width: 0;
+      padding: 0;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    table:has(td[data-label]) td::before {
+      content: attr(data-label);
+      color: var(--color-muted-foreground);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    table:has(td[data-label]) td > * {
+      min-width: 0;
+    }
+  }
+}
+
+/* --- Dverif branded loader --- */
+@keyframes Dverif-loader-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes Dverif-loader-halo {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.45;
+  }
+  70%,
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+.Dverif-loader__mark {
+  animation: Dverif-loader-pulse 1.5s ease-in-out infinite;
+}
+
+.Dverif-loader__halo {
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+  animation: Dverif-loader-halo 1.8s ease-out infinite;
+}
+
+/* --- Auto-verified success check --- */
+@keyframes success-pop {
+  0% {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes success-ring {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.animate-success-pop {
+  animation: success-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.animate-success-ring {
+  animation: success-ring 0.75s ease-out both;
+}
+
+.animate-success-ring-delayed {
+  animation: success-ring 0.75s ease-out 0.12s both;
+}
+
+/* --- Request submitted: two-beat check draw ---
+   The mark is drawn in sequence — the ring first (600ms), then the tick on top
+   of it (400ms, offset by a 600ms delay). Both strokes are driven by CLASSES
+   rather than inline styles for the same reason as .decision-mark below: an
+   inline style cannot be reached from the prefers-reduced-motion media query,
+   so it would keep animating for users who have asked the OS to stop motion.
+   Each stroke's dash length is passed in via a custom property so the value
+   never has to be kept in sync between the markup and the keyframes. */
+@keyframes submitted-ring-draw {
+  from {
+    stroke-dashoffset: var(--submitted-ring-dash, 151);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes submitted-tick-draw {
+  from {
+    stroke-dashoffset: var(--submitted-tick-dash, 44);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Both the dasharray and the initial dashoffset are set from the same custom
+   property, and the property is always >= the real path length. That is what
+   makes stroke-dashoffset meaningful at all: with `stroke-dasharray: none` the
+   offset is ignored and the stroke renders solid from the first frame, so the
+   "draw" would be a no-op. Offsetting by a full dash puts the start of the
+   path inside the gap (invisible); animating back to 0 walks the dash over it
+   until the whole path is covered. */
+.submitted-ring {
+  stroke-dasharray: var(--submitted-ring-dash, 151);
+  stroke-dashoffset: var(--submitted-ring-dash, 151);
+}
+
+.submitted-ring--drawn {
+  animation: submitted-ring-draw 600ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+.submitted-tick {
+  stroke-dasharray: var(--submitted-tick-dash, 44);
+  stroke-dashoffset: var(--submitted-tick-dash, 44);
+}
+
+.submitted-tick--drawn {
+  animation: submitted-tick-draw 400ms cubic-bezier(0.65, 0, 0.35, 1) 600ms forwards;
+}
+
+/* --- Manual verification decision: approve / reject acknowledgement ---
+   Shares the visual language of the auto-verified check (ring + pop), but the
+   stroke is drawn via a class rather than an inline transition so that
+   prefers-reduced-motion can switch it off — an inline style cannot be reached
+   by the media query below. */
+@keyframes decision-draw {
+  from {
+    stroke-dashoffset: var(--decision-dash, 44);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.decision-mark {
+  stroke-dashoffset: var(--decision-dash, 44);
+}
+
+.decision-mark--drawn {
+  animation: decision-draw 380ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decision-mark {
+    stroke-dashoffset: 0;
+  }
+
+  .decision-mark--drawn {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  /* Same rule for the submitted-request check: jump straight to the finished
+     mark — a full, undrawn circle with a full tick — instead of animating. */
+  .submitted-ring,
+  .submitted-ring--drawn {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .submitted-tick,
+  .submitted-tick--drawn {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .Dverif-loader__mark {
+    animation: none;
+    opacity: 0.85;
+  }
+
+  .Dverif-loader__halo {
+    animation: none;
+    transform: scale(1.2);
+    opacity: 0.15;
+  }
+
+  .animate-success-pop,
+  .animate-success-ring,
+  .animate-success-ring-delayed {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 639px) {
+  table:has(td[data-label]) td[data-label="Actions"], table:has(td[data-label]) td.mobile-actions-cell { align-items: start; text-align: left; }
+  table:has(td[data-label]) td[data-label="Actions"]::before, table:has(td[data-label]) td.mobile-actions-cell::before { align-self: start; text-align: left; }
+  table:has(td[data-label]) td[data-label="Actions"] > *, table:has(td[data-label]) td.mobile-actions-cell > * { justify-self: start; max-width: 100%; text-align: left; }
+  table:has(td[data-label]) td[data-label="Actions"] > .flex,
+  table:has(td[data-label]) td[data-label="Actions"] > .inline-flex { flex-wrap: wrap; justify-content: flex-start; gap: 0.25rem; }
+  table:has(td[data-label]) td.mobile-actions-cell > .flex,
+  table:has(td[data-label]) td.mobile-actions-cell > .inline-flex { justify-content: flex-start; }
+  table:has(td[data-label]) td[data-label="Actions"] button { flex-shrink: 0; }
+}

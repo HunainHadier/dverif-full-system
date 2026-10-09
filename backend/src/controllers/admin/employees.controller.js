@@ -1,0 +1,753 @@
+import crypto from "crypto";
+import ApiError from "../../utils/ApiError.js";
+import { rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
+import { createEmployeePortalInvite, deliverEmployeePortalInvite } from "../../services/employeeAccess.service.js";
+import { pool } from "../../config/db.js";
+import { ok, created } from "../../utils/response.js";
+import { assertUuid } from "../../utils/publicResponse.js";
+import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
+import { sendInviteEmail } from "../../utils/mailer.js";
+import { firstFrontendUrl } from "../../utils/frontendUrl.js";
+import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
+import { STAFF_ROLES, assertRole, ROLE_ORG_ADMIN } from "../../utils/roles.js";
+
+const EMPLOYEE_SELECT = `SELECT e.id, e.uuid, e.employee_code, e.organization_id, e.full_name, e.email, e.phone,
+        e.cnic, dg.name AS designation, dp.name AS department, e.status, e.is_platform_user,
+        e.linked_user_uuid, e.added_by_uuid, e.promoted_by_uuid, e.promoted_at,
+        e.joining_date, e.employment_type, e.work_location, e.reporting_manager_uuid, manager.full_name AS reporting_manager_name, e.emergency_contact,
+        e.created_at,
+        o.uuid AS organization_uuid,
+        o.name AS organization_name,
+        COALESCE(au.full_name, au2.full_name) AS added_by_name,
+        COALESCE(pu.full_name, pu2.full_name) AS promoted_by_name,
+        u.email AS linked_user_email,
+        u.status AS linked_user_status,
+        u.org_role AS linked_user_role,
+        u.profile_image AS linked_user_profile_image,
+        it.expires_at AS invite_expires_at,
+        it.used_at AS invite_used_at,
+        it.created_at AS invite_sent_at,
+        it.delivery_status AS invite_delivery_status,
+        it.delivery_error AS invite_delivery_error,
+        (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_uuid = e.uuid) AS document_count,
+        (SELECT h.basic_salary FROM employee_salary_history h
+          WHERE h.employee_uuid = e.uuid AND h.effective_to IS NULL
+          ORDER BY h.effective_from DESC LIMIT 1) AS current_salary
+ FROM employees e
+ LEFT JOIN organizations o ON o.id = e.organization_id
+ LEFT JOIN designations dg ON dg.id = e.designation_id
+ LEFT JOIN departments dp ON dp.id = e.department_id
+ LEFT JOIN admin_profiles au ON au.uuid = e.added_by_uuid
+ LEFT JOIN users au2 ON au2.uuid = e.added_by_uuid
+ LEFT JOIN admin_profiles pu ON pu.uuid = e.promoted_by_uuid
+ LEFT JOIN users pu2 ON pu2.uuid = e.promoted_by_uuid
+ LEFT JOIN users u ON u.uuid = e.linked_user_uuid
+ LEFT JOIN employees manager ON manager.uuid=e.reporting_manager_uuid AND manager.organization_id=e.organization_id
+ LEFT JOIN invite_tokens it ON it.user_uuid = e.linked_user_uuid
+   AND it.id = (SELECT id FROM invite_tokens WHERE user_uuid = e.linked_user_uuid ORDER BY id DESC LIMIT 1)`;
+
+// For future org-admin scope: routes can set req.scopeOrgId (organization integer id).
+// Admin (no scope) may target any organization.
+async function resolveScopeOrganization(req) {
+  if (req.scopeOrgId) {
+    const [org] = await pool.query("SELECT id, uuid FROM organizations WHERE id=?", [req.scopeOrgId]);
+    if (!org.length) throw new ApiError(403, "Your organization no longer exists");
+    return { scoped: true, orgId: req.scopeOrgId, orgUuid: org[0].uuid };
+  }
+  return { scoped: false, orgId: null, orgUuid: null };
+}
+
+async function resolveOrganizationId(organizationUuid) {
+  if (!organizationUuid) throw new ApiError(400, "organization_uuid is required");
+  assertUuid(organizationUuid, "Organization UUID");
+  const [rows] = await pool.query("SELECT id FROM organizations WHERE uuid=?", [organizationUuid]);
+  if (!rows.length) throw new ApiError(404, "Organization not found");
+  return rows[0].id;
+}
+
+/**
+ * The employee `status` values, and the subset a CREATE may use.
+ *
+ * `record_type` was merged into this column (see migration
+ * 20260930_merge_employee_record_type_into_status.sql), so the enum now carries
+ * both questions it used to split between two columns: is this person currently
+ * on staff ('current_employee'), and if not why ('ex_employee').
+ *
+ * 'inactive' is deliberately NOT creatable. It is the DEACTIVATION kill-switch
+ * read by middleware/authUser.js and the login controllers — it means "this
+ * account exists and must be refused" — which is not a state a brand-new
+ * employee can meaningfully be in. It is accepted on update only, which is where
+ * deactivating actually happens.
+ *
+ * Kept as two exported lists rather than one, so the create/update split cannot
+ * drift: adding a value to the union without deciding which side it belongs to
+ * is a visible code change, not a silent default.
+ */
+const ALLOWED_EMPLOYEE_STATUS = ["active", "inactive", "current_employee", "ex_employee"];
+
+/** Statuses a CREATE may set. Excludes 'inactive' — see above. */
+const CREATABLE_EMPLOYEE_STATUS = ["current_employee", "active", "ex_employee"];
+
+/** Statuses that mean "currently on staff", for headcount and roster queries. */
+const CURRENT_EMPLOYEE_STATUSES = ["active", "current_employee"];
+
+/** SQL fragment for the current-employee predicate, so it is spelled once. */
+const CURRENT_EMPLOYEE_SQL = `'active','current_employee'`;
+
+/** Statuses that mean "no longer on staff". */
+const EX_EMPLOYEE_STATUSES = ["ex_employee"];
+
+/** Resolve an org-scoped designation/department row by name, creating it if missing. */
+async function resolveMetaId(conn, orgId, table, name) {
+  if (!name) return null;
+  const [rows] = await conn.query(
+    `SELECT id FROM ${table} WHERE organization_id=? AND name=?`,
+    [orgId, name]
+  );
+  if (rows.length) return rows[0].id;
+  const [r] = await conn.query(
+    `INSERT INTO ${table} (uuid, organization_id, name) VALUES (UUID(), ?, ?)`,
+    [orgId, name]
+  );
+  return r.insertId;
+}
+
+function normalizeEmployeePayload(body) {
+  const { full_name, email, phone, cnic, designation, department, status, joining_date, emergency_contact, current_salary, employment_type, work_location, reporting_manager_uuid } = body;
+  const errors = [];
+
+  if (full_name === undefined || String(full_name).trim() === "") errors.push("full_name is required");
+  if (cnic === undefined || String(cnic).trim() === "") errors.push("cnic is required");
+
+  if (email !== undefined && email !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.push("email is invalid");
+  }
+  if (emergency_contact !== undefined && emergency_contact !== "" && !/^[0-9+\-() ]{6,30}$/.test(emergency_contact)) {
+    errors.push("emergency_contact is invalid");
+  }
+  const employmentTypes = ["full_time", "part_time", "contract", "temporary", "intern"];
+  if (employment_type !== undefined && employment_type !== null && employment_type !== "" && !employmentTypes.includes(employment_type)) errors.push("employment_type is invalid");
+  if (work_location !== undefined && String(work_location).trim().length > 150) errors.push("work_location must be 150 characters or fewer");
+  if (reporting_manager_uuid) assertUuid(reporting_manager_uuid, "Reporting manager UUID");
+
+  let normalizedCurrentSalary = null;
+  if (current_salary !== undefined && current_salary !== null && current_salary !== "") {
+    const n = Number(current_salary);
+    if (!Number.isFinite(n) || n <= 0) {
+      errors.push("current_salary must be a positive number; omit it when compensation has not been agreed");
+    } else {
+      normalizedCurrentSalary = Math.round(n * 100) / 100;
+    }
+  }
+
+  if (errors.length) throw new ApiError(400, errors.join("; "));
+
+  // A create may not set 'inactive' (see CREATABLE_EMPLOYEE_STATUS). Anything
+  // unrecognised falls back to 'current_employee', which is the only correct
+  // default now that status encodes roster membership: defaulting to 'ex_employee'
+  // would bury a new employee in the reference list, and defaulting to 'active'
+  // would silently produce a value no roster query looks for.
+  const normalizedStatus = CREATABLE_EMPLOYEE_STATUS.includes(status) ? status : "current_employee";
+
+  return {
+    full_name: String(full_name).trim(),
+    email: email ? String(email).trim() : null,
+    phone: phone ? String(phone).trim() : null,
+    cnic: String(cnic).trim(),
+    designation: designation ? String(designation).trim() : null,
+    department: department ? String(department).trim() : null,
+    status: normalizedStatus,
+    joining_date: joining_date ? String(joining_date).trim() : null,
+    employment_type: employment_type || null,
+    work_location: work_location ? String(work_location).trim() : null,
+    reporting_manager_uuid: reporting_manager_uuid || null,
+    emergency_contact: emergency_contact ? String(emergency_contact).trim() : null,
+    current_salary: normalizedCurrentSalary,
+    send_invite: body.send_invite === true,
+  };
+}
+
+export async function createEmployee(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const scope = await resolveScopeOrganization(req);
+  const data = normalizeEmployeePayload(req.body);
+
+  let orgId;
+  if (scope.scoped) {
+    orgId = scope.orgId;
+  } else {
+    orgId = await resolveOrganizationId(req.body.organization_uuid);
+  }
+
+  if (data.email) {
+    const [dupeEmp] = await pool.query(
+      "SELECT uuid FROM employees WHERE email=?",
+      [data.email]
+    );
+    if (dupeEmp.length) throw new ApiError(409, "An employee with this email already exists");
+  }
+  if (data.reporting_manager_uuid) {
+    const [manager] = await pool.query("SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND status IN ('active','current_employee')", [data.reporting_manager_uuid, orgId]);
+    if (!manager.length) throw new ApiError(400, "Choose an active reporting manager from this organization");
+  }
+  const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=?", [data.cnic]);
+  if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists");
+
+  const addedByUuid = req.admin?.uuid || req.user?.uuid || null;
+  // An employee that carries an email is created as a platform user straight
+  // away and a set-password link is emailed to them.
+  //
+  // This is deliberately NOT gated on the organization's subscription. The
+  // invite is how the employee gets in the door; what they can then see is
+  // decided per-request by the plan, so an unsubscribed org's employee still
+  // signs in and simply sees the plan-gated screens in their locked state.
+  // Gating the invite itself would instead produce an account-less employee who
+  // cannot be invited later without re-entering their details.
+  const wantsPlatformUser = data.send_invite;
+  if (wantsPlatformUser && !data.email) throw new ApiError(400, "A valid email is required when portal access is enabled");
+  let createdEmployeeUuid = null;
+  let linkedUserUuid = null;
+  let portalInvite = null;
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const designationId = await resolveMetaId(conn, orgId, "designations", data.designation);
+    const departmentId = await resolveMetaId(conn, orgId, "departments", data.department);
+    const [res2] = await conn.query(
+      `INSERT INTO employees
+       (uuid, organization_id, full_name, email, phone, cnic, designation_id, department_id, employment_type, work_location, reporting_manager_uuid, status,
+        joining_date, emergency_contact,
+        is_platform_user, linked_user_uuid, added_by_uuid, promoted_by_uuid, promoted_at, created_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'no', NULL, ?, NULL, NULL, NOW())`,
+      [orgId, data.full_name, data.email, data.phone, data.cnic, designationId, departmentId,
+        data.employment_type, data.work_location, data.reporting_manager_uuid, data.status, data.joining_date, data.emergency_contact, addedByUuid]
+    );
+    const employeeCode = `EMP-${String(res2.insertId).padStart(6, "0")}`;
+    await conn.query("UPDATE employees SET employee_code=? WHERE id=? AND organization_id=?", [employeeCode, res2.insertId, orgId]);
+    const [[createdEmployee]] = await conn.query("SELECT uuid FROM employees WHERE id=?", [res2.insertId]);
+    createdEmployeeUuid = createdEmployee.uuid;
+
+    // Requirement 2: capture the employee's starting salary as the first
+    // employee_salary_history row (active period) at creation time.
+    // created_by is intentionally NULL: this is an automatic/system row created
+    // as a side-effect of employee creation, not a tracked admin action.
+    const effFrom = data.joining_date || new Date().toISOString().slice(0, 10);
+    if (data.current_salary !== null) {
+      await conn.query(
+        `INSERT INTO employee_salary_history
+           (uuid, employee_uuid, year, basic_salary, effective_from, effective_to, created_at)
+         VALUES (UUID(), ?, ?, ?, ?, NULL, NOW())`,
+        [createdEmployeeUuid, Number(effFrom.slice(0, 4)), data.current_salary, effFrom]
+      );
+    }
+
+    if (wantsPlatformUser) {
+      const [orgExists] = await conn.query("SELECT id FROM organizations WHERE id=?", [orgId]);
+      if (!orgExists.length) throw new ApiError(400, "Organization no longer exists");
+      portalInvite = await createEmployeePortalInvite({
+        conn,
+        employeeUuid: createdEmployeeUuid,
+        organizationId: orgId,
+        fullName: data.full_name,
+        email: data.email,
+        phone: data.phone,
+        cnic: data.cnic,
+        actorUuid: addedByUuid,
+      });
+      linkedUserUuid = portalInvite.userUuid;
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    rethrowIdentityDuplicate(err);
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  const [employeeRow] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [createdEmployeeUuid]);
+
+  // Sent after the transaction commits so a mail failure can never roll back a
+  // successfully created employee.
+  let inviteWarning = null;
+  if (wantsPlatformUser && portalInvite) {
+    const delivery = await deliverEmployeePortalInvite({
+      ...portalInvite,
+      to: data.email,
+      invitedByName: req.admin?.full_name || req.user?.full_name || "Organization administrator",
+    });
+    inviteWarning = delivery.warning;
+  }
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.create",
+    entityType: "employee",
+    entityId: createdEmployeeUuid,
+    details: {
+      full_name: data.full_name,
+      email: data.email,
+      organization_id: orgId,
+      created_platform_user: !!linkedUserUuid,
+      email_sent: wantsPlatformUser && !inviteWarning,
+    },
+    req,
+  });
+
+  const payload = { employee: employeeRow[0] };
+  let message = "Employee created successfully";
+  if (wantsPlatformUser) {
+    message = inviteWarning ? "Employee created but invite delivery failed." : "Employee created. Set-password invitation sent.";
+    if (inviteWarning) payload._email_warning = inviteWarning;
+  }
+
+  return created(res, payload, message);
+}
+
+export async function resendEmployeeInvite(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const { uuid } = req.params;
+  assertUuid(uuid, "Employee UUID");
+  const scope = await resolveScopeOrganization(req);
+  const scopeClause = scope.scoped ? " AND e.organization_id=?" : "";
+  const scopeParams = scope.scoped ? [scope.orgId] : [];
+
+  const [empRows] = await pool.query(
+    `SELECT e.uuid, e.email, e.full_name, e.linked_user_uuid, e.is_platform_user,
+            u.status AS linked_user_status
+     FROM employees e
+     LEFT JOIN users u ON u.uuid = e.linked_user_uuid
+     WHERE e.uuid=?${scopeClause}`,
+    [uuid, ...scopeParams]
+  );
+  if (!empRows.length) throw new ApiError(404, "Employee not found");
+
+  const emp = empRows[0];
+  if (emp.is_platform_user !== "yes" || !emp.linked_user_uuid) {
+    if (!emp.email) {
+      throw new ApiError(400, "Employee must have an email address to receive an invitation");
+    }
+    const [fullEmp] = await pool.query(
+      "SELECT full_name, email, phone, cnic, organization_id FROM employees WHERE uuid=?",
+      [uuid]
+    );
+    const eData = fullEmp[0] || emp;
+    const conn = await pool.getConnection();
+    let portalInvite;
+    try {
+      await conn.beginTransaction();
+      portalInvite = await createEmployeePortalInvite({
+        conn,
+        employeeUuid: uuid,
+        organizationId: eData.organization_id,
+        fullName: eData.full_name,
+        email: eData.email,
+        phone: eData.phone,
+        cnic: eData.cnic,
+        actorUuid: req.user?.uuid || null,
+      });
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+    const invitedByName = req.user?.full_name || "Org Admin";
+    await deliverEmployeePortalInvite({
+      tokenId: portalInvite.tokenId,
+      rawToken: portalInvite.rawToken,
+      to: eData.email,
+      invitedByName,
+    });
+    logAudit({
+      ...getActorFromReq(req),
+      action: "employee.invite_create",
+      entityType: "employee",
+      entityId: uuid,
+      req,
+    });
+    return ok(res, {}, "Invitation sent successfully");
+  }
+  if (emp.linked_user_status === "active") {
+    throw new ApiError(400, "This user is already active. Use forgot password instead.");
+  }
+
+  const userUuid = emp.linked_user_uuid;
+
+  // Invalidate any existing unused tokens for this user
+  await pool.query(
+    "UPDATE invite_tokens SET used_at=NOW() WHERE user_uuid=? AND used_at IS NULL",
+    [userUuid]
+  );
+
+  // Generate a fresh token
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const expiresInHours = parseInt(process.env.INVITE_EXPIRES_IN_HOURS || "72", 10);
+
+  const [tokenInsert] = await pool.query(
+    "INSERT INTO invite_tokens (user_uuid, token_hash, expires_at, delivery_status) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'pending')",
+    [userUuid, tokenHash, expiresInHours]
+  );
+
+  const setLinkBase = firstFrontendUrl(process.env.FRONTEND_SET_PASSWORD_URL, "http://localhost:8080/set-password");
+  const setLink = `${setLinkBase}?token=${encodeURIComponent(rawToken)}`;
+  const invitedByName = req.user?.full_name || "Org Admin";
+
+  try {
+    await sendInviteEmail({ to: emp.email, setLink, invitedByName });
+    await pool.query("UPDATE invite_tokens SET delivery_status='sent', delivery_error=NULL WHERE id=?", [tokenInsert.insertId]);
+  } catch (e) {
+    await pool.query("UPDATE invite_tokens SET delivery_status='failed', delivery_error=? WHERE id=?", [String(e.message || "Delivery failed").slice(0, 500), tokenInsert.insertId]);
+    throw new ApiError(500, e.message || "Failed to send invite email");
+  }
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.invite_resend",
+    entityType: "employee",
+    entityId: uuid,
+    details: { email: emp.email, full_name: emp.full_name },
+    req,
+  });
+
+  return ok(res, {}, "Invite resent successfully");
+}
+
+export async function listEmployees(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const scope = await resolveScopeOrganization(req);
+  const { page, limit, offset } = parsePagination(req.query);
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+
+  const conditions = [];
+  const params = [];
+
+  // Default: current employees. ?reference=1 shows ex-employee rows instead.
+  // This used to be `record_type = 'roster' | 'learned_reference'`; it is now a
+  // status comparison, because record_type was merged into status.
+  //
+  // 'active' is included in BOTH views deliberately. It means "deactivated" and
+  // a deactivated employee is still on the roster — hiding them from the list
+  // would make them impossible to find and therefore impossible to reactivate,
+  // which is the only way out of that state.
+  const showReferences = req.query.reference === "1" || req.query.reference === "true";
+  if (showReferences) {
+    conditions.push("e.status = ?");
+    params.push("ex_employee");
+  } else {
+    conditions.push(`e.status IN (${CURRENT_EMPLOYEE_SQL})`);
+  }
+
+  if (scope.scoped) {
+    conditions.push("e.organization_id = ?");
+    params.push(scope.orgId);
+    // Per-admin visibility: each org_admin sees only the employee records THEY
+    // personally added. Platform admins are unfiltered.
+    //
+    // Deliberately NOT applied to sub-admins. A sub-admin is staff
+    // (STAFF_ROLES = [org_admin, sub_admin]) and is documented as sharing the
+    // org_admin's operational access, differing only in that it cannot delete
+    // anything, manage sub-admins, or touch org settings. Applying this filter to
+    // them made the Employees page permanently empty for them: the roster belongs
+    // to the org_admin who imported it, so a sub-admin's list was filtered down to
+    // nothing while their granted 'manage_employees' permission appeared to do
+    // nothing at all. A sub-admin sees the whole org roster, which is also what
+    // makes their approve/generate work meaningful — they need to see the people
+    // whose documents they are reviewing.
+    //
+    // ?scope=org opts OUT of it, and only out of it. The organization_id
+    // predicate above is unconditional, so this widens visibility WITHIN the
+    // caller's own org and can never reach another tenant.
+    //
+    // The asset Assign picker needs that: it is a picker over the company roster,
+    // not a work queue of "records I imported". With the filter applied, an
+    // org_admin physically could not hand a laptop to a colleague another admin
+    // had onboarded — the picker showed no such person, and the only visible
+    // symptom was that the company's own employees seemed not to exist.
+    const orgWide = req.query.scope === "org";
+    if (req.user.org_role === ROLE_ORG_ADMIN && !orgWide) {
+      conditions.push("e.added_by_uuid = ?");
+      params.push(req.user.uuid);
+    }
+  }
+
+  if (search) {
+    conditions.push("(e.full_name LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR e.cnic LIKE ? OR dg.name LIKE ? OR dp.name LIKE ? OR o.name LIKE ?)");
+    const like = `%${search}%`;
+    params.push(like, like, like, like, like, like, like);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM employees e
+     LEFT JOIN organizations o ON o.id = e.organization_id
+     LEFT JOIN designations dg ON dg.id = e.designation_id
+     LEFT JOIN departments dp ON dp.id = e.department_id
+     ${whereClause}`,
+    params
+  );
+  const [rows] = await pool.query(
+    `${EMPLOYEE_SELECT} ${whereClause} ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  return ok(res, paginatedResponse(rows, total, page, limit), "Employees list");
+}
+
+export async function getEmployee(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const { uuid } = req.params;
+  const scope = await resolveScopeOrganization(req);
+  assertUuid(uuid, "Employee UUID");
+
+  const [rows] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [uuid]);
+  if (!rows.length) throw new ApiError(404, "Employee not found");
+
+  if (scope.scoped && rows[0].organization_id !== scope.orgId) {
+    throw new ApiError(403, "You can only view employees within your organization");
+  }
+
+  return ok(res, { employee: rows[0] }, "Employee");
+}
+
+export async function updateEmployee(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const { uuid } = req.params;
+  const scope = await resolveScopeOrganization(req);
+  assertUuid(uuid, "Employee UUID");
+
+  const [rows] = await pool.query("SELECT * FROM employees WHERE uuid=?", [uuid]);
+  if (!rows.length) throw new ApiError(404, "Employee not found");
+  const emp = rows[0];
+
+  if (scope.scoped && emp.organization_id !== scope.orgId) {
+    throw new ApiError(403, "You can only manage employees within your organization");
+  }
+
+  const { full_name, email, phone, cnic, designation, department, status, joining_date, emergency_contact, employment_type, work_location, reporting_manager_uuid, organization_uuid } = req.body;
+
+  const updateFields = [];
+  const updateValues = [];
+
+  if (full_name !== undefined && String(full_name).trim() !== "") {
+    updateFields.push("full_name = ?");
+    updateValues.push(String(full_name).trim());
+  }
+  if (email !== undefined) {
+    const trimmed = email ? String(email).trim() : null;
+    if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new ApiError(400, "email is invalid");
+    const [dupeEmp] = await pool.query("SELECT uuid FROM employees WHERE email=? AND uuid<>?", [trimmed, uuid]);
+    if (dupeEmp.length) throw new ApiError(409, "An employee with this email already exists");
+    updateFields.push("email = ?");
+    updateValues.push(trimmed);
+  }
+  if (phone !== undefined) {
+    updateFields.push("phone = ?");
+    updateValues.push(phone ? String(phone).trim() : null);
+  }
+  if (cnic !== undefined) {
+    const trimmed = String(cnic).trim();
+    if (trimmed) {
+      const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=? AND uuid<>?", [trimmed, uuid]);
+      if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists");
+    }
+    updateFields.push("cnic = ?");
+    updateValues.push(trimmed);
+  }
+  if (designation !== undefined) {
+    const designationId = await resolveMetaId(pool, emp.organization_id, "designations", designation ? String(designation).trim() : null);
+    updateFields.push("designation_id = ?");
+    updateValues.push(designationId);
+  }
+  if (department !== undefined) {
+    const departmentId = await resolveMetaId(pool, emp.organization_id, "departments", department ? String(department).trim() : null);
+    updateFields.push("department_id = ?");
+    updateValues.push(departmentId);
+  }
+  if (status !== undefined) {
+    updateFields.push("status = ?");
+    // An update MAY set 'inactive' — deactivating an existing employee is the
+    // whole point of that value, and it is what the auth guards key off. An
+    // unrecognised value falls back to the row's CURRENT status rather than to a
+    // fixed default: defaulting to 'active' here would silently un-deactivate
+    // someone the caller only meant to rename.
+    updateValues.push(
+      ALLOWED_EMPLOYEE_STATUS.includes(status) ? status : (emp.status ?? "current_employee")
+    );
+  }
+  if (joining_date !== undefined) {
+    updateFields.push("joining_date = ?");
+    updateValues.push(joining_date ? String(joining_date).trim() : null);
+  }
+  if (emergency_contact !== undefined) {
+    updateFields.push("emergency_contact = ?");
+    updateValues.push(emergency_contact ? String(emergency_contact).trim() : null);
+  }
+  if (employment_type !== undefined) {
+    const allowed = ["full_time", "part_time", "contract", "temporary", "intern"];
+    if (employment_type && !allowed.includes(employment_type)) throw new ApiError(400, "employment_type is invalid");
+    updateFields.push("employment_type = ?");
+    updateValues.push(employment_type || null);
+  }
+  if (work_location !== undefined) {
+    const value = work_location ? String(work_location).trim() : null;
+    if (value && value.length > 150) throw new ApiError(400, "work_location must be 150 characters or fewer");
+    updateFields.push("work_location = ?");
+    updateValues.push(value);
+  }
+  if (reporting_manager_uuid !== undefined) {
+    let managerUuid = reporting_manager_uuid || null;
+    if (managerUuid) {
+      assertUuid(managerUuid, "Reporting manager UUID");
+      if (managerUuid === uuid) throw new ApiError(400, "An employee cannot report to themselves");
+      const [manager] = await pool.query("SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND status IN ('active','current_employee')", [managerUuid, emp.organization_id]);
+      if (!manager.length) throw new ApiError(400, "Choose an active reporting manager from this organization");
+    }
+    updateFields.push("reporting_manager_uuid = ?");
+    updateValues.push(managerUuid);
+  }
+  if (organization_uuid !== undefined) {
+    if (scope.scoped) throw new ApiError(403, "Cannot change the organization of an employee in your scope");
+    const newOrgId = await resolveOrganizationId(organization_uuid);
+    updateFields.push("organization_id = ?");
+    updateValues.push(newOrgId);
+  }
+
+  if (updateFields.length === 0) throw new ApiError(400, "At least one field is required to update");
+
+  updateValues.push(uuid);
+  await pool.query(`UPDATE employees SET ${updateFields.join(", ")} WHERE uuid=?`, updateValues);
+
+  const [updated] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [uuid]);
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.update",
+    entityType: "employee",
+    entityId: uuid,
+    details: { fields: Object.keys(req.body || {}) },
+    req,
+  });
+
+  return ok(res, { employee: updated[0] }, "Employee updated successfully");
+}
+
+export async function deleteEmployee(req, res) {
+  assertRole(req.user, ["org_admin"]);
+  const { uuid } = req.params;
+  const scope = await resolveScopeOrganization(req);
+  assertUuid(uuid, "Employee UUID");
+
+  const [rows] = await pool.query("SELECT id, organization_id, is_platform_user FROM employees WHERE uuid=?", [uuid]);
+  if (!rows.length) throw new ApiError(404, "Employee not found");
+  const emp = rows[0];
+
+  if (scope.scoped && emp.organization_id !== scope.orgId) {
+    throw new ApiError(403, "You can only manage employees within your organization");
+  }
+
+  if (emp.is_platform_user === "yes") {
+    throw new ApiError(409, "Cannot delete an employee who is a linked platform user. Deactivate the user account first.");
+  }
+
+  await pool.query("DELETE FROM employees WHERE uuid=?", [uuid]);
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.delete",
+    entityType: "employee",
+    entityId: uuid,
+    req,
+  });
+
+  return ok(res, {}, "Employee deleted successfully");
+}
+
+export async function archiveReference(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const { uuid } = req.params;
+  assertUuid(uuid, "Employee UUID");
+  const scope = await resolveScopeOrganization(req);
+
+  const [rows] = await pool.query("SELECT * FROM employees WHERE uuid=?", [uuid]);
+  if (!rows.length) throw new ApiError(404, "Employee not found");
+  const emp = rows[0];
+
+  if (scope.scoped && emp.organization_id !== scope.orgId) {
+    throw new ApiError(403, "You can only manage employees within your organization");
+  }
+
+  // One column, one value. This used to write both `record_type='learned_reference'`
+  // and `status='resigned'`, which is the dual-write that made the two columns
+  // capable of disagreeing.
+  await pool.query(`UPDATE employees SET status='ex_employee' WHERE uuid=?`, [uuid]);
+
+  const [updated] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [uuid]);
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.archive_reference",
+    entityType: "employee",
+    entityId: uuid,
+    details: { full_name: emp.full_name, previous_status: emp.status },
+    req,
+  });
+
+  return ok(res, { employee: updated[0] }, "Employee archived as reference");
+}
+
+export async function createReference(req, res) {
+  assertRole(req.user, STAFF_ROLES);
+  const scope = await resolveScopeOrganization(req);
+
+  const { full_name, cnic } = req.body;
+  if (!full_name || String(full_name).trim() === "") throw new ApiError(400, "full_name is required");
+  if (!cnic || String(cnic).trim() === "") throw new ApiError(400, "cnic is required");
+
+  let orgId;
+  if (scope.scoped) {
+    orgId = scope.orgId;
+  } else {
+    orgId = await resolveOrganizationId(req.body.organization_uuid);
+  }
+
+  const trimmedCnic = String(cnic).trim();
+  const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=? AND organization_id=?", [trimmedCnic, orgId]);
+  if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists in this organization");
+
+  const addedByUuid = req.admin?.uuid || req.user?.uuid || null;
+
+  // 'ex_employee', not 'active'. This row used to be inserted as
+  // status='active' + record_type='learned_reference' and was kept out of
+  // headcount ONLY by that second column. With record_type gone, inserting
+  // 'active' would make every manually-created verification reference count as
+  // live staff on the org dashboard and in the platform-admin employee count.
+  const [result] = await pool.query(
+    `INSERT INTO employees
+     (uuid, organization_id, full_name, cnic, status,
+      is_platform_user, added_by_uuid, created_at)
+     VALUES (UUID(), ?, ?, ?, 'ex_employee', 'no', ?, NOW())`,
+    [orgId, String(full_name).trim(), trimmedCnic, addedByUuid]
+  );
+
+  const [[createdRow]] = await pool.query("SELECT uuid FROM employees WHERE id=?", [result.insertId]);
+
+  const [employeeRow] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [createdRow.uuid]);
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "employee.create_reference",
+    entityType: "employee",
+    entityId: createdRow.uuid,
+    details: { full_name: String(full_name).trim(), organization_id: orgId },
+    req,
+  });
+
+  return created(res, { employee: employeeRow[0] }, "Reference record created");
+}

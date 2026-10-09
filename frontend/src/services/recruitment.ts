@@ -1,0 +1,555 @@
+import { api, type Paginated } from "@/lib/api";
+import type { UUID } from "./core";
+
+/**
+ * Drops `undefined` values from a merge-field payload.
+ *
+ * A merge tag resolves against the letter's values at render time, so an `undefined`
+ * that survived into the payload printed the literal word "undefined" into a PDF that
+ * had been issued with a real reference number — a document the candidate has already
+ * been asked to sign. Null and empty string are left alone on purpose: a template may
+ * genuinely want to print "none", and `""` renders as a blank rather than as text.
+ */
+function withoutUndefined(values: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined)) as Record<
+    string,
+    string
+  >;
+}
+
+/**
+ * Recruitment client: openings, the candidate pipeline, interviews, offers.
+ *
+ * NO `status` ON ANY WRITE PAYLOAD. Pipeline stage is called `stage` and is only ever
+ * set through `moveStage`, which is the one endpoint that models the transition — the
+ * server refuses a move the allowed-transition table does not permit, and refuses
+ * `hired` outright because arriving there also creates an employee record. A generic
+ * `update({ status })` here would be a control the server silently ignores.
+ *
+ * `hire()` IS NOT `moveStage("hired")`, and the pair is kept as separate methods
+ * because the difference is the whole module: one is a pipeline move, the other ends
+ * up writing to the employee roster.
+ */
+
+export type CandidateStage =
+  "applied" | "screening" | "interview" | "selected" | "offered" | "hired" | "declined" | "rejected";
+
+/** The forward path. Rejection is reachable from anywhere but is not a step in it. */
+export const PIPELINE_STAGES: CandidateStage[] = [
+  "applied",
+  "screening",
+  "interview",
+  "selected",
+  "offered",
+  "hired",
+];
+
+export type JobStatus = "draft" | "open" | "closed";
+
+export type EmploymentType = "full_time" | "part_time" | "contract" | "internship" | "temporary";
+
+export type JobOpening = {
+  uuid: UUID;
+  title: string;
+  department_id: number | null;
+  designation_id: number | null;
+  department_name?: string | null;
+  designation_name?: string | null;
+  location: string | null;
+  employment_type: EmploymentType;
+  description: string | null;
+  status: JobStatus;
+  vacancies: number;
+  candidate_count: number;
+  hired_count: number;
+  in_progress_count?: number;
+  vacancies_remaining?: number;
+  created_at: string;
+};
+
+export type Candidate = {
+  uuid: UUID;
+  job_opening_uuid: UUID;
+  opening_title?: string | null;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  cnic: string | null;
+  stage: CandidateStage;
+  rating: number | null;
+  /** Staff-facing. Never sent to the public careers form. */
+  notes: string | null;
+  /** Why they left the pipeline. Surfaced on the board so a reject is legible later. */
+  rejected_reason: string | null;
+  /** Set once `hire` succeeds; the roster row this application became. */
+  converted_employee_uuid: string | null;
+  offer_letter_uuid: string | null;
+  hired_at: string | null;
+  offer_status?: "draft" | "pending_approval" | "approved" | "sent" | "accepted" | "declined" | "rejected" | null;
+  offer_sent_at?: string | null;
+  offer_response_at?: string | null;
+  offer_response_notes?: string | null;
+  completed_interviews?: number;
+  created_at: string;
+};
+
+export type CandidateAttachment = {
+  uuid: string;
+  file_name: string;
+  mime_type: string | null;
+  file_size: number;
+  category: string | null;
+  description: string | null;
+  created_at: string;
+};
+
+export type CandidateDetail = Candidate & {
+  opening: {
+    uuid: UUID;
+    title: string;
+    location: string | null;
+    employment_type: EmploymentType;
+  } | null;
+  interviews: Interview[];
+  resumes: CandidateAttachment[];
+  resume_count: number;
+};
+
+export type InterviewMode = "onsite" | "phone" | "video" | "other";
+
+export type Interview = {
+  uuid: UUID;
+  candidate_uuid: UUID;
+  candidate_name?: string | null;
+  interviewer_uuid: string | null;
+  scheduled_at: string;
+  mode: InterviewMode | null;
+  location: string | null;
+  feedback_notes: string | null;
+  rating: number | null;
+  /** scheduled | completed | cancelled */
+  status: "scheduled" | "completed" | "cancelled";
+  /** pending | passed | failed — orthogonal to status, so "met, deciding" is expressible. */
+  outcome: "pending" | "passed" | "failed";
+  created_at: string;
+};
+
+/**
+ * An offer as the pipeline sees it: a HIRED candidate, plus the DRAFT appointment
+ * letter their hire created and the approval state of that letter.
+ *
+ * `stage` is always `hired` in practice — the backend lists only `hired`, because the
+ * letter is minted by the hire. A pre-hire candidate has no letter to approve or
+ * send, so listing them would produce rows whose only possible outcome was an error.
+ * The field is typed as the full `CandidateStage` rather than the literal `"hired"`
+ * because it comes straight from the `candidates` row and narrowing it here would be
+ * a claim about the database this type does not enforce.
+ *
+ * The sequence is: hire (employee record + draft letter) -> submit for approval ->
+ * approve -> send. Issuing mints `reference_no` and the QR token, so it is the send
+ * that turns a draft into a real document, not the approval.
+ */
+export type Offer = {
+  candidate_uuid: UUID;
+  full_name: string;
+  email: string | null;
+  stage: CandidateStage;
+  opening_title: string | null;
+  reference_no: string | null;
+  letter_status: "draft" | "issued" | "revoked" | null;
+  letter_title: string | null;
+  offer_letter_uuid: string | null;
+  converted_employee_uuid: string | null;
+  hired_at: string | null;
+  offer_status?: "draft" | "pending_approval" | "approved" | "sent" | "accepted" | "declined" | "rejected" | null;
+  offer_sent_at?: string | null;
+  offer_response_at?: string | null;
+  issued_at: string | null;
+  qr_token: string | null;
+  verify_url: string | null;
+  offer_template_uuid?: UUID | null;
+  offer_values?: Record<string, string> | string | null;
+  offer_body_snapshot?: string | null;
+  offer_snapshot_hash?: string | null;
+};
+
+/**
+ * ApprovalTimeline's props, verbatim.
+ *
+ * Not a re-typed copy. The backend returns the shared workflow engine's append-only
+ * step history under these exact names, and ApprovalTimeline consumes them directly —
+ * so the shape here is the contract, and drifting from it would break the component
+ * rather than merely tidy a type.
+ */
+export type OfferApprovalStep = {
+  uuid?: string;
+  step_order: number;
+  step_name: string;
+  approver_name?: string | null;
+  approver_uuid?: string | null;
+  decision: "pending" | "approved" | "rejected" | "skipped" | "cancelled" | "forwarded";
+  comments?: string | null;
+  acted_at?: string;
+};
+
+export type OfferApproval = {
+  uuid: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  title: string | null;
+  requested_at: string;
+  resolved_at: string | null;
+  resolved_by_uuid: string | null;
+  outcome_notes: string | null;
+  steps: OfferApprovalStep[];
+  currentStepOrder: number | null;
+  current_step_name: string | null;
+};
+
+export type PipelineBoard = {
+  opening: JobOpening;
+  columns: { stage: CandidateStage; count: number }[];
+  rejected_count: number;
+};
+
+export const CANDIDATE_STAGE_VARIANT: Record<
+  CandidateStage,
+  "default" | "secondary" | "outline" | "destructive"
+> = {
+  applied: "outline",
+  screening: "secondary",
+  interview: "default",
+  selected: "secondary",
+  offered: "default",
+  // `hired` is NOT destructive. A completed hire is the module working, and painting
+  // it red makes a correctly-reimbursed, correctly-onboarded person look like a
+  // problem. `rejected` is the only genuinely bad state.
+  hired: "secondary",
+  declined: "destructive",
+  rejected: "destructive",
+};
+
+/** Offered is the last stage before money is promised, so it reads as the loudest good. */
+export const JOB_STATUS_VARIANT: Record<JobStatus, "default" | "secondary" | "outline"> = {
+  draft: "outline",
+  open: "default",
+  closed: "secondary",
+};
+
+/**
+ * The create payload, named.
+ *
+ * Declared separately rather than inferred from `jobOpeningsService.create` inside
+ * `update`, because `Parameters<typeof jobOpeningsService.update>` then refers back
+ * to the object that contains it and TypeScript gives up with TS7022.
+ */
+export type JobOpeningInput = {
+  title: string;
+  department_id?: number | null;
+  designation_id?: number | null;
+  location?: string;
+  employment_type?: EmploymentType;
+  description?: string;
+  status?: JobStatus;
+  vacancies?: number;
+};
+
+export const jobOpeningsService = {
+  /**
+   * PAGINATED, returning the full envelope — `items`, `total`, `page`, `totalPages` —
+   * rather than the bare array this returned before.
+   *
+   * Two callers need the array (the openings table, and the pipeline's opening
+   * picker), so `list` unwraps `.items` and `listPaginated` hands back the whole
+   * envelope. The unwrapping is centralised here instead of at each call site
+   * because a caller that forgot it would get a `Paginated` object typed as
+   * `JobOpening[]` and fail at `.map`, well away from the change that caused it.
+   */
+  list: (status?: JobStatus) =>
+    jobOpeningsService.listPaginated({ status }).then((r) => r.items ?? []),
+
+  /**
+   * The pager-bearing call. Use this wherever the total is needed; `list` is the
+   * convenience form for callers that genuinely only want the rows.
+   */
+  listPaginated: (params: { status?: JobStatus; page?: number; limit?: number } = {}) =>
+    api
+      .get<Paginated<JobOpening>>("/org/job-openings", {
+        params: { status: params.status || undefined, page: params.page, limit: params.limit },
+      })
+      .then((r) => r.data),
+
+  get: (uuid: UUID) =>
+    api.get<{ opening: JobOpening }>(`/org/job-openings/${uuid}`).then((r) => r.data.opening),
+
+  create: (data: JobOpeningInput) =>
+    api.post<{ opening: JobOpening }>("/org/job-openings", data).then((r) => r.data.opening),
+
+  update: (uuid: UUID, data: Partial<JobOpeningInput>) =>
+    api.put<{ opening: JobOpening }>(`/org/job-openings/${uuid}`, data).then((r) => r.data.opening),
+};
+
+export const candidatesService = {
+  list: (
+    params: {
+      page?: number;
+      limit?: number;
+      opening_uuid?: UUID;
+      stage?: CandidateStage;
+      search?: string;
+    } = {},
+  ) =>
+    api
+      .get<Paginated<Candidate>>("/org/candidates", {
+        params: { ...params, search: params.search || undefined, stage: params.stage || undefined },
+      })
+      .then((r) => r.data),
+
+  get: (uuid: UUID) =>
+    api
+      .get<{ candidate: CandidateDetail }>(`/org/candidates/${uuid}`)
+      .then((r) => r.data.candidate),
+
+  /**
+   * The candidate's interview history, from the SAME endpoint as the agenda.
+   *
+   * A per-candidate history is small, but it is paged like everything else so a
+   * candidate interviewed forty times cannot be the reason a page hangs. `limit: 100`
+   * is above the server's cap of 100, so it means "as many as allowed" rather than
+   * silently asking for more than the server will give.
+   */
+  forCandidate: (candidateUuid: UUID) =>
+    api
+      .get<Paginated<Interview>>("/org/interviews", {
+        params: { candidate_uuid: candidateUuid, limit: 100 },
+      })
+      .then((r) => r.data.items ?? []),
+
+  /**
+   * File an application on someone's behalf.
+   *
+   * Takes an employee_uuid because this is the STAFF client — someone in HR entering
+   * an application for a walk-in. The public careers form has its own path that cannot
+   * supply one at all, which is why the two are separate clients rather than one with
+   * an optional field.
+   */
+  create: (data: {
+    opening_uuid: UUID;
+    full_name: string;
+    email?: string;
+    phone?: string;
+    cnic?: string;
+    cover_letter?: string;
+    notes?: string;
+  }) => api.post<{ candidate: Candidate }>("/org/applications", data).then((r) => r.data.candidate),
+
+  /**
+   * Move along the pipeline.
+   *
+   * `hired` is deliberately not accepted by the type as a plain move: arriving there
+   * requires creating an employee row, so it goes through hire() below. The server
+   * refuses it here too — the two agree rather than one silently accepting what the
+   * other rejects.
+   */
+  moveStage: (
+    uuid: UUID,
+    data: {
+      stage: Exclude<CandidateStage, "hired">;
+      rejection_reason?: string;
+      rating?: number | null;
+      notes?: string;
+    },
+  ) =>
+    api
+      .post<{ candidate: Candidate }>(`/org/applications/${uuid}/move-stage`, data)
+      .then((r) => r.data.candidate),
+
+  /**
+   * Prepare an offer and submit its saved terms for shared approval.
+   */
+  prepareOffer: (uuid: UUID, data: { offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
+    api.post<{ candidate: Candidate; approval: OfferApproval }>(`/org/applications/${uuid}/start-offer`, data)
+      .then((r) => r.data),
+  prepareOfferWithInterviewOverride: (uuid: UUID, data: { reason: string; offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
+    api.post<{ candidate: Candidate; approval: OfferApproval }>(`/org/applications/${uuid}/start-offer/override`, {
+      override_failed_interview_reason: data.reason,
+      offer_template_uuid: data.offer_template_uuid,
+      offer_values: data.offer_values,
+    }).then((r) => r.data),
+
+
+  uploadResume: (uuid: UUID, files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    return api
+      .post<{ items: CandidateAttachment[] }>(`/org/candidates/${uuid}/resume`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((r) => r.data.items ?? []);
+  },
+};
+
+export const interviewsService = {
+  /**
+   * PAGINATED, and now genuinely necessary where it was not before.
+   *
+   * This was previously unpaginated on the reasoning that the agenda is "a screen at
+   * most". That holds for a new org and stops holding after a year: an org that has
+   * run recruitment for a year has thousands of COMPLETED interviews, and the
+   * unfiltered call this page makes would fetch every one of them to show the handful
+   * that are still upcoming.
+   *
+   * THE LIMIT IS 100, THE SERVER'S MAXIMUM, AND THAT IS THE POINT. The server orders
+   * `scheduled_at DESC`, so an agenda's first page is the most recent interviews —
+   * which is what makes page 1 contain today's meeting rather than page 40. The page
+   * splits upcoming from past client-side within that one page; the split is a
+   * function of when you are looking, so it cannot be a stored column or a server
+   * filter.
+   *
+   * NOTE FOR LATER: once an org's interview history outgrows 100, this page needs real
+   * pagination controls. Until then a silent cap is better than an unbounded fetch,
+   * but it will eventually hide rows with no indication that it has — `listPaginated`
+   * is here so that is a one-line change when it is needed.
+   */
+  list: (
+    params: { candidate_uuid?: UUID; interviewer_uuid?: UUID; page?: number; limit?: number } = {},
+  ) =>
+    api
+      .get<Paginated<Interview>>("/org/interviews", {
+        params: { ...params, limit: params.limit ?? 100 },
+      })
+      .then((r) => r.data.items ?? []),
+
+  listPaginated: (
+    params: { candidate_uuid?: UUID; interviewer_uuid?: UUID; page?: number; limit?: number } = {},
+  ) =>
+    api
+      .get<Paginated<Interview>>("/org/interviews", {
+        params: { ...params, limit: params.limit ?? 100 },
+      })
+      .then((r) => r.data),
+
+  schedule: (data: {
+    candidate_uuid: UUID;
+    interviewer_uuid?: UUID;
+    scheduled_at: string;
+    mode?: InterviewMode;
+    location?: string;
+  }) => api.post<{ interview: Interview }>("/org/interviews", data).then((r) => r.data.interview),
+
+  /**
+   * `pending` IS A VALID SUBMISSION here, and omitting it from this type was wrong.
+   *
+   * The server accepts pending/passed/failed and coerces anything missing to
+   * `pending` for a completed interview, so the client's narrower union forced the
+   * dialog into a fiction: a reviewer who met the candidate and wants to record
+   * notes WITHOUT committing to pass or fail — the most common state at the end of a
+   * first interview — had no value to send, so it was told to send "passed" or
+   * "failed" when the honest answer was neither yet.
+   */
+  recordFeedback: (
+    uuid: UUID,
+    data: {
+      status?: "completed" | "cancelled";
+      /** pending = met, not yet decided. The server's own default for completed. */
+      outcome?: "pending" | "passed" | "failed";
+      rating?: number | null;
+      feedback_notes?: string;
+    },
+  ) =>
+    api
+      .post<{ interview: Interview }>(`/org/interviews/${uuid}/feedback`, data)
+      .then((r) => r.data.interview),
+};
+
+export type OfferPreparation = {
+  candidate: { uuid: UUID; full_name: string; email: string | null; cnic: string | null; final_interview_outcome: "passed" | "failed" | null };
+  opening: { uuid: UUID; title: string; designation: string | null; department: string | null };
+  templates: { uuid: UUID; name: string; letter_type: string; body: string; merge_fields: string[]; is_active: number }[];
+  merge_tags: { tag: string; label: string; source: string; help: string; letter_types: string[] }[];
+  default_values: Record<string, string>;
+  selected_template_uuid: UUID | null;
+};
+export type OfferPreview = {
+  template_uuid: UUID;
+  template_name: string;
+  values: Record<string, string>;
+  rendered_body: string;
+  unresolved: string[];
+  unknown: string[];
+  required_tags: string[];
+  missing_fields: { tag: string; label: string; source: string }[];
+};
+
+export const offersService = {
+  /**
+   * HIRED candidates only — see `Offer`. Not paginated against a filter the UI does
+   * not offer, but `page`/`limit` are forwarded because the endpoint paginates and a
+   * growing org will need paging eventually; dropping them would mean a silent
+   * behaviour change the day the endpoint started enforcing a default page size.
+   */
+  list: (params: { page?: number; limit?: number; opening_uuid?: UUID } = {}) =>
+    api.get<Paginated<Offer>>("/org/offers", { params }).then((r) => r.data),
+
+  /**
+   * The approval trail, straight from the SHARED workflow engine.
+   *
+   * There is no separate approve/reject call in this module's vocabulary - approval
+   * goes through the engine so the timeline is the engine's append-only history
+   * rather than a status column invented here.
+   */
+  getApproval: (candidateUuid: UUID) =>
+    api
+      .get<{ approval: OfferApproval | null }>(`/org/offers/${candidateUuid}/approval`)
+      .then((r) => r.data.approval),
+
+  /**
+   * Submit the DRAFT appointment letter for approval.
+   *
+   * Refused by the server unless the candidate is already `hired`, because the letter
+   * does not exist before then. Deliberately reachable only from the offers page and
+   * not from a pre-hire pipeline card: there is nothing there to approve.
+   */
+  prepare: (candidateUuid: UUID) => api.get<OfferPreparation>(`/org/offers/${candidateUuid}/prepare`).then((r) => r.data),
+  preview: (candidateUuid: UUID, data: { template_uuid: UUID; values: Record<string, string> }) =>
+    api.post<OfferPreview>(`/org/offers/${candidateUuid}/preview`, data).then((r) => r.data),
+  requestApproval: (candidateUuid: UUID, comments?: string) =>
+    api
+      .post<{ approval: OfferApproval }>(`/org/offers/${candidateUuid}/approval`, { comments })
+      .then((r) => r.data.approval),
+
+  decide: (candidateUuid: UUID, data: { decision: "approve" | "reject"; comments?: string }) =>
+    api
+      .post<{ approval: OfferApproval }>(`/org/offers/${candidateUuid}/approval/decide`, data)
+      .then((r) => r.data.approval),
+
+  /**
+   * Issue the letter. Refused by the server unless it was APPROVED, so a recruiter
+   * cannot skip the conversation by going straight to Send. This is the step that mints
+   * `reference_no` and the QR token — approval alone does not.
+   *
+   * `values` ARE ALWAYS SENT, and the default is NOT an empty object.
+   *
+   * An earlier version sent `{ values: {} }` when the caller had nothing to add, and
+   * that empty payload merged over the values the hire already stored on the draft
+   * letter — so the issued PDF rendered `{{salary}}` as a literal placeholder because
+   * the send blanked what the hire had filled in. The default here is `undefined`, which
+   * axios omits from the body entirely, so the server keeps its own merge fields.
+   *
+   * `undefined` entries are also stripped: the template's merge tags resolve against
+   * this object, and one `undefined` value renders as the text "undefined" in the PDF,
+   * which is worse than a blank.
+   */
+  send: (candidateUuid: UUID) =>
+    api.post<{ candidate_uuid: UUID; status: "sent" }>("/org/offers/" + candidateUuid + "/send", {}).then((r) => r.data),
+  respond: (candidateUuid: UUID, response: "accepted" | "declined", data: { cnic?: string | null; joining_date?: string; comments?: string; portal_access?: boolean } = {}) =>
+    api.post<{ candidate: Candidate; employee_uuid: UUID | null; portal_invitation_status?: "sent" | "failed"; portal_invitation_warning?: string | null }>(
+      "/org/offers/" + candidateUuid + "/respond",
+      { response, ...data },
+    ).then((r) => r.data),
+};
+
+/** The Kanban read: columns with counts for one opening. */
+export const pipelineService = {
+  board: (openingUuid: UUID) =>
+    api.get<PipelineBoard>(`/org/pipeline/${openingUuid}`).then((r) => r.data),
+};
