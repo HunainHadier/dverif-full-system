@@ -75,6 +75,7 @@ import {
   uploadResume,
   removeResume,
   downloadResume,
+  parseResume,
 } from "../controllers/org/recruitment.controller.js";
 import {
   getEmployeeLeaveHistory,
@@ -190,7 +191,7 @@ const payrollMgmtOwner = [...orgAdminsOnly, requireModuleFeature("payroll_manage
 const userMgmtFeature = requireModuleFeature("user_management");
 const userMgmtPermission = requirePermission("user_management");
 const portalAccessIfRequested = (req, res, next) => {
-  if (req.body?.send_invite !== true && req.body?.portal_access !== true) return next();
+  if (req.body?.send_invite !== true) return next();
   return userMgmtFeature(req, res, (error) => error ? next(error) : userMgmtPermission(req, res, next));
 };
 
@@ -447,7 +448,11 @@ router.get("/offers", recruitmentMgmt, asyncHandler(listOffers));
 router.get("/offers/:uuid/prepare", recruitmentMgmt, asyncHandler(getOfferPreparation));
 router.post("/offers/:uuid/preview", recruitmentMgmt, asyncHandler(previewOffer));
 router.post("/offers/:uuid/approval", recruitmentMgmt, asyncHandler(requestOfferApproval));
-router.post("/offers/:uuid/respond", recruitmentMgmt, portalAccessIfRequested, asyncHandler(respondToOffer));
+// ONLY the employee-create route escalates. `portal_access` is not read by the
+// offer-response path any more (see respondToOffer), so keeping it on that route
+// would gate a field nothing looks at — a permission check that appears to
+// protect something while actually only confusing whoever reads it.
+router.post("/offers/:uuid/respond", recruitmentMgmt, asyncHandler(respondToOffer));
 router.post("/offers/:uuid/approval/decide", recruitmentMgmt, asyncHandler(decideOfferApproval));
 router.get("/offers/:uuid/approval", recruitmentMgmt, asyncHandler(getOfferApprovalStatus));
 // Registered after /approval and /approval/decide so neither can be read as this
@@ -464,6 +469,12 @@ router.post(
   recruitmentMgmt,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadResume),
+);
+router.post(
+  "/resume/parse",
+  recruitmentMgmt,
+  uploadAttachments.single("file"),
+  asyncHandler(parseResume),
 );
 router.delete("/candidate-attachments/:attachmentUuid", recruitmentMgmt, asyncHandler(removeResume));
 router.get(

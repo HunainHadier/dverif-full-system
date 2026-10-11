@@ -477,6 +477,128 @@ export function resolveReceipt({ orgId, attachmentUuid }) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Approve a claim at the moment it is filed, or refuse and say why.
+ *
+ * EXISTS AS A SEPARATE FUNCTION rather than a flag on `createClaim`, because the
+ * decision is not "should we create this claim" - it is "should this claim skip
+ * review". Keeping them apart means a caller cannot accidentally make a
+ * permission question look like a field-validation question, and it is the same
+ * separation `reviewClaim` already makes between creating and deciding.
+ *
+ * Returns a REFUSAL REASON or null. Never throws for the ordinary cases below:
+ * a claim filed with the box ticked but without the authority to approve must
+ * still be FILED, pending, and emailed to the approver. Refusing the whole
+ * submission would punish the employee for a checkbox the server has to police.
+ * The one caller-visible consequence is a pending claim instead of an approved
+ * one, which is the outcome the self-approval rule is trying to produce anyway.
+ */
+export async function autoApproveClaim({
+  orgId,
+  actorUuid,
+  employeeUuid,
+  claimUuid,
+  categoryUuid,
+  canApproveExpenses,
+  conn = pool,
+}) {
+  const fail = async (reason) => {
+    logAudit({
+      actorType: "user",
+      actorId: actorUuid ?? null,
+      action: "expense_claim.auto_approve.refused",
+      entityType: ATTACHMENT_ENTITY.CLAIM,
+      entityId: claimUuid,
+      details: { reason },
+    });
+    return reason;
+  };
+
+  // 1. AUTHORITY. A checkbox is not a permission. Without this an ordinary
+  //    employee would auto-approve their own expenses, which is the entire
+  //    failure the module exists to prevent.
+  if (!canApproveExpenses) {
+    return fail("Auto-approval requires the approve_expenses permission, which this account does not have");
+  }
+
+  // 2. NO SELF-APPROVAL. `employeeUuid` is who the money goes to; `actorUuid` is
+  //    who pressed save. When they are the same person, a shortcut at submission
+  //    must not become a way around the rule that reviewer and approver are two
+  //    people. The requirement was explicit that an approval policy prohibiting
+  //    self-approval is NOT bypassed by this feature.
+  if (actorUuid && employeeUuid && actorUuid === employeeUuid) {
+    return fail("A claim cannot be auto-approved by the person it reimburses; it must be reviewed by another approver");
+  }
+
+  // 3. THE SAME RECEIPT RULE reviewClaim enforces. A shortcut that skips the
+  //    proof-of-purchase check is not a shortcut, it is a hole.
+  const [categoryRows] = await conn.query(
+    "SELECT name, requires_receipt FROM expense_categories WHERE uuid=? AND organization_id=?",
+    [categoryUuid, orgId],
+  );
+  if (Number(categoryRows[0]?.requires_receipt) === 1) {
+    const [receipts] = await conn.query(
+      `SELECT COUNT(*) AS n FROM attachments
+        WHERE organization_id=? AND entity_type=? AND entity_uuid=? AND deleted_at IS NULL`,
+      [orgId, ATTACHMENT_ENTITY.CLAIM, claimUuid],
+    );
+    if (Number(receipts[0].n) === 0) {
+      return fail(
+        `${categoryRows[0].name} claims require a receipt, so this one cannot be auto-approved without one`,
+      );
+    }
+  }
+
+  // 4. THE SAME LIMIT reviewClaim re-checks, because a category can be tightened
+  //    between the two and approving against a stale policy reimburses what the
+  //    org's own rules now forbid.
+  const [claimRows] = await conn.query("SELECT amount FROM expense_claims WHERE uuid=?", [claimUuid]);
+  const [limitRows] = await conn.query(
+    "SELECT name, max_limit_per_claim FROM expense_categories WHERE uuid=?",
+    [categoryUuid],
+  );
+  const limit = limitRows[0]?.max_limit_per_claim ?? null;
+  if (limit !== null && Number(claimRows[0].amount) > Number(limit)) {
+    return fail(
+      `This claim exceeds the current ${limitRows[0].name} limit of ${money(limit)} per claim`,
+    );
+  }
+
+  /*
+   * THE AUDIT TRAIL.
+   *
+   * `reviewed_by_uuid` and `reviewed_at` are written exactly as `reviewClaim`
+   * writes them, so every reader of those columns - the claim queue, the
+   * reports, the payroll integration - does not need to know which path
+   * produced the row. `auto_approved` and `auto_approved_by_uuid` are the
+   * additions that record the shortcut itself: an auto-approved claim is not a
+   * reviewed claim and must not LOOK like one, or the first question anyone asks
+   * once the numbers look large ("how many claims skipped review?") has no
+   * answer anywhere in the database.
+   *
+   * `status='pending'` in the WHERE is the same guard reviewClaim uses, so a
+   * concurrent manual decision cannot be overwritten by this one.
+   */
+  await conn.query(
+    `UPDATE expense_claims
+        SET status='approved', auto_approved=1, auto_approved_by_uuid=?,
+            reviewed_by_uuid=?, reviewed_at=NOW(), updated_at=NOW()
+      WHERE uuid=? AND organization_id=? AND status='pending'`,
+    [actorUuid ?? null, actorUuid ?? null, claimUuid, orgId],
+  );
+
+  logAudit({
+    actorType: "user",
+    actorId: actorUuid ?? null,
+    action: "expense_claim.auto_approve",
+    entityType: ATTACHMENT_ENTITY.CLAIM,
+    entityId: claimUuid,
+    details: { employee_uuid: employeeUuid, amount: claimRows[0].amount },
+  });
+
+  return null;
+}
+
+/**
  * Approve or reject a claim.
  *
  * Approval refuses a claim whose category requires a receipt and has none. That

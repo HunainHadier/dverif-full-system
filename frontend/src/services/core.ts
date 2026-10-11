@@ -979,6 +979,30 @@ export type IpRule = {
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ SALARY / PAYROLL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
+/**
+ * One itemised earning or deduction, as the payroll generator wrote it.
+ *
+ * The `source` is what produced the line and `basis_value`/`basis_unit` are the
+ * count behind it — 2 days, 3 late arrivals, 2 claims. They exist so a payslip
+ * can say WHY a number is what it is instead of only WHAT it is.
+ */
+export type SalaryRecordLine = {
+  label: string;
+  type: "earning" | "deduction";
+  source:
+    | "basic"
+    | "component"
+    | "auto_unpaid_leave"
+    | "auto_absenteeism"
+    | "auto_late"
+    | "auto_overtime"
+    | "auto_expense"
+    | "manual";
+  amount: string | number;
+  basis_value?: string | number | null;
+  basis_unit?: "days" | "hours" | "late_arrivals" | "claims" | null;
+};
+
 export type SalaryRecord = {
   uuid: UUID;
   employee_uuid: UUID;
@@ -995,6 +1019,13 @@ export type SalaryRecord = {
   designation?: string | null;
   organization_uuid?: UUID | null;
   organization_name?: string | null;
+  /**
+   * The breakdown behind the totals above. EMPTY on records made before
+   * `salary_record_lines` existed — every record the original payroll flow
+   * produced — which is why callers fall back to the aggregate totals rather
+   * than assuming the array is there.
+   */
+  lines?: SalaryRecordLine[];
 };
 
 export type SalaryComponent = {

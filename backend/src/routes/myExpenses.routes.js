@@ -4,6 +4,7 @@ import authUser from "../middleware/authUser.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
+import { hasPermission } from "../utils/permissions.js";
 import {
   myExpenseClaims,
   submitMyExpenseClaim,
@@ -39,9 +40,28 @@ router.use(authUser);
 // authUser first so req.user AND req.scopeOrgId exist.
 const selfService = [requireActiveSubscription, requireModuleFeature("expense_management")];
 
+/**
+ * Resolve whether THIS CALLER may auto-approve an expense claim.
+ *
+ * READ FROM THE SESSION, NOT FROM THE BODY. That is the whole reason this
+ * middleware exists: an `approve_expenses` flag sent in the request payload is a
+ * claim about authority that the sender made up, and honouring it is how a
+ * permission check stops being one. The permission comes from the user's own
+ * `feature_access`, resolved here, so the checkbox in the modal is a visibility
+ * rule and never the gate.
+ *
+ * Attaching the answer to the request rather than throwing keeps the endpoint
+ * usable: an employee without the permission can still FILE a claim - it simply
+ * lands as pending, and the service turns down the auto-approval.
+ */
+const resolveExpenseApprovalAuthority = (req, _res, next) => {
+  req.canApproveExpenses = hasPermission(req.user, "approve_expenses");
+  next();
+};
+
 router.get("/", selfService, asyncHandler(myExpenseClaims));
 router.get("/:uuid", selfService, asyncHandler(myExpenseClaimDetail));
-router.post("/", selfService, asyncHandler(submitMyExpenseClaim));
+router.post("/", selfService, resolveExpenseApprovalAuthority, asyncHandler(submitMyExpenseClaim));
 
 /**
  * Receipts on the employee's OWN claim.

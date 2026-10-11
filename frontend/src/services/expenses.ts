@@ -284,13 +284,27 @@ export const myExpensesService = {
   get: (uuid: UUID) =>
     api.get<{ claim: ExpenseClaimDetail }>(`/my/expenses/${uuid}`).then((r) => r.data.claim),
 
+  /**
+   * File one of MY claims.
+   *
+   * `auto_approve` is a REQUEST, not an instruction — the server resolves the
+   * approve_expenses permission from the session, not from this field, so a
+   * client that sends it without the authority gets a pending claim rather than an
+   * approved one. The response carries `auto_approve_refusal` when that happens,
+   * which the form shows as a warning instead of an error: the claim itself was
+   * filed either way.
+   */
   create: (data: {
     category_uuid: UUID;
     amount: number;
     expense_date: string;
     description?: string;
     payment_mode?: PaymentMode;
-  }) => api.post<{ claim: ExpenseClaim }>("/my/expenses", data).then((r) => r.data.claim),
+    auto_approve?: boolean;
+  }) =>
+    api
+      .post<{ claim: ExpenseClaim & { auto_approve_refusal?: string | null } }>("/my/expenses", data)
+      .then((r) => r.data.claim),
 
   /**
    * Add receipts to one of MY claims.

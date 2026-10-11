@@ -6,9 +6,9 @@ import { isoDate } from "../utils/dateRange.js";
 import { logAudit } from "../utils/auditLog.js";
 import * as attachments from "./attachments.service.js";
 import { getTemplate, listTemplates } from "./hrLetters.service.js";
-import { createEmployeePortalInvite, deliverEmployeePortalInvite } from "./employeeAccess.service.js";
 import { renderTemplate, validateBody, tagsForLetterType, tagLabel, unsupportedTags } from "../utils/letterMerge.js";
 import { sendRecruitmentOfferEmail } from "../utils/mailer.js";
+import { ocrExtract } from "./documentService.js";
 
 /**
  * Applicant tracking: openings, candidates, interviews.
@@ -803,7 +803,6 @@ export async function hireCandidate({
   departmentId,
   emergencyContact,
   offerAcceptance = false,
-  portalAccess = false,
   responseNotes = null,
   offerLetterTemplateUuid,
   offerLetterTitle,
@@ -841,7 +840,6 @@ export async function hireCandidate({
    * for speed are the realistic way to hit this.
    */
   const own = conn === pool;
-  if (portalAccess && !own) throw new ApiError(409, "Portal invitations must be created through the organization response endpoint so delivery runs after commit.");
   const db = own ? await pool.getConnection() : conn;
   if (own) await db.beginTransaction();
 
@@ -857,7 +855,6 @@ export async function hireCandidate({
       departmentId,
       emergencyContact,
       offerAcceptance,
-      portalAccess,
       responseNotes,
       offerLetterTemplateUuid,
       offerLetterTitle,
@@ -865,13 +862,6 @@ export async function hireCandidate({
       now,
     });
     if (own) await db.commit();
-    if (own && result.portalInvite) {
-      const delivery = await deliverEmployeePortalInvite({ ...result.portalInvite, to: result.employeeEmail, invitedByName: "Recruitment team" });
-      result.portal_invitation_status = delivery.sent ? "sent" : "failed";
-      result.portal_invitation_warning = delivery.warning;
-      delete result.portalInvite;
-      delete result.employeeEmail;
-    }
     return result;
   } catch (e) {
     // Unconditional when we own it. A partial rollback would leave the caller
@@ -901,7 +891,6 @@ async function hireCandidateInTransaction({
   departmentId,
   emergencyContact,
   offerAcceptance,
-  portalAccess,
   responseNotes,
   offerLetterTemplateUuid,
   offerLetterTitle,
@@ -965,8 +954,15 @@ async function hireCandidateInTransaction({
   if (startingSalaryRaw != null && String(startingSalaryRaw).trim() !== "" && (!Number.isFinite(startingSalary) || startingSalary <= 0)) {
     throw new ApiError(409, "The approved offer salary is not a valid positive amount. Revise the offer and obtain approval again before acceptance.");
   }
-  if (portalAccess && !candidate.email) throw new ApiError(400, "A candidate email is required to enable employee portal access");
 
+  /*
+   * A candidate email is COLLECTED, NOT REQUIRED. It used to be forced here because
+   * the hire issued the invitation in the same transaction, so an employee without
+   * one would be unable to ever log in. That coupling is gone — the invitation is
+   * now triggered from the employee row, and the endpoint that issues it does its
+   * own email check at that point. A candidate hired from a walk-in with no email
+   * on file is therefore a normal, complete hire rather than a refused one.
+   */
   const employeeUuid = randomUUID();
   const [employeeInsert] = await db.query(
     `INSERT INTO employees
@@ -1000,12 +996,19 @@ async function hireCandidateInTransaction({
     );
   }
 
-  let portalInvite = null;
-  if (portalAccess) portalInvite = await createEmployeePortalInvite({
-    conn: db, employeeUuid, organizationId: orgId, fullName: candidate.full_name,
-    email: candidate.email, phone: candidate.phone, cnic: effectiveCnic, actorUuid,
-  });
-
+  /*
+   * NO PORTAL INVITE HERE, and that is deliberate — an accepted offer creates the
+   * employee record, nothing more. Inviting someone is its own act with its own
+   * recipient: the recruiter who accepted the offer on Monday is not necessarily
+   * the person who wants to decide on Tuesday whether this new hire gets a login
+   * today, after their documents arrive. Doing it inline also meant a mail hiccup
+   * after a committed hire reported as "offer accepted" while the invitation had
+   * silently never gone out, and the only place to notice was the employee list.
+   *
+   * The invite goes out from there instead, via POST /org/employees/:uuid/resend-invite,
+   * which mints a fresh token and delivers after its own commit. Same generation,
+   * same protections, chosen moment.
+   */
   // The UPDATE re-asserts both preconditions. This is the one-shot guard: of two
   // concurrent hires, one matches this row and the other matches nothing.
   const [result] = await db.query(
@@ -1036,7 +1039,7 @@ async function hireCandidateInTransaction({
     details: {
       employee_uuid: employeeUuid,
       opening_uuid: candidate.job_opening_uuid,
-      portal_access_requested: Boolean(portalInvite),
+      portal_invite_sent: false,
     },
   });
 
@@ -1044,7 +1047,6 @@ async function hireCandidateInTransaction({
     candidate: await getCandidate({ orgId, candidateUuid, conn: db }),
     employee_uuid: employeeUuid,
     offer_letter: null,
-    portalInvite,
     employeeEmail: candidate.email,
   };
 }
@@ -1227,8 +1229,25 @@ export async function sendOffer({ orgId, actorUuid, candidateUuid, conn = pool }
   }
 }
 
+/**
+ * Record the candidate's answer to a sent offer.
+ *
+ * ACCEPTING CREATES THE EMPLOYEE, AND ONLY THE EMPLOYEE. There is no portal
+ * invitation in this flow, and removing it is the point: "this person starts
+ * Monday" and "this person can log into our HR system" are two decisions, and
+ * the recruiter standing at the pipeline board is making the first one. Inviting
+ * someone is a deliberate act on the employee row afterwards — POST
+ * /org/employees/:uuid/resend-invite — where the mailbox, the timing and the
+ * reason are chosen rather than inherited from an offer flow that has already
+ * finished its job.
+ *
+ * `portal_access` IS NOT PARAMETERISED ANY MORE. It is dropped here rather than
+ * forwarded and ignored, because a parameter that is accepted and does nothing
+ * is a lie in the signature — a reader would conclude the field still does
+ * something. The controller handles the field it still receives on the body.
+ */
 export async function respondToOffer({
-  orgId, actorUuid, candidateUuid, response, portalAccess = false, joiningDate, cnic,
+  orgId, actorUuid, candidateUuid, response, joiningDate, cnic,
   designationId, departmentId, emergencyContact, comments, conn = pool,
 }) {
   const candidate = await loadCandidate({ orgId, candidateUuid, conn, forUpdate: true });
@@ -1248,7 +1267,7 @@ export async function respondToOffer({
   if (response !== "accepted") throw new ApiError(400, "response must be accepted or declined");
   return hireCandidate({
     orgId, actorUuid, candidateUuid, cnic, joiningDate, designationId, departmentId,
-    emergencyContact, offerAcceptance: true, portalAccess, responseNotes: comments, conn,
+    emergencyContact, offerAcceptance: true, responseNotes: comments, conn,
   });
 }
 
@@ -1914,6 +1933,28 @@ export async function removeResume({ orgId, actorUuid, attachmentUuid, conn = po
 
 export function downloadResume({ orgId, attachmentUuid }) {
   return attachments.resolveForDownload({ orgId, attachmentUuid });
+}
+
+/**
+ * Parse a resume/CV file and extract candidate fields.
+ *
+ * Calls the shared Python document service (POST /ocr/extract) with the
+ * "resume" schema (name, cnic, designation). Returns only fields the OCR
+ * service actually extracts — email, phone, cover_letter, and notes are
+ * NOT extracted (no parser exists for those). The caller must clean up
+ * the temporary file after this function resolves.
+ */
+export async function parseResumeFile({ filePath }) {
+  const { data } = await ocrExtract(filePath, "resume");
+  const fields = data.fields || {};
+  return {
+    name: fields.name?.value ?? null,
+    name_confidence: fields.name?.confidence ?? null,
+    cnic: fields.cnic?.value ?? null,
+    cnic_confidence: fields.cnic?.confidence ?? null,
+    designation: fields.designation?.value ?? null,
+    designation_confidence: fields.designation?.confidence ?? null,
+  };
 }
 
 // ===========================================================================

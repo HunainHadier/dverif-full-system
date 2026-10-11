@@ -1,5 +1,7 @@
 import ApiError from "../../utils/ApiError.js";
+import fs from "node:fs/promises";
 import { ok, created } from "../../utils/response.js";
+import { isValidPhone } from "../../utils/contactFormat.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import * as recruitment from "../../services/recruitment.service.js";
@@ -132,6 +134,31 @@ export async function getCandidate(req, res) {
  * path that cannot supply one at all, which is the whole reason they differ.
  */
 export async function createApplication(req, res) {
+  /*
+   * CNIC AND PHONE SHAPE, at the boundary.
+   *
+   * The candidate form had NO identity validation at all, while the employee form
+   * had a rule the candidate's data would eventually have to satisfy on hire. So
+   * a 12-digit CNIC could be filed as a candidate, survive screening, reach
+   * `offered`, and only fail when the accepted offer tried to create the
+   * employee — a refusal three stages downstream of the mistake, where the
+   * recruiter who made it is long gone.
+   *
+   * The rule is the shared one. Absent values pass on purpose: a walk-in
+   * candidate's CNIC is commonly not in hand at application time, and
+   * `candidates.cnic` is nullable for exactly that. A wrongly-shaped value that
+   * WAS typed is refused here, at the moment it is known to be wrong.
+   */
+  const cnicGiven = String(req.body?.cnic ?? "").trim();
+  const cnicDigits = cnicGiven.replace(/\D/g, "");
+  if (cnicGiven && cnicDigits.length !== 13) {
+    throw new ApiError(400, "cnic must be 13 digits, e.g. 42101-2345678-9");
+  }
+  const phoneGiven = String(req.body?.phone ?? "").trim();
+  if (phoneGiven && !isValidPhone(phoneGiven)) {
+    throw new ApiError(400, "phone must be 7-15 digits and may contain spaces and + ( ) -");
+  }
+
   const candidate = await recruitment.createCandidate({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -139,7 +166,9 @@ export async function createApplication(req, res) {
     fullName: str(req.body?.full_name),
     email: str(req.body?.email),
     phone: str(req.body?.phone),
-    cnic: str(req.body?.cnic),
+    // Bare digits. The browser sends the mask, the column and every uniqueness
+    // check want the number.
+    cnic: cnicDigits || null,
     coverLetter: str(req.body?.cover_letter),
     notes: str(req.body?.notes),
   });
@@ -223,12 +252,21 @@ export async function startOfferApplication(req, res) {
 }
 
 export async function respondToOffer(req, res) {
+  /*
+   * `portal_access` is read from the body and deliberately not forwarded.
+   *
+   * An accepted offer creates the employee and stops there. Sending the
+   * invitation is a separate, deliberate act on the employee row — see the
+   * comment on respondToOffer in the service. Reading the field and dropping it
+   * is what keeps a client that still sends it working: the request succeeds, the
+   * decision simply moves to where it belongs. A 400 here would break a caller
+   * that cannot know the field became vestigial.
+   */
   const result = await recruitment.respondToOffer({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
     candidateUuid: req.params.uuid,
     response: str(req.body?.response),
-    portalAccess: req.body?.portal_access === true,
     joiningDate: str(req.body?.joining_date),
     cnic: str(req.body?.cnic),
     designationId: req.body?.designation_id,
@@ -490,6 +528,45 @@ export async function downloadResume(req, res) {
   const safeName = String(resolved.file_name || "resume").replace(/[^\w.\- ]+/g, "_");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
   return res.sendFile(resolved.absolutePath);
+}
+
+/**
+ * Parse a resume/CV file and extract candidate fields.
+ *
+ * Uses the shared Python document service (POST /ocr/extract) with the "resume"
+ * schema. Returns only fields the OCR service actually extracts — name, cnic,
+ * designation — with their confidence levels. Email, phone, cover_letter, and
+ * notes are NOT extracted (no parser exists for those); the frontend leaves
+ * them empty for manual entry.
+ *
+ * The file is validated by uploadAttachments (isDocumentAllowed allow-list),
+ * stored temporarily, sent to the Python service, then deleted. The file is
+ * NOT persisted — this is a preview/parse endpoint only.
+ */
+export async function parseResume(req, res) {
+  if (!req.file) {
+    throw new ApiError(400, "A file is required");
+  }
+  /*
+   * The parse file is a TEMPORARY upload, not an attachment — this endpoint
+   * previews a CV, it does not store one. uploadAttachments already validated
+   * the type against the same isDocumentAllowed allow-list the real resume route
+   * uses, so no second gate is needed; what is needed is an unconditional unlink.
+   * Without it, every attempted parse — including the ones that failed, which
+   * are the common case when the OCR service is down — would accumulate in
+   * ATTACHMENTS_DIR with no attachment row referencing it and no listing that
+   * could ever see it. The service down for an afternoon would quietly consume
+   * the volume. Swallowed because a file already gone is not the error worth
+   * reporting over a parse that just succeeded.
+   */
+  try {
+    const result = await recruitment.parseResumeFile({ filePath: req.file.path });
+    return ok(res, { fields: result }, "Resume parsed");
+  } finally {
+    try {
+      await fs.promises.unlink(req.file.path);
+    } catch {}
+  }
 }
 
 /** Exported for the route table's sake only — keeps the upload middleware import local. */

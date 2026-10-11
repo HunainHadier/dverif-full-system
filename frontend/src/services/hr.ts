@@ -274,9 +274,20 @@ export const orgSalaryService = {
     const r = await api.get("/org/salary-records/export", { params, responseType: "blob" });
     return r.data as Blob;
   },
-  payslip: async (uuid: UUID) => {
+  /**
+   * Fetch the payslip PDF.
+   *
+   * `view` sets the `Content-Disposition` the server sends — `inline` lets the
+   * browser render it in a tab, `attachment` saves a file. It does NOT change
+   * what is rendered: both go through the same controller, the same query and
+   * the same `generatePayslipPdf`, so the preview and the download are the same
+   * document. That is the guarantee the requirement asks for, and it only holds
+   * because there is one endpoint rather than two.
+   */
+  payslip: async (uuid: UUID, view?: "inline" | "attachment") => {
     const r = await api.get(`/org/salary-records/${uuid}/payslip`, {
       responseType: "blob",
+      params: view ? { view } : undefined,
     });
     return r.data as Blob;
   },

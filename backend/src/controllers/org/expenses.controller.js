@@ -16,6 +16,7 @@ import {
   reviewClaim,
   markClaimPaid,
   bulkMarkClaimsPaid,
+  autoApproveClaim,
   ATTACHMENT_ENTITY,
 } from "../../services/expenses.service.js";
 
@@ -272,16 +273,46 @@ export async function submitMyExpenseClaim(req, res) {
     paymentMode: req.body?.payment_mode,
   });
 
+  /*
+   * AUTO-APPROVAL, requested by the caller.
+   *
+   * Whether it is HONORED is not this function's decision and not the checkbox's.
+   * `autoApproveClaim` applies the three rules - approve_expenses authority, no
+   * self-approval, and the receipt requirement the manual review also enforces -
+   * and returns a reason when it refuses.
+   *
+   * A REFUSAL IS NOT AN ERROR. The claim has already been filed by the time this
+   * runs, and the whole point of the design is that it stays filed: an employee
+   * who ticked a box they cannot act on should not lose their claim, they should
+   * get a pending one. That is why the reason is surfaced as a warning on the
+   * response rather than thrown, and why nothing here rolls anything back.
+   */
+  const autoApproveRefusal = await autoApproveClaim({
+    orgId,
+    actorUuid: req.user?.uuid ?? null,
+    employeeUuid: employee.uuid,
+    claimUuid: claim.uuid,
+    categoryUuid: claim.category_uuid ?? req.body?.category_uuid,
+    // Read from the request, never from the body. An account that cannot approve
+    // claims must not be able to word itself into being able to by sending a flag.
+    canApproveExpenses: Boolean(req.canApproveExpenses),
+  });
+
   logAudit({
     ...getActorFromReq(req),
     action: "expense_claim.submit_self",
     entityType: ATTACHMENT_ENTITY.CLAIM,
     entityId: claim.uuid,
-    details: { amount: claim.amount, expense_date: claim.expense_date },
+    details: {
+      amount: claim.amount,
+      expense_date: claim.expense_date,
+      auto_approve_requested: Boolean(req.body?.auto_approve),
+      auto_approve_refusal: autoApproveRefusal,
+    },
     req,
   });
 
-  return created(res, { claim }, "Expense claim submitted");
+  return created(res, { claim, auto_approve_refusal: autoApproveRefusal }, "Expense claim submitted");
 }
 
 export async function myExpenseClaimDetail(req, res) {

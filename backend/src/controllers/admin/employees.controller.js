@@ -10,6 +10,7 @@ import { sendInviteEmail } from "../../utils/mailer.js";
 import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { STAFF_ROLES, assertRole, ROLE_ORG_ADMIN } from "../../utils/roles.js";
+import { isValidPhone as isValidContactPhone } from "../../utils/contactFormat.js";
 
 const EMPLOYEE_SELECT = `SELECT e.id, e.uuid, e.employee_code, e.organization_id, e.full_name, e.email, e.phone,
         e.cnic, dg.name AS designation, dp.name AS department, e.status, e.is_platform_user,
@@ -122,7 +123,29 @@ function normalizeEmployeePayload(body) {
   if (email !== undefined && email !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errors.push("email is invalid");
   }
-  if (emergency_contact !== undefined && emergency_contact !== "" && !/^[0-9+\-() ]{6,30}$/.test(emergency_contact)) {
+  /*
+   * CNIC AND PHONE SHAPE, at the boundary.
+   *
+   * The frontend now validates both, and this is not a duplicate of that — a
+   * browser is not a trust boundary. The rule here is the SAME rule the shared
+   * `src/lib/contactFormat.ts` module applies in three screens, expressed once on
+   * the server: 13 bare digits for a CNIC (dashes and spaces accepted on input
+   * and stripped, because that is how they are typed), and a permissive phone
+   * pattern for digits, spaces and the punctuation people actually use.
+   *
+   * NOT tightened to be stricter. The employee form previously accepted "1", the
+   * candidate form accepted nothing at all, and the sub-admin form used a third
+   * regex — making them agree is the fix. Making them strict would reject numbers
+   * that are today stored and valid.
+   */
+  const cnicDigits = cnic ? String(cnic).replace(/\D/g, "") : "";
+  if (cnicDigits && cnicDigits.length !== 13) {
+    errors.push("cnic must be 13 digits, e.g. 42101-2345678-9");
+  }
+  if (phone !== undefined && phone !== "" && !isValidContactPhone(String(phone))) {
+    errors.push("phone must be 7-15 digits and may contain spaces and + ( ) -");
+  }
+  if (emergency_contact !== undefined && emergency_contact !== "" && !isValidContactPhone(String(emergency_contact))) {
     errors.push("emergency_contact is invalid");
   }
   const employmentTypes = ["full_time", "part_time", "contract", "temporary", "intern"];
@@ -153,7 +176,9 @@ function normalizeEmployeePayload(body) {
     full_name: String(full_name).trim(),
     email: email ? String(email).trim() : null,
     phone: phone ? String(phone).trim() : null,
-    cnic: String(cnic).trim(),
+    // Bare digits, whatever the client sent. The display mask is a presentation
+    // concern; the column and every uniqueness check agree on this shape.
+    cnic: cnicDigits,
     designation: designation ? String(designation).trim() : null,
     department: department ? String(department).trim() : null,
     status: normalizedStatus,

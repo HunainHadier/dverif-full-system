@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Wallet } from "lucide-react";
-import { salaryService, type SalaryRecord } from "@/services";
+import { salaryService, type SalaryRecord, type SalaryRecordLine } from "@/services";
 import { authStore } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -54,40 +54,133 @@ function money(value: string | number): string {
   return n.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * What produced a stored line, in words.
+ *
+ * `source` is a machine token from the payroll generator. Printing
+ * `auto_absenteeism` at a person looking at their own pay is a detail nobody
+ * asked for and everyone notices; these say what actually caused the number.
+ */
+const LINE_SOURCE_LABELS: Record<string, string> = {
+  basic: "Salary record",
+  component: "Salary component",
+  auto_unpaid_leave: "Unpaid leave",
+  auto_absenteeism: "Absent days",
+  auto_late: "Late arrivals",
+  auto_overtime: "Approved overtime",
+  auto_expense: "Expense claims",
+  manual: "Manual adjustment",
+};
+
+const LINE_BASIS_UNITS: Record<string, string> = {
+  days: "days",
+  hours: "hours",
+  late_arrivals: "late arrivals",
+  claims: "claims",
+};
+
+/** "2 days" from a count and a unit, or null when either is absent. */
+function basisLabel(basisValue: SalaryRecordLine["basis_value"], basisUnit: SalaryRecordLine["basis_unit"]) {
+  const unit = basisUnit ? LINE_BASIS_UNITS[basisUnit] : null;
+  if (!unit || basisValue === null || basisValue === undefined || String(basisValue).trim() === "") return null;
+  const count = Number(basisValue);
+  if (!Number.isFinite(count)) return null;
+  return `${count} ${unit}`;
+}
+
 function PayslipDialog({ record, onClose }: { record: SalaryRecord; onClose: () => void }) {
   const { t } = useTranslation();
+  const lines = record.lines ?? [];
+  const earnings = lines.filter((l) => l.type === "earning");
+  const deductions = lines.filter((l) => l.type === "deduction");
+
+  const renderLine = (line: SalaryRecordLine) => {
+    const basis = basisLabel(line.basis_value, line.basis_unit);
+    const source = line.source ? LINE_SOURCE_LABELS[line.source] ?? line.source : null;
+    return (
+      <div key={`${line.type}-${line.label}`} className="border-b border-border pb-2">
+        <div className="flex justify-between gap-2">
+          <span className="text-sm text-foreground">{line.label}</span>
+          <span className="whitespace-nowrap text-sm font-medium">{money(line.amount)}</span>
+        </div>
+        {/*
+         * PROVENANCE UNDER THE NAME, not beside it. "Transport allowance" with
+         "Salary component" and "15,000" beneath it answers the question the
+         three-line summary could not: what is this and where did it come from.
+         The basis joins when the line was derived from a count, so "Absent days
+         3" reads as three days rather than three units of money.
+         */}
+        {source || basis ? (
+          <span className="text-xs text-muted-foreground">
+            {[source, basis].filter(Boolean).join(" · ")}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {t("orgPayroll.period", "Period")}: {getMonthName(record.month)} {record.year}
           </DialogTitle>
           <DialogDescription>
-            {record.employee_name ?? ""} — Payslip on-screen
+            {record.employee_name ?? ""} — Payslip
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex justify-between border-b border-border pb-2">
-            <span className="text-sm text-muted-foreground">{t("orgPayroll.basic", "Basic")}</span>
-            <span className="text-sm font-medium">{money(record.basic_salary)}</span>
+        {/*
+         * ITEMISED WHEN THE LINES EXIST, aggregated when they do not.
+         *
+         * A record predating `salary_record_lines` has none, and an empty
+         * "Earnings" heading is worse than the total it replaced. Those records
+         * keep the four-number view; every record since shows each line.
+         */}
+        {lines.length ? (
+          <div className="space-y-4">
+            <section className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("orgPayroll.earnings", "Earnings")}
+              </h4>
+              {earnings.map(renderLine)}
+            </section>
+            <section className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t("orgPayroll.deductions", "Deductions")}
+              </h4>
+              {deductions.length ? deductions.map(renderLine) : (
+                <p className="text-sm text-muted-foreground">{t("orgPayroll.noDeductions", "None")}</p>
+              )}
+            </section>
+            <div className="flex justify-between rounded-md bg-primary/10 px-3 py-2">
+              <span className="text-sm font-semibold text-foreground">{t("orgPayroll.net", "Net Salary")}</span>
+              <span className="text-sm font-bold text-primary">{money(record.net_salary)}</span>
+            </div>
           </div>
-          <div className="flex justify-between border-b border-border pb-2">
-            <span className="text-sm text-muted-foreground">{t("orgPayroll.allowances", "Allowances")}</span>
-            <span className="text-sm font-medium">{money(record.allowances)}</span>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex justify-between border-b border-border pb-2">
+              <span className="text-sm text-muted-foreground">{t("orgPayroll.basic", "Basic")}</span>
+              <span className="text-sm font-medium">{money(record.basic_salary)}</span>
+            </div>
+            <div className="flex justify-between border-b border-border pb-2">
+              <span className="text-sm text-muted-foreground">{t("orgPayroll.allowances", "Allowances")}</span>
+              <span className="text-sm font-medium">{money(record.allowances)}</span>
+            </div>
+            <div className="flex justify-between border-b border-border pb-2">
+              <span className="text-sm text-muted-foreground">{t("orgPayroll.deductions", "Deductions")}</span>
+              <span className="text-sm font-medium">{money(record.deductions)}</span>
+            </div>
+            <div className="flex justify-between rounded-md bg-primary/10 px-3 py-2">
+              <span className="text-sm font-semibold text-foreground">{t("orgPayroll.net", "Net Salary")}</span>
+              <span className="text-sm font-bold text-primary">{money(record.net_salary)}</span>
+            </div>
           </div>
-          <div className="flex justify-between border-b border-border pb-2">
-            <span className="text-sm text-muted-foreground">{t("orgPayroll.deductions", "Deductions")}</span>
-            <span className="text-sm font-medium">{money(record.deductions)}</span>
-          </div>
-          <div className="flex justify-between rounded-md bg-primary/10 px-3 py-2">
-            <span className="text-sm font-semibold text-foreground">{t("orgPayroll.net", "Net Salary")}</span>
-            <span className="text-sm font-bold text-primary">{money(record.net_salary)}</span>
-          </div>
-          <p className="pt-1 text-xs text-muted-foreground">
-            For queries about your payslip, please contact your organization admin.
-          </p>
-        </div>
+        )}
+        <p className="pt-1 text-xs text-muted-foreground">
+          For queries about your payslip, please contact your organization admin.
+        </p>
       </DialogContent>
     </Dialog>
   );

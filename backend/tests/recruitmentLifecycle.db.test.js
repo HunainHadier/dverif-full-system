@@ -835,6 +835,50 @@ describe.runIf(HAS_DB)("accepting an offer creates the employee", () => {
     expect(rows[0].cnic).toBe("35202-1234567-1");
   });
 
+  /**
+   * ACCEPTANCE CREATES THE EMPLOYEE. IT DOES NOT INVITE THEM.
+   *
+   * This is the whole point of the rule and the reason it is worth a database
+   * test rather than a controller test: the invite used to be minted inside the
+   * hire transaction, so "accepted" and "can log in" were one event and neither
+   * was chosen. A click on Record acceptance emailed a set-password link to
+   * whoever was named in the candidate row — including people whose documents
+   * had not arrived, and people whose mailbox nobody had confirmed belonged to
+   * them.
+   *
+   * The invitation now goes out from the employee row (resendEmployeeInvite),
+   * and what this test pins is that the hire writes NO user, NO token, and does
+   * NOT set is_platform_user. If someone reintroduces the inline invite it will
+   * fail here on the invite_tokens count, which is the assertion that a
+   * code-reading review would be least likely to catch in a hurry.
+   */
+  it("does NOT invite the candidate when the offer is accepted", async () => {
+    const opening = await open();
+    const candidate = await apply(opening.uuid, { fullName: "Sana Malik", email: "sana@example.com" });
+    await toOffered(candidate.uuid);
+    const result = await hireThroughAcceptance(candidate.uuid);
+
+    // The employee exists — that half works.
+    expect(result.employee_uuid).toBeTruthy();
+
+    // No account for them, and no token issued in their name. Scoped by email
+    // rather than counted across the whole table: invite_tokens hangs off
+    // users.uuid, not off an organization, so an org-scoped purge does not clear
+    // it and rows from another suite's fixtures would otherwise fail this test
+    // for a reason that has nothing to do with acceptance.
+    const [[users]] = await db.query("SELECT COUNT(*) AS n FROM users WHERE email=?", ["sana@example.com"]);
+    expect(Number(users.n)).toBe(0);
+    const [[tokens]] = await db.query(
+      "SELECT COUNT(*) AS n FROM invite_tokens WHERE user_uuid IN (SELECT uuid FROM users WHERE organization=?)",
+      [orgId],
+    );
+    expect(Number(tokens.n)).toBe(0);
+
+    const [empRows] = await db.query("SELECT is_platform_user, linked_user_uuid FROM employees WHERE uuid=?", [result.employee_uuid]);
+    expect(empRows[0].is_platform_user).not.toBe("yes");
+    expect(empRows[0].linked_user_uuid).toBeNull();
+  });
+
   it("converts a candidate with NO cnic, which is the common case", async () => {
     const opening = await open();
     const candidate = await apply(opening.uuid);
