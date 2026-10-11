@@ -567,6 +567,10 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
   });
   const leaveEncashment = money(perDayRate * leave.encashable_days);
 
+  // Worked days basic salary for the exit month up to last working day
+  const workedDaysInExitMonth = calendar.workingDates.filter((d) => d <= lastWorkingDay).length;
+  const workedDaysSalary = money(perDayRate * workedDaysInExitMonth);
+
   const noticeGivenOn = isoDate(exit.created_at);
   const served = noticeDaysServed({
     noticeGivenOn,
@@ -574,16 +578,16 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
     noticePeriodDays: exit.notice_period_days,
   });
   const shortfallDays = Math.max(0, Number(exit.notice_period_days) - served);
-  const noticeRecovery = money(perDayRate * shortfallDays);
-  // Negative, because it reduces the payout. The column is named
-  // notice_pay_adjustment because it is an adjustment either way; the sign is what
-  // carries the direction.
-  const noticePayAdjustment = money(-noticeRecovery);
+
+  // For company termination, do NOT deduct a notice shortfall fine from the employee.
+  const isTermination = exit.request_type === "termination";
+  const noticeRecovery = isTermination ? 0 : money(perDayRate * shortfallDays);
+  const noticePayAdjustment = isTermination ? 0 : money(-noticeRecovery);
 
   const assets = await getOutstandingAssets({ orgId, employeeUuid: exit.employee_uuid, conn });
   const exposure = assets.exposure;
 
-  const gross = leaveEncashment;
+  const gross = money(workedDaysSalary + leaveEncashment);
   const availableForAssets = Math.max(0, gross - noticeRecovery);
   // Capped. See the note above - this is the difference between a settlement and a
   // deduction that nobody can honour.
@@ -598,6 +602,10 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
     basic_salary: money(basic),
     working_days_in_month: workingDays,
     per_day_rate: perDayRate,
+    worked_days_salary: {
+      worked_days: workedDaysInExitMonth,
+      amount: workedDaysSalary,
+    },
     leave: { ...leave, amount: leaveEncashment },
     notice: {
       notice_period_days: Number(exit.notice_period_days),

@@ -9,6 +9,7 @@ import {
   Lock,
   Building2,
   Languages,
+  ShieldCheck,
   Database,
   FileStack,
   UserCog,
@@ -23,6 +24,8 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { apiErrorMessage } from "@/lib/utils";
+import { orgService } from "@/services/org";
 import { authService } from "@/services";
 import { PasswordInput } from "@/components/common/PasswordInput";
 import { DocumentTypesPanel } from "@/components/admin/DocumentTypesPanel";
@@ -277,8 +280,9 @@ function SettingsPage() {
         )}
           </div>
 
-            <div className="mt-6">
+            <div className="mt-6 space-y-4">
               {user?.role !== "admin" && <LanguagePreferenceCard />}
+              {user?.org_role === "org_admin" && <ApprovalPolicyCard />}
             </div>
           </TabsContent>
 
@@ -472,6 +476,62 @@ function LanguagePreferenceCard() {
             {t("lang.urdu")}
           </label>
         </RadioGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ApprovalPolicyCard() {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const policy = useQuery({
+    queryKey: ["approval-policy"],
+    queryFn: () => orgService.approvalPolicy.get(),
+  });
+
+  const update = useMutation({
+    mutationFn: (val: boolean) => orgService.approvalPolicy.update(val),
+    onSuccess: () => {
+      toast.success(t("settings.approvalPolicyUpdated", "Approval policy updated"));
+      void qc.invalidateQueries({ queryKey: ["approval-policy"] });
+    },
+    onError: (e: any) => {
+      toast.error(apiErrorMessage(e, t("settings.approvalPolicyFailed", "Failed to update policy")));
+    },
+  });
+
+  if (policy.isLoading) return null;
+
+  const strictDualControl = policy.data?.strict_dual_control ?? true;
+
+  return (
+    <Card className="border-border/70 shadow-none">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">
+            {t("settings.approvalPolicyTitle", "Approval Dual-Control Policy")}
+          </h2>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t(
+            "settings.approvalPolicyHint",
+            "Strict dual-control blocks requesters (including org admins) from approving their own submissions. Disabling strict dual-control allows org admins to auto-approve their own submissions.",
+          )}
+        </p>
+        <div className="mt-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="dual-control"
+            checked={strictDualControl}
+            onChange={(e) => update.mutate(e.target.checked)}
+            disabled={update.isPending}
+            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+          />
+          <Label htmlFor="dual-control" className="text-sm cursor-pointer">
+            {t("settings.enableStrictDualControl", "Enable strict dual-control (Require separate approver)")}
+          </Label>
+        </div>
       </CardContent>
     </Card>
   );

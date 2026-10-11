@@ -323,7 +323,7 @@ export function OfferSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex flex-col overflow-y-auto">
+      <SheetContent className="w-full sm:max-w-xl lg:max-w-2xl flex flex-col overflow-y-auto p-6 space-y-4">
         <SheetHeader>
           <SheetTitle>{offer?.full_name ?? t("recruitment.offersTitle")}</SheetTitle>
           <SheetDescription>{t("recruitment.offersDescription")}</SheetDescription>

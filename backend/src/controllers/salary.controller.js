@@ -875,8 +875,9 @@ export async function downloadPayslip(req, res) {
   });
 
   const filename = `dverif-payslip-${record.uuid.slice(0, 8)}.pdf`;
+  const dispositionType = req.query.disposition === "inline" ? "inline" : "attachment";
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Disposition", `${dispositionType}; filename="${filename}"`);
   res.send(pdf);
 }
 
