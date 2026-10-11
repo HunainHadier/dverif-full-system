@@ -198,7 +198,12 @@
     "pwValidationLower": "ایک چھوٹا حرف",
     "pwValidationNumber": "ایک عدد",
     "pwValidationSpecial": "ایک خاص نشان",
-    "organizationWorkspace": "آپ کی تنظیم کا ورک اسپیس"
+    "organizationWorkspace": "آپ کی تنظیم کا ورک اسپیس",
+    "approvalPolicyTitle": "منظوری کی ڈوئل کنٹرول پالیسی",
+    "approvalPolicyHint": "اسٹرک ڈوئل کنٹرول درخواست دہندگان (بشمول ایڈمن) کو اپنی ہی جمع کرائی گئی درخواستیں منظور کرنے سے روکتا ہے۔",
+    "enableStrictDualControl": "اسٹرک ڈوئل کنٹرول فعال کریں (علیحدہ منظور کنندہ درکار ہے)",
+    "approvalPolicyUpdated": "منظوری کی پالیسی اپ ڈیٹ ہو گئی",
+    "approvalPolicyFailed": "منظوری کی پالیسی اپ ڈیٹ کرنے میں ناکامی"
   },
   "dashboard": {
     "adminOverview": "ایڈمن کا جائزہ",
@@ -1494,6 +1499,7 @@
     "offeredSalary": "پیش کردہ تنخواہ",
     "openPipeline": "بھرتی پائپ لائن کھولیں",
     "prepareOffer": "پیشکش تیار کریں",
+    "viewOffer": "پیشکش دیکھیں",
     "prepareOfferInPipeline": "پائپ لائن میں پیشکش تیار کریں",
     "reviseAndResubmit": "شرائط تبدیل کرکے دوبارہ جمع کریں",
     "selectOfferTemplate": "پہلے آفر لیٹر ٹیمپلیٹ منتخب کریں۔",

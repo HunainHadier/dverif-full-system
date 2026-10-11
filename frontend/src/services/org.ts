@@ -89,6 +89,14 @@ export const orgService = {
       api.delete(`/org/employees/documents/${docUuid}`).then((r) => r.data),
   },
 
+  approvalPolicy: {
+    get: () => api.get<{ strict_dual_control: boolean }>("/org/approval-policy").then((r) => r.data),
+    update: (strict_dual_control: boolean) =>
+      api
+        .put<{ strict_dual_control: boolean }>("/org/approval-policy", { strict_dual_control })
+        .then((r) => r.data),
+  },
+
   users: (params: { page?: number; limit?: number; search?: string } = {}) =>
     api.get<Paginated<OrgUserRecord>>("/org/users", { params }).then((r) => r.data),
 

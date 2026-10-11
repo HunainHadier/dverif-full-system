@@ -281,6 +281,30 @@ function audit(actor, action, entityType, entityId, details = {}) {
  *
  * @returns {Promise<{ workflow: { uuid: string; name: string }, steps: number }>}
  */
+export async function getApprovalPolicy(orgId) {
+  try {
+    const [rows] = await pool.query(
+      "SELECT strict_dual_control FROM organization_approval_policies WHERE organization_id=?",
+      [orgId]
+    );
+    if (Array.isArray(rows) && rows.length) return { strict_dual_control: Boolean(rows[0].strict_dual_control) };
+    return { strict_dual_control: true };
+  } catch (err) {
+    return { strict_dual_control: true };
+  }
+}
+
+export async function setApprovalPolicy(orgId, { strictDualControl }, conn = pool) {
+  const val = strictDualControl ? 1 : 0;
+  await conn.query(
+    `INSERT INTO organization_approval_policies (organization_id, strict_dual_control, created_at, updated_at)
+     VALUES (?, ?, NOW(), NOW())
+     ON DUPLICATE KEY UPDATE strict_dual_control=?, updated_at=NOW()`,
+    [orgId, val, val]
+  );
+  return getApprovalPolicy(orgId, conn);
+}
+
 export async function preflightApproval({
   orgId,
   moduleKey,
@@ -309,11 +333,26 @@ export async function preflightApproval({
     throw new ApiError(500, `Workflow "${workflow.name}" has no steps configured`);
   }
 
-  for (const step of steps) {
-    const eligible = await resolveApprovers(conn, { orgId, step, excludeUserUuid: actorUuid });
-    if (!eligible.length) throw new ApiError(409, `Workflow step "${step.name}" has no eligible approver other than the requester. Assign an active approver before submitting.`);
+  const policy = await getApprovalPolicy(orgId, conn);
+  let isOrgAdminRequester = false;
+  if (actorUuid) {
+    const [uRows] = await conn.query("SELECT org_role FROM users WHERE uuid=? AND organization=?", [
+      actorUuid,
+      orgId,
+    ]);
+    if (uRows[0]?.org_role === "org_admin") isOrgAdminRequester = true;
   }
-  const approvers = await resolveApprovers(conn, { orgId, step: steps[0], excludeUserUuid: actorUuid });
+
+  if (policy.strict_dual_control || !isOrgAdminRequester) {
+    for (const step of steps) {
+      const eligible = await resolveApprovers(conn, { orgId, step, excludeUserUuid: actorUuid });
+      if (!eligible.length)
+        throw new ApiError(
+          409,
+          `Workflow step "${step.name}" has no eligible approver other than the requester. Assign an active approver before submitting.`
+        );
+    }
+  }
 
   return { workflow, steps: steps.length };
 }
@@ -348,36 +387,58 @@ export async function startApproval(input) {
       throw new ApiError(500, `Workflow "${workflow.name}" has no steps configured`);
     }
 
-    const firstStep = steps[0];
-    for (const step of steps) {
-      const eligible = await resolveApprovers(conn, { orgId, step, excludeUserUuid: requestedByUuid });
-    if (!eligible.length) {
-    throw new ApiError(
-      409,
-      `Workflow step "${step.name}" has no active approver assigned. ` +
-        `Give an active user the ${step.approver_type} role, or point the step at a specific user.`,
-    );
-  }
+    const policy = await getApprovalPolicy(orgId, conn);
+    let isOrgAdminRequester = false;
+    let actorName = null;
+    if (requestedByUuid) {
+      try {
+        const [uRows] = await pool.query("SELECT org_role, full_name FROM users WHERE uuid=? AND organization=?", [
+          requestedByUuid,
+          orgId,
+        ]);
+        if (Array.isArray(uRows) && uRows[0]?.org_role === "org_admin") isOrgAdminRequester = true;
+        actorName = Array.isArray(uRows) ? uRows[0]?.full_name ?? null : null;
+      } catch (err) {}
     }
-    const approvers = await resolveApprovers(conn, { orgId, step: firstStep, excludeUserUuid: requestedByUuid });
+
+    const autoApproveSelf = !policy.strict_dual_control && isOrgAdminRequester;
+
+    const firstStep = steps[0];
+    let approvers = [];
+    if (!autoApproveSelf) {
+      for (const step of steps) {
+        const eligible = await resolveApprovers(conn, { orgId, step, excludeUserUuid: requestedByUuid });
+        if (!eligible.length) {
+          throw new ApiError(
+            409,
+            `Workflow step "${step.name}" has no eligible approver other than the requester. Assign an active approver before submitting.`,
+          );
+        }
+      }
+      approvers = await resolveApprovers(conn, { orgId, step: firstStep, excludeUserUuid: requestedByUuid });
+    }
 
     let inserted;
     try {
       [inserted] = await conn.query(
         `INSERT INTO approval_requests
            (uuid, organization_id, workflow_id, module_key, entity_type, entity_uuid,
-            current_step_order, status, title, payload, requested_by_uuid)
-         VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+            current_step_order, status, title, payload, requested_by_uuid, resolved_at, resolved_by_uuid, outcome_notes)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orgId,
           workflow.id,
           moduleKey,
           entityType,
           entityUuid,
-          firstStep.step_order,
+          autoApproveSelf ? null : firstStep.step_order,
+          autoApproveSelf ? "approved" : "pending",
           title ?? null,
           payload ? JSON.stringify(payload) : null,
           requestedByUuid,
+          autoApproveSelf ? new Date() : null,
+          autoApproveSelf ? requestedByUuid : null,
+          autoApproveSelf ? "Auto-approved under single-control policy (strict dual control disabled)" : null,
         ]
       );
     } catch (err) {

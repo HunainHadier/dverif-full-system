@@ -299,6 +299,12 @@ router.post("/employees/:uuid/salary-components", payrollMgmt, asyncHandler(assi
 router.put("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(updateEmployeeSalaryComponent));
 router.delete("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(removeEmployeeSalaryComponent));
 
+import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
+
+// ---- Approval policy (org_admin) ----
+router.get("/approval-policy", staff, asyncHandler(getApprovalPolicyHandler));
+router.put("/approval-policy", orgAdminsOnly, asyncHandler(updateApprovalPolicyHandler));
+
 // ---- Payroll auto-generation (staff) ----
 router.get("/payroll-policy", payrollMgmt, asyncHandler(getPayrollPolicy));
 router.put("/payroll-policy", payrollMgmtOwner, asyncHandler(updatePayrollPolicy));

@@ -1,10 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { UserPlus } from "lucide-react";
+import { UserPlus, Eye } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable } from "@/components/hr/DataTable";
@@ -349,7 +349,12 @@ function PipelineCard({
         that creates a person on the payroll, so it is never a drag and never a
         one-click gesture — the click opens a dialog that asks to confirm.
       */}
-      {(candidate.stage === "selected" || candidate.stage === "offered") && onHire ? (
+      {candidate.offer_status ? (
+        <Button size="sm" variant="outline" className="w-full" onClick={() => window.location.href = "/org/recruitment/offers"}>
+          <Eye className="mr-2 h-3.5 w-3.5" />
+          {t("recruitment.viewOffer", "View offer")}
+        </Button>
+      ) : (candidate.stage === "selected" || candidate.stage === "offered") && onHire ? (
         <Button size="sm" className="w-full" onClick={onHire}>
           <UserPlus className="mr-2 h-3.5 w-3.5" />
           {t("recruitment.prepareOffer", "Prepare offer")}

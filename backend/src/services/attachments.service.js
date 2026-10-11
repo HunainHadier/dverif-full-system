@@ -72,8 +72,12 @@ export function resolveAttachmentPath(storedPath) {
   if (typeof storedPath !== "string" || !storedPath.trim()) {
     throw new ApiError(400, "Attachment path is empty");
   }
+  const normalized = storedPath.replace(/\\/g, "/");
+  if (/^[a-zA-Z]:/.test(normalized)) {
+    throw new ApiError(400, "Invalid attachment path");
+  }
   const root = path.resolve(ATTACHMENTS_DIR);
-  const resolved = path.resolve(root, storedPath);
+  const resolved = path.resolve(root, normalized);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new ApiError(400, "Invalid attachment path");
   }

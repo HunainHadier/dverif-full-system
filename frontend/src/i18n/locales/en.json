@@ -198,7 +198,12 @@
     "pwValidationLower": "One lowercase letter",
     "pwValidationNumber": "One number",
     "pwValidationSpecial": "One special character",
-    "organizationWorkspace": "Your organization workspace"
+    "organizationWorkspace": "Your organization workspace",
+    "approvalPolicyTitle": "Approval Dual-Control Policy",
+    "approvalPolicyHint": "Strict dual-control blocks requesters (including org admins) from approving their own submissions. Disabling strict dual-control allows org admins to auto-approve their own submissions.",
+    "enableStrictDualControl": "Enable strict dual-control (Require separate approver)",
+    "approvalPolicyUpdated": "Approval policy updated",
+    "approvalPolicyFailed": "Failed to update approval policy"
   },
   "dashboard": {
     "adminOverview": "Admin overview",
@@ -1494,6 +1499,7 @@
     "offeredSalary": "Offered salary",
     "openPipeline": "Open recruitment pipeline",
     "prepareOffer": "Prepare offer",
+    "viewOffer": "View offer",
     "prepareOfferInPipeline": "Prepare offer in pipeline",
     "reviseAndResubmit": "Revise terms and resubmit",
     "selectOfferTemplate": "Select an Offer Letter template first.",
