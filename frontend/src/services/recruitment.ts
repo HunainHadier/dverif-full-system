@@ -386,6 +386,42 @@ export const candidatesService = {
       })
       .then((r) => r.data.items ?? []);
   },
+
+  /**
+   * Preview a CV and read back whatever the document service can extract from it.
+   *
+   * NOT AN UPLOAD of the resume itself — this is a two-step flow on purpose. The
+   * recruiter drops a file, sees what was read, corrects it, and only presses
+   * Save once; `uploadResume` then attaches the same file to the candidate row
+   * that step creates. Sending the file twice is the cost of the recruiter being
+   * able to review before it becomes a record, and a CV that was OCR'd badly
+   * becomes a permanent attachment with a name typed from the bad read.
+   *
+   * Confidence comes back per field and drives the UI's "check this" indicator:
+   * the extraction is a machine reading a document a human wrote for a human, so
+   * "Muhammad" arriving from a font that rendered double-l is ordinary, not an
+   * edge case. Only fields that were actually found are returned — the absence of
+   * `phone` here is the honest state, not an oversight, because no parser in
+   * this system reads phone numbers or emails out of a CV.
+   */
+  parseResume: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return api
+      .post<{
+        fields: {
+          name: string | null;
+          name_confidence: "high" | "low" | "not_visible" | null;
+          cnic: string | null;
+          cnic_confidence: "high" | "low" | "not_visible" | null;
+          designation: string | null;
+          designation_confidence: "high" | "low" | "not_visible" | null;
+        };
+      }>("/org/resume/parse", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((r) => r.data.fields);
+  },
 };
 
 export const interviewsService = {
@@ -541,8 +577,17 @@ export const offersService = {
    */
   send: (candidateUuid: UUID) =>
     api.post<{ candidate_uuid: UUID; status: "sent" }>("/org/offers/" + candidateUuid + "/send", {}).then((r) => r.data),
-  respond: (candidateUuid: UUID, response: "accepted" | "declined", data: { cnic?: string | null; joining_date?: string; comments?: string; portal_access?: boolean } = {}) =>
-    api.post<{ candidate: Candidate; employee_uuid: UUID | null; portal_invitation_status?: "sent" | "failed"; portal_invitation_warning?: string | null }>(
+  /**
+   * Record the candidate's answer.
+   *
+   * `portal_access` IS GONE from the payload on purpose, not swept up with the
+   * cnic/joining_date fields beside it: accepting an offer creates the employee
+   * and stops there. The portal invitation is a separate act on the employee
+   * row (orgService.resendInvite), where the mailbox, the timing and the reason
+   * are chosen. See the hint OfferSheet renders for what the recruiter is told.
+   */
+  respond: (candidateUuid: UUID, response: "accepted" | "declined", data: { cnic?: string | null; joining_date?: string; comments?: string } = {}) =>
+    api.post<{ candidate: Candidate; employee_uuid: UUID | null }>(
       "/org/offers/" + candidateUuid + "/respond",
       { response, ...data },
     ).then((r) => r.data),

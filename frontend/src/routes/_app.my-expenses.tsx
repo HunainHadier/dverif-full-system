@@ -1,10 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { AlertTriangle, Plus, Receipt, Upload } from "lucide-react";
+import { AlertTriangle, FolderTree, Plus, Receipt, Upload } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -32,6 +32,7 @@ import {
   type PaymentMode,
 } from "@/services";
 import { apiErrorMessage, formatCurrency, formatDate } from "@/lib/utils";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/my-expenses")({
   head: () => ({ meta: [{ title: "My Expenses — Dverif" }] }),
@@ -217,6 +218,7 @@ function NewClaimDialog({
 }) {
   const { t } = useTranslation();
   const today = new Date().toISOString().slice(0, 10);
+  const perms = usePermissions();
 
   const form = useForm<ClaimForm>({
     defaultValues: {
@@ -228,6 +230,23 @@ function NewClaimDialog({
     },
   });
   const { reset } = form;
+
+  /*
+   * The receipt, held outside react-hook-form for the same reason the CV is in
+   * the candidate form: a File is not a form value. `files[0]` because an
+   * expense claim takes one receipt — a stack of receipts is multiple claims,
+   * each with its own amount and its own review.
+   */
+  const [receipt, setReceipt] = useState<File | null>(null);
+  /**
+   * The auto-approve checkbox.
+   *
+   * ENABLED ONLY FOR A ROLE THE SERVER AGREES CAN APPROVE, and that is the point
+   * of the rest of this block: the checkbox is a visibility rule, never the gate.
+   * The server resolves the same permission from the session, so an account that
+   * cannot approve gets a pending claim even if it posts the flag by hand.
+   */
+  const [autoApprove, setAutoApprove] = useState(false);
 
   const categories = useQuery({
     queryKey: ["expense-categories", false],
@@ -247,6 +266,8 @@ function NewClaimDialog({
         description: "",
         payment_mode: "payroll",
       });
+      setReceipt(null);
+      setAutoApprove(false);
     }
     wasOpen.current = open;
   }, [open, reset, today]);
@@ -255,6 +276,22 @@ function NewClaimDialog({
   const limit = selected?.max_limit_per_claim ?? null;
   const amountValue = Number(form.watch("amount"));
   const overLimit = limit !== null && amountValue > 0 && amountValue > limit;
+
+  /*
+   * THE EMPTY CATEGORY LIST, said out loud.
+   *
+   * A dropdown that shows only its placeholder is indistinguishable from a
+   * loading one, and an employee with no categories has no way to file anything
+   * and no way to know why. So the empty case states the problem and, for
+   * someone who can create one, links to where that happens.
+   *
+   * The link is gated on the SAME permission the backend enforces on
+   * POST /org/expense-categories - `approve_expenses`. Showing an unauthorized
+   * employee a "create a category" link would hand them a 403 and imply they had
+   * lost some privilege, when in fact they were never going to be allowed it.
+   */
+  const categoriesEmpty = !categories.isLoading && (categories.data ?? []).length === 0;
+  const canManageCategories = perms.isOrgAdmin || perms.approve_expenses === true;
 
   // Advisory only. The server re-checks both of these, and it is the server's
   // answer that counts — this exists so the employee finds out before a round trip.
@@ -268,19 +305,57 @@ function NewClaimDialog({
   const tooOld = daysBack > MAX_BACKDATE_DAYS;
   const inFuture = daysBack < 0;
 
+  /*
+   * File the claim, then attach the receipt to it.
+   *
+   * TWO STEPS for the same reason the candidate CV is two steps: the receipt
+   * hangs off a claim row that has to exist first
+   * (POST /my/expenses/:uuid/receipts). Chaining them here keeps the claim as
+   * pure JSON and reuses the attachment route the claim-detail dialog already
+   * uses, with its org scoping, its allow-list and its audit trail intact.
+   *
+   * A CLAIM THAT FILED IS A CLAIM THAT EXISTS. If the receipt upload fails the
+   * claim still stands, and reporting only the failure would have the employee
+   * re-submit and create a duplicate — so both halves are reported.
+   */
   const submit = useMutation({
-    mutationFn: (values: ClaimForm) =>
-      myExpensesService.create({
+    mutationFn: async (values: ClaimForm) => {
+      const created = await myExpensesService.create({
         category_uuid: values.category_uuid,
         amount: Number(values.amount),
         expense_date: values.expense_date,
         description: values.description.trim() || undefined,
         payment_mode: values.payment_mode,
-      }),
-    onSuccess: () => {
+        auto_approve: autoApprove || undefined,
+      });
+
+      if (receipt) {
+        try {
+          await myExpensesService.uploadReceipts(created.uuid, [receipt]);
+          return { claim: created, receiptAttached: true };
+        } catch {
+          return { claim: created, receiptAttached: false };
+        }
+      }
+      return { claim: created, receiptAttached: null };
+    },
+    onSuccess: (result) => {
       onFiled();
       onOpenChange(false);
-      toast.success(t("myExpenses.filedToast"));
+      /*
+       * A REFUSED AUTO-APPROVAL IS NOT A FAILED SUBMISSION. The claim is filed
+       * and pending; saying otherwise would have the employee try again and file
+       * a second claim. The reason is surfaced as the warning it is.
+       */
+      if (result.claim.auto_approve_refusal) {
+        toast.warning(result.claim.auto_approve_refusal);
+      } else if (result.receiptAttached === false) {
+        toast.warning(
+          `${t("myExpenses.filedToast")} ${t("myExpenses.receiptAttachFailed")}`,
+        );
+      } else {
+        toast.success(t("myExpenses.filedToast"));
+      }
     },
     onError: (e) => toast.error(apiErrorMessage(e, t("myExpenses.fileFailed"))),
   });
@@ -321,6 +396,35 @@ function NewClaimDialog({
           <span className="block text-xs text-muted-foreground">{selected.description}</span>
         ) : null}
       </label>
+
+      {/*
+       * THE EMPTY CATEGORY LIST.
+       *
+       * A dropdown showing only its placeholder is indistinguishable from one
+       * that is still loading, and an employee with no categories cannot file
+       * anything and has no way to find out why. This states the problem, and
+       * offers the shortcut to the page that fixes it — but only to someone the
+       * backend would actually let create one, because offering a control that
+       * answers 403 is worse than not offering it.
+       */}
+      {categoriesEmpty ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+          <p className="text-xs text-amber-700 dark:text-amber-500">
+            {t("expenses.noCategoriesFound")}
+          </p>
+          {canManageCategories ? (
+            <Link
+              to="/org/expense-claims"
+              search={{ manageCategories: true }}
+              className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
+              onClick={() => onOpenChange(false)}
+            >
+              <FolderTree className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("expenses.createCategoryShortcut")}
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
 
       <label className="block space-y-1 text-sm">
         <span className="font-medium">{t("expenses.amount")}</span>
@@ -382,10 +486,76 @@ function NewClaimDialog({
         </span>
       </label>
 
-      <p className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        {t("expenses.receiptAfterSubmit")}
-      </p>
+      {/*
+       * THE RECEIPT, AT SUBMISSION.
+       *
+       * This used to be a note saying "attach it afterwards from the claim's
+       * detail", which meant the one thing that decides whether a
+       * receipt-required claim gets approved was deferred to a second visit the
+       * employee had no reason to make. The employee is the only person holding
+       * the till slip, so the slip belongs in the same breath as the amount.
+       *
+       * The advisory-note the dropzone replaces still exists further down for the
+       * claims that do NOT require one, where attaching a receipt is optional.
+       */}
+      {selected?.requires_receipt ? (
+        <FileDropzone
+          value={receipt ? [receipt] : []}
+          onChange={(files) => setReceipt(files[0] ?? null)}
+          accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
+          maxFiles={1}
+          maxSizeMb={10}
+          disabled={submit.isPending}
+          label={t("expenses.receiptLabel", "Receipt")}
+          hint={t("expenses.receiptHint", "PDF or image, up to 10MB")}
+        />
+      ) : (
+        <FileDropzone
+          value={receipt ? [receipt] : []}
+          onChange={(files) => setReceipt(files[0] ?? null)}
+          accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
+          maxFiles={1}
+          maxSizeMb={10}
+          disabled={submit.isPending}
+          label={t("expenses.receiptOptionalLabel", "Receipt (optional)")}
+          hint={t("expenses.receiptHint", "PDF or image, up to 10MB")}
+        />
+      )}
+
+      {/*
+       * AUTO-APPROVAL, last because it is the least important decision.
+       *
+       * Offered only to a role the server agrees can approve claims, and hidden
+       * entirely from everyone else — the server re-checks the permission from
+       * the session regardless, so this controlling visibility is all the
+       * checkbox is for. An employee who never sees it gets a pending claim, and
+       * an account that posts the flag by hand gets the same thing.
+       */}
+      {canManageCategories ? (
+        <label className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
+          <input
+            type="checkbox"
+            checked={autoApprove}
+            onChange={(e) => setAutoApprove(e.target.checked)}
+            disabled={submit.isPending}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="font-medium">{t("expenses.autoApproveLabel", "Auto-approve this claim upon submission")}</span>
+            <span className="block text-xs text-muted-foreground">
+              {t("expenses.autoApproveHint", "Skips the approval queue. The approver, time and the fact that review was skipped are all recorded.")}
+            </span>
+            {/*
+             * STATED WHERE IT APPLIES, not buried in a policy document. A person
+             * approving a claim that reimburses them is the self-approval the
+             * module refuses, and the shortcut does not become a way around it.
+             */}
+            <span className="block text-xs text-muted-foreground">
+              {t("expenses.autoApproveSelfExcluded", "Not available for a claim that reimburses yourself.")}
+            </span>
+          </span>
+        </label>
+      ) : null}
     </FormDialog>
   );
 }

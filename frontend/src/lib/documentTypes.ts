@@ -105,6 +105,15 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
  */
 export const UPLOADABLE_DOC_LABEL = "PDF, JPEG, PNG, Word or TXT";
 
+/**
+ * What the CV picker offers. Deliberately the WHOLE document allow-list rather
+ * than a PDF/DOC/DOCX subset: the server's allow-list is the real gate, and this
+ * is only the hint that decides whether a recruiter can select a file at all.
+ * Narrowing it here would blue-tint a .txt CV the server would have accepted and
+ * blames the user for a restriction that does not exist.
+ */
+export const RESUME_ACCEPT = UPLOADABLE_DOC_ACCEPT;
+
 /** Why a chosen file was rejected, or null when it is acceptable. */
 export function validateUploadableFile(file: File | null | undefined): {
   code: "type" | "size" | "empty";

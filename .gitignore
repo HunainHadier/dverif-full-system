@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*.local
+.env.production
+.env.staging
+.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+
+# Logs
+*.log
+*.err
+logs/
+
+# Runtime / uploads
+uploads/
+tmp/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Coverage / cache
+coverage/
+.cache/
+
+# Build output
+dist/
+build/
+
+# Misc
+*.pid
+*.local
+
+# Temp / debug artifacts
+d9.json
+dev-smtp-inbox.jsonl
+backend/repair.mjs
+backend/ui-audit/
+backend/ui-shots/

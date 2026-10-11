@@ -2,6 +2,7 @@ import { createFileRoute, Link, useParams, useSearch } from "@tanstack/react-rou
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, Calculator, Download, Eye, FileUp, Lock, Mail, Phone, Pencil, Plus, Save, Trash2, Upload, UserRound, X, BriefcaseBusiness, Building2, CalendarDays } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { EmployeeDocPicker, type StagedDoc } from "@/components/employees/EmployeeDocPicker";
@@ -737,15 +738,33 @@ function DocumentsCard({
   );
 }
 
-function formatSalaryPeriod(effectiveFrom: string, effectiveTo: string | null): string {
+/**
+ * The Effective Period as a person reads it.
+ *
+ * `formatDate` parses the YYYY-MM-DD string from the API using LOCAL calendar
+ * fields, which is what keeps a stored 2026-10-01 on the 1st: parsing it as
+ * `new Date("2026-10-01")` would treat it as UTC midnight and show the 30th to
+ * anyone east of Greenwich. The backend normalises the DATE column to a
+ * YYYY-MM-DD string for the same reason.
+ *
+ * "Current" is a LABEL, not a date. An open period has no end, and printing
+ * "—" or leaving it blank reads as missing data rather than as "ongoing". The
+ * caller passes the translated word, because this is a module-scope helper and
+ * a component is the only place a `t()` is valid.
+ */
+function formatSalaryPeriod(effectiveFrom: string, effectiveTo: string | null, currentLabel: string): string {
   const fromStr = formatDate(effectiveFrom);
   if (effectiveTo) {
-    return `${fromStr} → ${formatDate(effectiveTo)}`;
+    return `${fromStr} — ${formatDate(effectiveTo)}`;
   }
-  return `${fromStr} → Current`;
+  return `${fromStr} — ${currentLabel}`;
 }
 
 function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: UUID; autoOpen?: boolean; onHistoryChange: () => void }) {
+  const { t } = useTranslation();
+  /** Translated once per render and threaded into the helper; monthly rows do
+   *  not each need to re-resolve the same word. */
+  const effectiveCurrent = t("team.effectiveCurrent", "Current");
   const qc = useQueryClient();
   const { user } = useAuth();
   const { isLocked } = useOrgSubscription();
@@ -851,7 +870,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
                     Rs. {Number(h.basic_salary).toLocaleString("en-PK")}
                   </TableCell>
                   <TableCell data-label="Effective Period" className="text-muted-foreground">
-                    {formatSalaryPeriod(h.effective_from, h.effective_to)}
+                    {formatSalaryPeriod(h.effective_from, h.effective_to, effectiveCurrent)}
                   </TableCell>
                   {canEdit ? (
                     <TableCell data-label="Actions" className="text-right">

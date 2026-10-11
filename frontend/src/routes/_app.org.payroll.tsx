@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, FileText, Lock, Plus, Trash2, Wallet, Users } from "lucide-react";
+import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
@@ -28,6 +28,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -107,6 +113,8 @@ function OrgPayrollPage() {
   const [genYear, setGenYear] = useState(new Date().getFullYear());
 
   const [downloading, setDownloading] = useState<string | null>(null);
+  /** Which record's payslip is being opened for preview, so the row shows a spinner. */
+  const [previewing, setPreviewing] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SalaryRecord | null>(null);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
@@ -310,10 +318,39 @@ function OrgPayrollPage() {
     }
   };
 
+  /**
+   * Open the payslip in a new tab rather than saving it.
+   *
+   * This is the action that runs on a row, because a payslip is READ before it is
+   * kept: the old button went straight to a download, and the only way to see
+   * what the button produced was to save it somewhere first, name it, and find it
+   * again. `window.open` into a blob URL shows the PDF in the browser's own
+   * viewer, which is what "preview" meant to everyone who clicked the button.
+   *
+   * The download stays available — in the dropdown beside this one — for the
+   * people who do want the file.
+   */
+  const previewPayslip = async (record: SalaryRecord) => {
+    setPreviewing(record.uuid);
+    try {
+      const blob = await orgSalaryService.payslip(record.uuid, "inline");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      // The tab holds its own reference once opened, so the URL stays valid;
+      // revoking immediately would blank the viewer. Waiting a beat covers the
+      // case where the popup was blocked and never read the blob at all.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e: unknown) {
+      toast.error(apiErrorMessage(e, t("payroll.payslipFailed", "Payslip could not be opened")));
+    } finally {
+      setPreviewing(null);
+    }
+  };
+
   const downloadPayslip = async (record: SalaryRecord) => {
     setDownloading(record.uuid);
     try {
-      const blob = await orgSalaryService.payslip(record.uuid);
+      const blob = await orgSalaryService.payslip(record.uuid, "attachment");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -644,15 +681,46 @@ function OrgPayrollPage() {
                               data-label="Payslip"
                               className="whitespace-nowrap text-right"
                             >
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => downloadPayslip(r)}
-                                disabled={downloading === r.uuid}
-                              >
-                                <FileText className="mr-1 h-3.5 w-3.5" />
-                                {downloading === r.uuid ? "…" : t("payroll.payslip")}
-                              </Button>
+                              {/*
+                               * TWO ACTIONS, not one button.
+
+                               A payslip is read before it is kept, so the row
+                               offers preview in a new tab as the default and
+                               download as the explicit second choice. The old
+                               single button downloaded, which meant the only way
+                               to SEE what it produced was to save it somewhere
+                               and find it again.
+
+                               Both fetch through the same endpoint and the same
+                               PDF generator — the only difference is the
+                               `Content-Disposition` the server sends — so the
+                               preview and the download cannot show two different
+                               documents for one record.
+                               */}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={previewing === r.uuid || downloading === r.uuid}
+                                  >
+                                    <FileText className="mr-1 h-3.5 w-3.5" />
+                                    {previewing === r.uuid || downloading === r.uuid
+                                      ? "…"
+                                      : t("payroll.payslip")}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => previewPayslip(r)}>
+                                    <Eye className="mr-2 h-3.5 w-3.5" />
+                                    {t("payroll.previewInTab", "Preview in new tab")}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => downloadPayslip(r)}>
+                                    <Download className="mr-2 h-3.5 w-3.5" />
+                                    {t("payroll.downloadPdf", "Download PDF")}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </TableCell>
                             <TableCell data-label="—" className="whitespace-nowrap text-right">
                               {canDelete ? (

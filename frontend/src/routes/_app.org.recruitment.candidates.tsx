@@ -4,11 +4,12 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Eye, UserPlus, Users } from "lucide-react";
+import { AlertCircle, Check, Eye, FileText, Loader2, RefreshCw, UserPlus, Users } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
+import { FileDropzone } from "@/components/hr/FileDropzone";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +29,8 @@ import {
   type Candidate,
   type CandidateStage,
 } from "@/services";
+import { RESUME_ACCEPT } from "@/lib/documentTypes";
+import { cnicError, formatCNIC, normalizeCNIC, phoneError } from "@/lib/contactFormat";
 import { apiErrorMessage, formatDate } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/recruitment/candidates")({
@@ -273,6 +276,63 @@ type AddForm = {
   notes: string;
 };
 
+/**
+ * What the CV read gave us, per field.
+ *
+ * SHAPED BY WHAT THE EXTRACTOR CAN ACTUALLY DO, not by what the candidate form
+ * collects. The document service reads name / cnic / designation and nothing
+ * else — no parser in this system reads a phone number or an email out of a CV,
+ * so `parsed` has no `phone` key and the form does not pretend to have one. An
+ * object with a `phone: null` here would be a promise the service never keeps.
+ */
+type ParsedResume = {
+  name?: string | null;
+  name_confidence?: "high" | "low" | "not_visible" | null;
+  cnic?: string | null;
+  cnic_confidence?: "high" | "low" | "not_visible" | null;
+  designation?: string | null;
+  designation_confidence?: "high" | "low" | "not_visible" | null;
+};
+
+/**
+ * The small marker under a field that was filled in by the CV read.
+ *
+ * It says where the value came from rather than only which fields are
+ * pre-filled, because a recruiter who typed over one of three values needs to
+ * know that the untouched ones are still the machine's reading. `low-confidence`
+ * is the "check this" case and is styled with the warning colour, not the
+ * success one: a low-confidence extraction is not a problem, but it is not an
+ * answer either.
+ */
+function ParsedFieldHint({
+  value,
+  confidence,
+}: {
+  value: string | null | undefined;
+  confidence: "high" | "low" | "not_visible" | null | undefined;
+}) {
+  const { t } = useTranslation();
+  if (!value) return null;
+
+  const low = confidence === "low";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs ${
+        low ? "text-destructive" : "text-success"
+      }`}
+    >
+      {low ? (
+        <AlertCircle className="h-3 w-3" aria-hidden="true" />
+      ) : (
+        <Check className="h-3 w-3" aria-hidden="true" />
+      )}
+      {low
+        ? t("recruitment.resumeLowConfidence")
+        : t("recruitment.resumeReadAs", { value })}
+    </span>
+  );
+}
+
 function AddCandidateDialog({
   open,
   openings,
@@ -285,6 +345,23 @@ function AddCandidateDialog({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
+
+  /*
+   * IDENTITY SHAPE ERRORS.
+   *
+   * The candidate form used to have no CNIC or phone validation at all, while the
+   * employee form validated the same two fields and the sub-admin form validated
+   * them a third way. Three forms, three rule sets, one database column that
+   * eventually receives all of them — so a CNIC that was refused on one screen
+   * was stored from another. The shared module supplies one rule; this is the
+   * candidate screen's use of it.
+   *
+   * Optional-by-default, matching the recruiter's reality: a walk-in candidate's
+   * CNIC is usually collected later, and `employees.cnic` is nullable for that
+   * reason. A wrongly-shaped value that WAS typed is still refused here, before
+   * it becomes a row.
+   */
+  const [identityErrors, setIdentityErrors] = useState<{ cnic?: string; phone?: string }>({});
 
   const form = useForm<AddForm>({
     defaultValues: {
@@ -299,6 +376,24 @@ function AddCandidateDialog({
   });
   const { reset } = form;
 
+  /*
+   * THE CV IS HELD OUTSIDE react-hook-form, because it is not one of the form's
+   * fields — react-hook-form registers inputs by name and watches their value,
+   * and a File has neither. Its lifecycle is also separate from the form's: the
+   * dialog resets the inputs on open, and the CV has to be resettable
+   * independently, or a recruiter who dropped the wrong file would have it
+   * attached to the next candidate they added.
+   */
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [parsed, setParsed] = useState<ParsedResume | null>(null);
+  /*
+   * null until the recruiter has actually read the CV, then true on success and
+   * false once a read has failed OR the CV was never read at all. The three are
+   * deliberately distinct because the recruiter needs different answers: "cannot
+   * read it" is retryable, "not read yet" is not a problem at all.
+   */
+  const [parseFailed, setParseFailed] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     reset({
@@ -310,31 +405,139 @@ function AddCandidateDialog({
       cover_letter: "",
       notes: "",
     });
+    setResumeFile(null);
+    setParsed(null);
+    setParseFailed(false);
+    setIdentityErrors({});
   }, [open, openings, reset]);
 
+  /*
+   * Read the CV the moment it is dropped, not on submit.
+   *
+   * That ordering is the whole point of the feature: the recruiter sees what the
+   * extractor found, corrects it, and saves once. If the read happened at submit
+   * time the values would either be applied without review or the form would
+   * have to be re-rendered with fields the recruiter had not seen — both of
+   * which lose the review step the requirement asks for.
+   *
+   * The parsed values are FILLED INTO THE FORM rather than kept beside it, so
+   * what the recruiter edits is what actually submits. There is no parallel
+   * "parsed" state that could win a merge against a human's correction.
+   */
+  const parse = useMutation({
+    mutationFn: (file: File) => candidatesService.parseResume(file),
+    onSuccess: (fields) => {
+      setParsed(fields);
+      setParseFailed(false);
+      /*
+       * Only overwrite what is still empty. A recruiter who already typed a name
+       * and then drops the CV should not have their typing silently replaced by
+       * an OCR reading of the same thing — that is a surprise the resume feature
+       * was specifically asked to avoid. `cnic` is degraphed before it is set
+       * because the extractor returns the dashes, and a CNIC input holding them
+       * would then submit them and fail the digits-only check.
+       */
+      if (fields.name && !form.getValues("full_name")) form.setValue("full_name", fields.name);
+      if (fields.cnic && !form.getValues("cnic")) {
+        // Degraphed before it enters the input. The extractor returns the dashed
+        // form because that is how a CNIC is printed and read; storing that
+        // would put "42101-2345678-9" in a field that must submit digits, and the
+        // digits-only check would then reject what the CV read correctly.
+        form.setValue("cnic", normalizeCNIC(fields.cnic));
+        setIdentityErrors((prev) => ({ ...prev, cnic: undefined }));
+      }
+    },
+    onError: () => {
+      // A failed read is NOT a failed form: the recruiter can still type the
+      // candidate in by hand and save, so the file stays selected and can be
+      // retried rather than being cleared out of the way.
+      setParsed(null);
+      setParseFailed(true);
+      toast.error(t("recruitment.resumeParseFailed"));
+    },
+  });
+
+  /*
+   * Save the candidate, then attach the CV.
+   *
+   * TWO STEPS because the CV attaches to a candidate row that has to exist
+   * first — the endpoint is `POST /org/candidates/:uuid/resume`. Chaining them
+   * here rather than adding a multipart create endpoint keeps the candidate
+   * create as pure JSON (and therefore unchanged for every other caller), and
+   * reuses the existing upload route with its audit trail.
+   *
+   * THE CANDIDATE IS THE BRAND: if the CV upload fails, the candidate still
+   * exists. Reporting only the failure would leave the recruiter re-adding
+   * someone who is already in the list and hitting the 409 duplicate, which is
+   * the worst possible feedback. So both cases are reported, and the dialog
+   * only closes when the CV also attached.
+   */
   const create = useMutation({
-    mutationFn: (v: AddForm) =>
-      candidatesService.create({
+    mutationFn: async (v: AddForm) => {
+      // Identity shape is checked HERE rather than via react-hook-form rules
+      // because the same shared module serves three screens; registering the rule
+      // per-input would be three more copies of it.
+      const cnicProblem = cnicError(v.cnic);
+      const phoneProblem = phoneError(v.phone);
+      if (cnicProblem || phoneProblem) {
+        setIdentityErrors({ cnic: cnicProblem ?? undefined, phone: phoneProblem ?? undefined });
+        throw new Error("__identity_invalid__");
+      }
+      setIdentityErrors({});
+
+      const candidate = await candidatesService.create({
         opening_uuid: v.opening_uuid,
         full_name: v.full_name,
         // Empty -> undefined rather than "": an empty string is a supplied value and
         // would be stored as an email address of "" instead of a null.
         email: v.email.trim() || undefined,
         phone: v.phone.trim() || undefined,
-        cnic: v.cnic.trim() || undefined,
+        // Maskless: the column holds 13 digits, and the CV prefill strips the
+        // dashes so both sources agree on one stored shape.
+        cnic: normalizeCNIC(v.cnic) || undefined,
         cover_letter: v.cover_letter || undefined,
         notes: v.notes || undefined,
-      }),
-    onSuccess: () => {
+      });
+
+      if (resumeFile) {
+        try {
+          await candidatesService.uploadResume(candidate.uuid, [resumeFile]);
+          return { candidate, resumeAttached: true };
+        } catch {
+          return { candidate, resumeAttached: false };
+        }
+      }
+      return { candidate, resumeAttached: null };
+    },
+    onSuccess: (result) => {
       onDone();
       onOpenChange(false);
-      toast.success(t("recruitment.candidateCreated"));
+      if (result.resumeAttached === false) {
+        // Candidate saved, CV not attached. Both halves said out loud, so the
+        // recruiter knows to retry the CV on the candidate's row rather than
+        // assuming the whole save failed.
+        toast.warning(`${t("recruitment.candidateCreated")} ${t("recruitment.resumeAttachFailed")}`);
+      } else if (result.resumeAttached === null) {
+        toast.success(t("recruitment.candidateCreatedWithoutResume"));
+      } else {
+        toast.success(t("recruitment.candidateCreated"));
+      }
     },
     // The duplicate-application case lands here: one row per candidate per opening is
     // enforced by a unique index, so re-adding the same person is a 409 the recruiter
     // needs told about rather than a form that appears to ignore them.
-    onError: (e) => toast.error(apiErrorMessage(e, t("recruitment.candidateActionFailed"))),
+    //
+    // The shape marker is checked first and quietly dropped: a CNIC that is 12
+    // digits long is already reported on the input itself, and a toast saying
+    // "cannot save the candidate" on top of it talks past the message the
+    // recruiter is reading.
+    onError: (e) => {
+      if (e instanceof Error && e.message === "__identity_invalid__") return;
+      toast.error(apiErrorMessage(e, t("recruitment.candidateActionFailed")));
+    },
   });
+
+  const busy = parse.isPending || create.isPending;
 
   return (
     <FormDialog
@@ -360,6 +563,91 @@ function AddCandidateDialog({
             ))}
           </select>
         </label>
+
+        {/*
+         * THE CV COMES FIRST, and deliberately so.
+
+         The field order puts the dropzone above the fields it fills, because
+         a recruiter who drops the CV first and then watches the name appear is
+         having the form read the document for them; the reverse order means they
+         fill four fields by hand and then notice the feature that would have
+         filled them. Placed here it is the first thing seen, which is where
+         "optional" earns its keep — it is skipped as fast as it is used.
+         */}
+        <div className="space-y-2">
+          <FileDropzone
+            value={resumeFile ? [resumeFile] : []}
+            onChange={(files) => {
+              const file = files[0] ?? null;
+              setResumeFile(file);
+              setParsed(null);
+              setParseFailed(false);
+              if (file) parse.mutate(file);
+              else parse.reset();
+            }}
+            accept={RESUME_ACCEPT}
+            maxFiles={1}
+            maxSizeMb={10}
+            disabled={busy}
+            label={t("recruitment.resumeLabel")}
+            hint={t("recruitment.resumeHint")}
+          />
+
+          {parse.isPending ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              {t("recruitment.parsingResume")}
+            </p>
+          ) : null}
+
+          {/*
+           * THE FAILURE LINE CARRIES THE RETRY, so the two things the recruiter
+           * needs — what happened, and what to do — are one object rather than a
+           * toast that vanishes and a control that only exists somewhere else.
+           */}
+          {parseFailed && !parse.isPending ? (
+            <div className="space-y-1">
+              <p className="flex items-center gap-1 text-xs text-destructive">
+                <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                {t("recruitment.resumeParseFailed")}
+              </p>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs text-destructive"
+                onClick={() => resumeFile && parse.mutate(resumeFile)}
+                disabled={!resumeFile}
+              >
+                <RefreshCw className="mr-1 h-3 w-3" aria-hidden="true" />
+                {t("recruitment.resumeRetry")}
+              </Button>
+            </div>
+          ) : null}
+
+          {parsed && !parse.isPending ? (
+            <p className="flex items-center gap-1 text-xs text-success">
+              <Check className="h-3 w-3" aria-hidden="true" />
+              {t("recruitment.resumeParsed")}
+            </p>
+          ) : null}
+
+          {/*
+           * THE NO-RESUME STATE IS STATED rather than left silent. A recruiter who
+           * skipped the dropzone should not have to infer from an empty section
+           * whether the CV was attached or simply not offered.
+           */}
+          {!resumeFile && !parse.isPending ? (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <FileText className="h-3 w-3" aria-hidden="true" />
+              {t("recruitment.resumeNoResume")}
+            </p>
+          ) : null}
+
+          <ParsedFieldHint value={parsed?.name} confidence={parsed?.name_confidence} />
+          <ParsedFieldHint value={parsed?.cnic} confidence={parsed?.cnic_confidence} />
+        </div>
+
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.candidateName")}</span>
           <input
@@ -380,15 +668,33 @@ function AddCandidateDialog({
           <input
             {...form.register("phone")}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            aria-invalid={Boolean(identityErrors.phone)}
           />
+          {identityErrors.phone ? (
+            <span className="text-xs text-destructive">{identityErrors.phone}</span>
+          ) : null}
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.candidateCnic")}</span>
           <input
             {...form.register("cnic")}
+            /* The mask is applied on CHANGE so the value the recruiter sees is
+               always the dashed form; `normalizeCNIC` removes it on the way out.
+               `parseCNIC` is only the mask, so pasting 13 digits formats itself
+               rather than being truncated. */
             inputMode="numeric"
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            aria-invalid={Boolean(identityErrors.cnic)}
+            onChange={(e) => {
+              form.setValue("cnic", formatCNIC(e.target.value));
+              setIdentityErrors((prev) => ({ ...prev, cnic: cnicError(e.target.value) ?? undefined }));
+            }}
           />
+          {identityErrors.cnic ? (
+            <span className="text-xs text-destructive">{identityErrors.cnic}</span>
+          ) : (
+            <ParsedFieldHint value={parsed?.cnic} confidence={parsed?.cnic_confidence} />
+          )}
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.coverLetter")}</span>
@@ -471,7 +777,11 @@ function CandidateSheet({
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.candidateCnic")}</dt>
-                <dd>{c.cnic ?? "—"}</dd>
+                {/* The printed form, not 13 bare digits. The column holds
+                    digits, but a CNIC is read by its grouping and the recruiter
+                    comparing this against a CV is comparing against the dashed
+                    version they see on the paper. */}
+                <dd>{c.cnic ? formatCNIC(c.cnic) : "—"}</dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.appliedOn")}</dt>

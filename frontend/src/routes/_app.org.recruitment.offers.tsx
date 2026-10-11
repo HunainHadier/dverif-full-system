@@ -111,16 +111,20 @@ function OffersPage() {
   });
 
   const respond = useMutation({
-    mutationFn: ({ offer, response, portalAccess }: { offer: Offer; response: "accepted" | "declined"; portalAccess: boolean }) =>
+    /*
+     * `portal_access` is NOT sent. An accepted offer creates the employee and
+     * stops there — the invitation is a separate act on the employee row, where
+     * the mailbox, timing and reason are chosen rather than inherited. See the
+     * note on OfferSheet's accept control for what the recruiter is told instead.
+     */
+    mutationFn: ({ offer, response }: { offer: Offer; response: "accepted" | "declined" }) =>
       offersService.respond(offer.candidate_uuid, response, {
-        portal_access: portalAccess,
         comments: "Response recorded by HR",
       }),
     onSuccess: (result, variables) => {
       invalidate();
       setReviewing(null);
-      if (result.portal_invitation_warning) toast.error(result.portal_invitation_warning);
-      else toast.success(variables.response === "accepted"
+      toast.success(variables.response === "accepted"
         ? t("recruitment.hired", "Offer accepted and employee created")
         : t("recruitment.offerDeclined", "Offer declined"));
     },
@@ -210,7 +214,7 @@ function OffersPage() {
         onSend={(o) => send.mutate(o)}
         sending={send.isPending}
         sendError={send.isError ? send.error : null}
-        onRespond={(offer, response, portalAccess) => respond.mutate({ offer, response, portalAccess })}
+        onRespond={(offer, response) => respond.mutate({ offer, response })}
         responding={respond.isPending}
       />
     </ModuleGate>
@@ -264,13 +268,12 @@ export function OfferSheet({
    * someone else already approved the offer sends them to fix the wrong thing.
    */
   sendError: unknown;
-  onRespond?: (offer: Offer, response: "accepted" | "declined", portalAccess: boolean) => void;
+  onRespond?: (offer: Offer, response: "accepted" | "declined") => void;
   responding?: boolean;
 }) {
   const { t } = useTranslation();
   const open = Boolean(offer);
   const sendFailed = sendError != null;
-  const [portalAccess, setPortalAccess] = useState(false);
 
   const approval = useQuery({
     queryKey: ["recruitment-approval", offer?.candidate_uuid],
@@ -445,15 +448,30 @@ export function OfferSheet({
             ) : null}
             {offer?.offer_status === "sent" ? (
               <div className="space-y-2">
-                <label className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <input type="checkbox" checked={portalAccess} onChange={(e) => setPortalAccess(e.target.checked)} className="mt-0.5" />
-                  <span><span className="font-medium text-foreground">Create employee portal access and send setup invitation</span><span className="block">Requires the candidate to have a valid email. Existing user accounts are never linked by email automatically.</span></span>
-                </label>
+                {/*
+                 * NO "SEND THE INVITATION TOO" CHECKBOX, and its absence is said
+                 * out loud rather than left to be discovered.
+                 *
+                 * It used to be here, and accepting an offer created the platform
+                 * account and emailed a set-password link in the same breath.
+                 * That bundled two decisions — this person starts, and this
+                 * person can log in — into one click, and the second one was
+                 * never really being made: it was inherited from the first.
+                 *
+                 * The invitation now goes out from the employee row, where the
+                 * "Send email" action lives and the recruiter can see what
+                 * already happened for that person. A hint is left here so the
+                 * person accepting the offer knows the invite is not cut off,
+                 * only moved.
+                 */}
+                <p className="text-xs text-muted-foreground">
+                  {t("recruitment.acceptanceCreatesEmployee")}
+                </p>
                 <div className="flex gap-2">
-                  <Button disabled={responding} onClick={() => offer && onRespond(offer, "accepted", portalAccess)}>
+                  <Button disabled={responding} onClick={() => offer && onRespond(offer, "accepted")}>
                     {t("recruitment.acceptOffer", "Record acceptance")}
                   </Button>
-                  <Button variant="outline" disabled={responding} onClick={() => offer && onRespond(offer, "declined", false)}>
+                  <Button variant="outline" disabled={responding} onClick={() => offer && onRespond(offer, "declined")}>
                     {t("recruitment.declineOffer", "Record decline")}
                   </Button>
                 </div>

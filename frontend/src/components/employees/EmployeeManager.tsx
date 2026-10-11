@@ -44,7 +44,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TableSkeleton } from "@/routes/_app.requests";
 import { adminService, isCurrentEmployee, orgService, type EmployeeDocument, type EmployeeRecord, type ManagedOption, type Organization, type UUID } from "@/services";
-import { digitsOnly, formatCNIC, formatDate, formatFileSize } from "@/lib/utils";
+import { CONTACT_VALIDATION_LABEL, cnicError, formatCNIC, normalizeCNIC, phoneError } from "@/lib/contactFormat";
+import { formatDate, formatFileSize } from "@/lib/utils";
 
 type EmployeeApi = {
   list: (params: { page?: number; limit?: number; search?: string; reference?: boolean }) => Promise<{
@@ -392,6 +393,20 @@ export function EmployeeManager({
                                 </Button>
                               );
                             }
+                            if (st.kind === "none" && emp.email) {
+                              return (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 whitespace-nowrap px-2 text-xs"
+                                  onClick={() => resendInviteMut.mutate(emp.uuid)}
+                                  disabled={locked || userManagementLocked || resendInviteMut.isPending}
+                                >
+                                  {locked || userManagementLocked ? <Lock className="mr-1 h-3 w-3" /> : <Mail className="mr-1 h-3 w-3" />}
+                                  Send email
+                                </Button>
+                              );
+                            }
                             return null;
                           })()}
                           {/* The Archive button was removed: turning someone into an
@@ -563,22 +578,38 @@ function EmployeeFormDialog({
     onError: (e) => toast.error(apiErrorMessage(e, "Delete failed")),
   });
 
-  const formatCNICInput = (v: string) => {
-    const digits = v.replace(/\D/g, "").slice(0, 13);
-    if (digits.length <= 5) return digits;
-    if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-    return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
-  };
-
+  /**
+   * Identity validation, all of it now delegated to the shared contactFormat
+   * module.
+   *
+   * The CNIC checks it replaces used to be a bare non-empty test, so a CNIC of
+   * "1234" was saved and only failed later — at the uniqueness check, or not at
+   * all, since the platform has several places that collect this field. The
+   * phone field had no validation here at all while `org.admins` had a regex, so
+   * the same number was refused in one screen and accepted in the other.
+   *
+   * DIGITS ARE STRIPPED ON SUBMIT, not on keystroke. The input shows the dashed
+   * mask (it is what a CNIC looks like on the card), and `formatCNICInput`
+   * produces that; a user pasting "42101 2345678 9" or a spaced variant is
+   * normalised the same way, so the stored value is always the 13 digits.
+   */
   const validate = () => {
     const e: Record<string, string> = {};
     if (!form.full_name.trim()) e.full_name = "Name is required";
-    if (!isEdit && !form.cnic.trim()) e.cnic = "CNIC is required";
+    if (!isEdit && !normalizeCNIC(form.cnic)) e.cnic = CONTACT_VALIDATION_LABEL.cnicRequired;
+    else {
+      const cnicProblem = cnicError(form.cnic);
+      if (cnicProblem) e.cnic = cnicProblem;
+    }
     if (form.current_salary.trim() && (!Number.isFinite(Number(form.current_salary)) || Number(form.current_salary) <= 0)) e.current_salary = "Enter a positive salary, or leave it blank until payroll is configured";
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) e.email = "Enter a valid email address";
     if (form.send_invite && !form.email.trim()) e.email = "Email is required for portal access";
-    if (form.emergency_contact.trim() && !/^[0-9+\-() ]{6,30}$/.test(form.emergency_contact.trim()))
-      e.emergency_contact = "Invalid contact";
+    const phoneProblem = phoneError(form.phone);
+    if (phoneProblem) e.phone = phoneProblem;
+    if (form.emergency_contact.trim()) {
+      const ecProblem = phoneError(form.emergency_contact);
+      if (ecProblem) e.emergency_contact = "Invalid contact";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -589,9 +620,12 @@ function EmployeeFormDialog({
     try {
       const data: Record<string, unknown> = {
         full_name: form.full_name.trim(),
-        cnic: form.cnic.replace(/\D/g, ""),
+        // The mask is gone by the time it leaves: the server and the column both
+        // want the 13 bare digits, and `normalizeCNIC` is the one place that is
+        // decided.
+        cnic: normalizeCNIC(form.cnic),
         email: form.email.trim() || undefined,
-        send_invite: !isEdit && form.send_invite,
+        send_invite: !isEdit && Boolean(form.email.trim()),
         phone: form.phone.trim() || undefined,
         designation: form.designation.trim() || undefined,
         department: form.department.trim() || undefined,
@@ -688,10 +722,11 @@ function EmployeeFormDialog({
             <div className="space-y-1.5">
               <Label>CNIC {isEdit ? "" : "*"}</Label>
               <Input
-                value={isEdit ? formatCNIC(form.cnic) : form.cnic}
-                onChange={(e) => setForm({ ...form, cnic: isEdit ? form.cnic : formatCNICInput(e.target.value) })}
+                value={formatCNIC(form.cnic)}
+                onChange={(e) => setForm({ ...form, cnic: formatCNIC(e.target.value) })}
                 placeholder="XXXXX-XXXXXXX-X"
                 disabled={isEdit}
+                inputMode="numeric"
               />
               {errors.cnic && <p className="text-xs text-destructive">{errors.cnic}</p>}
             </div>
@@ -713,9 +748,11 @@ function EmployeeFormDialog({
               <Label>Phone</Label>
               <Input
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: digitsOnly(e.target.value) })}
-                placeholder="Phone number"
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="03XX XXX XXXX"
+                aria-invalid={Boolean(errors.phone)}
               />
+              {errors.phone ? <p className="text-xs text-destructive">{errors.phone}</p> : null}
             </div>
           </div>
           {!isEdit && <label className="flex items-start gap-2 rounded-md border p-3 text-sm">

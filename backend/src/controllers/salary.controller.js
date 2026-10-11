@@ -860,9 +860,52 @@ async function getSalaryRecordForPayslip(uuid, orgId, isAdmin) {
     params
   );
   if (!rows.length) throw new ApiError(404, "Salary record not found");
-  return rows[0];
+  const record = rows[0];
+
+  /*
+   * THE ITEMISED LINES, from the table the payroll generator already writes.
+   *
+   * `salary_record_lines` has held every earning and deduction since payroll
+   * auto-computation was introduced — basic, each component, each
+   * attendance-derived line, the expense reimbursement — and the payslip has been
+   * showing only the two rollups from `salary_records` anyway. So the data was
+   * already itemised and the document was the part that was not.
+   *
+   * Scoped by organization as well as record: these rows are employee-level
+   * financial detail, and the parent select above joins on
+   * `sr.organization_id` only in the non-admin branch, so the line query has to
+   * stand on its own rather than assume the parent was org-filtered.
+   *
+   * `id` ordering is not cosmetic — it is the order the generator inserted the
+   * lines in, which is basic, then components, then automatic, then expense.
+   * Re-sorting alphabetically would move "Overtime" above "Basic salary".
+   */
+  const [lines] = await pool.query(
+    `SELECT uuid, label, type, source, amount, basis_value, basis_unit
+       FROM salary_record_lines
+      WHERE salary_record_uuid = ? AND organization_id = ?
+      ORDER BY FIELD(type, 'earning', 'deduction'), id`,
+    [uuid, record.organization_id]
+  );
+  record.lines = lines;
+  return record;
 }
 
+/**
+ * Render the payslip and send it, as either a download or an inline preview.
+ *
+ * The `inline` mode exists because a payslip is a document people READ before
+ * they keep: the previous behaviour opened a file chooser for a filename nobody
+ * cared about, and the only way to see what the button produced was to save it
+ * somewhere first. `Content-Disposition: inline` lets the browser's PDF viewer
+ * show it in a new tab, and the download path still exists as the action beside
+ * it for people who want the file.
+ *
+ * BOTH MODES RENDER FROM THE SAME RECORD. One function, one query, one PDF. If
+ * the preview and the download were produced by two code paths they would
+ * eventually disagree, and the number a recruiter signs off on would not be the
+ * number the employee is handed.
+ */
 export async function downloadPayslip(req, res) {
   const isAdmin = Boolean(req.admin);
   const orgId = isAdmin ? null : req.scopeOrgId;
@@ -877,7 +920,8 @@ export async function downloadPayslip(req, res) {
   const filename = `dverif-payslip-${record.uuid.slice(0, 8)}.pdf`;
   const dispositionType = req.query.disposition === "inline" ? "inline" : "attachment";
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `${dispositionType}; filename="${filename}"`);
+  const disposition = req.query?.view === "inline" ? "inline" : "attachment";
+  res.setHeader("Content-Disposition", `${disposition}; filename="${filename}"`);
   res.send(pdf);
 }
 
@@ -1006,5 +1050,37 @@ export async function mySalaryRecords(req, res) {
      LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
+
+  /*
+   * THE ITEMISED LINES, for the on-screen payslip dialog.
+   *
+   * The dialog used to show four numbers — basic, allowances, deductions, net —
+   * which is a summary an employee has no way to act on. "What am I actually
+   * paid for, and why is this taken off?" was answerable only as a total.
+   * `salary_record_lines` already holds the answer, so this fetches it.
+   *
+   * One query for the whole page rather than one per row: the page is at most
+   * `limit` records and the alternative is N round trips for a page that was
+   * already being fetched in one. Scoped by employee, which the `whereClause`
+   * already established.
+   */
+  const uuids = rows.map((r) => r.uuid);
+  if (uuids.length) {
+    const [lineRows] = await pool.query(
+      `SELECT salary_record_uuid, label, type, source, amount, basis_value, basis_unit
+         FROM salary_record_lines
+        WHERE salary_record_uuid IN (?)
+        ORDER BY salary_record_uuid, FIELD(type, 'earning', 'deduction'), id`,
+      [uuids]
+    );
+    const byRecord = new Map();
+    for (const line of lineRows) {
+      const key = line.salary_record_uuid;
+      if (!byRecord.has(key)) byRecord.set(key, []);
+      byRecord.get(key).push(line);
+    }
+    for (const row of rows) row.lines = byRecord.get(row.uuid) ?? [];
+  }
+
   return ok(res, paginatedResponse(rows, total, page, limit), "Salary records");
 }
