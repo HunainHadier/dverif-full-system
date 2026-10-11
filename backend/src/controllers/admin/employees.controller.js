@@ -10,7 +10,7 @@ import { sendInviteEmail } from "../../utils/mailer.js";
 import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { STAFF_ROLES, assertRole, ROLE_ORG_ADMIN } from "../../utils/roles.js";
-import { isValidPhone as isValidContactPhone } from "../../utils/contactFormat.js";
+import { cnicError, isValidPhone as isValidContactPhone, normalizeCnic } from "../../utils/contactFormat.js";
 
 const EMPLOYEE_SELECT = `SELECT e.id, e.uuid, e.employee_code, e.organization_id, e.full_name, e.email, e.phone,
         e.cnic, dg.name AS designation, dp.name AS department, e.status, e.is_platform_user,
@@ -138,8 +138,8 @@ function normalizeEmployeePayload(body) {
    * regex — making them agree is the fix. Making them strict would reject numbers
    * that are today stored and valid.
    */
-  const cnicDigits = cnic ? String(cnic).replace(/\D/g, "") : "";
-  if (cnicDigits && cnicDigits.length !== 13) {
+  const cnicDigits = normalizeCnic(cnic);
+  if (cnicError(cnic)) {
     errors.push("cnic must be 13 digits, e.g. 42101-2345678-9");
   }
   if (phone !== undefined && phone !== "" && !isValidContactPhone(String(phone))) {
@@ -577,13 +577,14 @@ export async function updateEmployee(req, res) {
     updateValues.push(phone ? String(phone).trim() : null);
   }
   if (cnic !== undefined) {
-    const trimmed = String(cnic).trim();
+    const trimmed = normalizeCnic(cnic);
+    if (cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
     if (trimmed) {
       const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=? AND uuid<>?", [trimmed, uuid]);
       if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists");
     }
     updateFields.push("cnic = ?");
-    updateValues.push(trimmed);
+    updateValues.push(trimmed || null);
   }
   if (designation !== undefined) {
     const designationId = await resolveMetaId(pool, emp.organization_id, "designations", designation ? String(designation).trim() : null);
@@ -742,7 +743,8 @@ export async function createReference(req, res) {
     orgId = await resolveOrganizationId(req.body.organization_uuid);
   }
 
-  const trimmedCnic = String(cnic).trim();
+  const trimmedCnic = normalizeCnic(cnic);
+  if (cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
   const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=? AND organization_id=?", [trimmedCnic, orgId]);
   if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists in this organization");
 

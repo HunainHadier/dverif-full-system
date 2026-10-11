@@ -1,9 +1,10 @@
 import ApiError from "../../utils/ApiError.js";
 import fs from "node:fs/promises";
 import { ok, created } from "../../utils/response.js";
-import { isValidPhone } from "../../utils/contactFormat.js";
+import { cnicError, isValidPhone, normalizeCnic } from "../../utils/contactFormat.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
+import { sendPdf } from "../../utils/exportBuilders.js";
 import * as recruitment from "../../services/recruitment.service.js";
 
 /**
@@ -58,6 +59,8 @@ export async function createJobOpening(req, res) {
     title: str(req.body?.title),
     departmentId: req.body?.department_id,
     designationId: req.body?.designation_id,
+    departmentName: str(req.body?.department_name),
+    designationName: str(req.body?.designation_name),
     location: str(req.body?.location),
     employmentType: str(req.body?.employment_type),
     description: str(req.body?.description),
@@ -85,6 +88,8 @@ export async function updateJobOpening(req, res) {
     title: str(req.body?.title),
     departmentId: req.body?.department_id,
     designationId: req.body?.designation_id,
+    departmentName: str(req.body?.department_name),
+    designationName: str(req.body?.designation_name),
     location: str(req.body?.location),
     employmentType: str(req.body?.employment_type),
     description: str(req.body?.description),
@@ -150,8 +155,8 @@ export async function createApplication(req, res) {
    * WAS typed is refused here, at the moment it is known to be wrong.
    */
   const cnicGiven = String(req.body?.cnic ?? "").trim();
-  const cnicDigits = cnicGiven.replace(/\D/g, "");
-  if (cnicGiven && cnicDigits.length !== 13) {
+  const cnicDigits = normalizeCnic(cnicGiven);
+  if (cnicError(cnicGiven)) {
     throw new ApiError(400, "cnic must be 13 digits, e.g. 42101-2345678-9");
   }
   const phoneGiven = String(req.body?.phone ?? "").trim();
@@ -185,6 +190,38 @@ export async function createApplication(req, res) {
   return created(res, { candidate }, "Application received");
 }
 
+export async function updateCandidate(req, res) {
+  const cnicGiven = String(req.body?.cnic ?? "").trim();
+  const cnicDigits = normalizeCnic(cnicGiven);
+  if (cnicError(cnicGiven)) {
+    throw new ApiError(400, "CNIC must contain 13 digits. Please check the number and try again.");
+  }
+  const phoneGiven = String(req.body?.phone ?? "").trim();
+  if (phoneGiven && !isValidPhone(phoneGiven)) {
+    throw new ApiError(400, "Phone number must contain 7–15 digits. Please check the number and try again.");
+  }
+  const candidate = await recruitment.updateCandidate({
+    orgId: req.scopeOrgId,
+    actorUuid: req.user?.uuid ?? null,
+    candidateUuid: req.params.uuid,
+    fullName: str(req.body?.full_name),
+    email: str(req.body?.email),
+      phone: req.body?.phone === undefined ? undefined : phoneGiven || null,
+      cnic: req.body?.cnic === undefined ? undefined : cnicDigits || null,
+    coverLetter: str(req.body?.cover_letter),
+    notes: str(req.body?.notes),
+  });
+  logAudit({
+    ...getActorFromReq(req),
+    action: "candidate.update",
+    entityType: "candidate",
+    entityId: candidate.uuid,
+    details: { candidate_uuid: candidate.uuid },
+    req,
+  });
+  return ok(res, { candidate }, "Candidate updated");
+}
+
 /**
  * Move a candidate along the pipeline.
  *
@@ -215,28 +252,7 @@ export async function moveApplicationStage(req, res) {
   return ok(res, { candidate }, `Candidate moved to ${candidate.stage}`);
 }
 
-/**
- * The one-click hire.
- *
- * hireCandidate opens its own transaction on the given connection, because it has to
- * span three writes: the employee row, the offer-letter draft, and the candidate's
- * flip to `hired`. It is passed req's connection deliberately — see the service for
- * why a rollback must undo all three.
- */
-/**
- * START AN OFFER — hire the candidate and submit their letter for approval.
- *
- * THE ROUTE THE PIPELINE CALLS, in place of `hireApplication`.
- *
- * Both exist. `hireApplication` is a bare hire: employee row plus a draft letter, and
- * nothing else. It is still correct for what it is, and the tests use it, but the UI
- * used it as the pipeline's final button — which left people on the roster whose offer
- * was never submitted anywhere, because every remaining step lived on another screen
- * that nothing pointed them to.
- *
- * This is the same thing plus the approval submission, so an employee record cannot be
- * created from the pipeline without the offer chain being started in the same breath.
- */
+/** Prepare an offer for direct dispatch to the candidate. */
 export async function startOfferApplication(req, res) {
   const override = req.route?.path?.endsWith("/override") === true;
   const result = await recruitment.startCandidateOffer({
@@ -248,7 +264,7 @@ export async function startOfferApplication(req, res) {
     offerTemplateUuid: str(req.body?.offer_template_uuid),
     offerValues: req.body?.offer_values ?? {},
   });
-  return created(res, { candidate: result.candidate, approval: result.approval }, "Offer submitted for approval");
+  return created(res, { candidate: result.candidate }, "Offer is ready to send");
 }
 
 export async function respondToOffer(req, res) {
@@ -266,7 +282,6 @@ export async function respondToOffer(req, res) {
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
     candidateUuid: req.params.uuid,
-    response: str(req.body?.response),
     joiningDate: str(req.body?.joining_date),
     cnic: str(req.body?.cnic),
     designationId: req.body?.designation_id,
@@ -274,8 +289,10 @@ export async function respondToOffer(req, res) {
     emergencyContact: str(req.body?.emergency_contact),
     comments: str(req.body?.comments),
   });
-  return ok(res, result, result.employee_uuid ? "Offer accepted and employee created" : "Offer declined");
+  return ok(res, result, "Candidate hired and employee created");
 }
+
+export const hireOffer = respondToOffer;
 
 // ---------------------------------------------------------------------------
 // Pipeline (Kanban read)
@@ -382,14 +399,6 @@ export async function listOffers(req, res) {
   return ok(res, paginatedResponse(result.items, result.total, result.page, result.limit), "Offers");
 }
 
-/**
- * Submit an offer for approval.
- *
- * Starts a chain in the SHARED approval workflow engine rather than flipping a
- * status column. That is what makes ApprovalTimeline meaningful here: it renders the
- * engine's append-only step history, so the offer page shows who decided what and
- * when instead of a single "approved" flag with no trail behind it.
- */
 export async function getOfferPreparation(req, res) {
   const data = await recruitment.getOfferPreparation({ orgId: req.scopeOrgId, candidateUuid: req.params.uuid });
   return ok(res, data, "Offer preparation");
@@ -403,70 +412,6 @@ export async function previewOffer(req, res) {
     values: req.body?.values ?? {},
   });
   return ok(res, preview, "Offer preview");
-}
-
-export async function requestOfferApproval(req, res) {
-  const override = req.route?.path?.endsWith("/override") === true;
-  const result = await recruitment.startCandidateOffer({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid ?? null,
-    candidateUuid: req.params.uuid,
-    overrideFailedInterviewReason: str(req.body?.override_failed_interview_reason),
-    overrideFailedInterviewAuthorized: override,
-    offerTemplateUuid: str(req.body?.offer_template_uuid),
-    offerValues: req.body?.offer_values ?? {},
-  });
-  const approval = result.approval;
-
-  logAudit({
-    ...getActorFromReq(req),
-    action: "candidate.offer.approval.request",
-    entityType: "candidate",
-    entityId: req.params.uuid,
-    details: { approval_request_uuid: approval?.uuid ?? null },
-    req,
-  });
-
-  return created(res, { approval }, "Offer submitted for approval");
-}
-
-/**
- * Approve or reject a submitted offer.
- *
- * On rejection the service also moves the candidate out of `offered`, so the two
- * cannot disagree: a rejected offer does not leave behind a pipeline card offering
- * something nobody approved.
- */
-export async function decideOfferApproval(req, res) {
-  const approval = await recruitment.decideOfferApproval({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid ?? null,
-    candidateUuid: req.params.uuid,
-    decision: str(req.body?.decision),
-    comments: str(req.body?.comments),
-  });
-
-  logAudit({
-    ...getActorFromReq(req),
-    action: `candidate.offer.approval.${req.body?.decision}`,
-    entityType: "candidate",
-    entityId: req.params.uuid,
-    details: { approval_request_uuid: approval?.uuid ?? null },
-    req,
-  });
-
-  return ok(res, { approval }, `Offer ${req.body?.decision === "approve" ? "approved" : "rejected"}`);
-}
-
-/** The offer's approval record, shaped exactly as ApprovalTimeline's props. */
-export async function getOfferApprovalStatus(req, res) {
-  const approval = await recruitment.getOfferApproval({
-    orgId: req.scopeOrgId,
-    candidateUuid: req.params.uuid,
-  });
-  // null rather than {} when nothing was ever submitted, so the UI can distinguish
-  // "no approval yet" from "an approval with no history".
-  return ok(res, { approval }, approval ? "Offer approval" : "No approval yet");
 }
 
 export async function sendOffer(req, res) {
@@ -487,6 +432,14 @@ export async function sendOffer(req, res) {
   });
 
   return ok(res, { letter }, "Offer letter sent");
+}
+
+export async function downloadOfferPdf(req, res) {
+  const pdf = await recruitment.downloadOfferPdf({
+    orgId: req.scopeOrgId,
+    candidateUuid: req.params.uuid,
+  });
+  return sendPdf(res, pdf);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
 import { encryptCnic, decryptCnic, hashCnic } from "../utils/personCrypto.js";
+import { cnicError, normalizeCnic } from "../utils/contactFormat.js";
 import { recordPersonDocument } from "../utils/personDocuments.js";
 import { assertDocumentValid, VALIDATION_FLAGGED, VALIDATION_PASSED } from "../utils/documentValidate.js";
 import { created, ok } from "../utils/response.js";
@@ -198,8 +199,8 @@ export async function createRequest(req, res) {
   if (!rawOwnerCnic) {
     throw new ApiError(400, "document_owner_cnic is required");
   }
-  const normalized = rawOwnerCnic.replace(/\D/g, "");
-  if (!/^\d{13}$/.test(normalized)) {
+  const normalized = normalizeCnic(rawOwnerCnic);
+  if (cnicError(rawOwnerCnic) || !normalized) {
     throw new ApiError(400, "document_owner_cnic must be a valid CNIC (XXXXX-XXXXXXX-X)");
   }
   const documentOwnerCnic = encryptCnic(normalized);
@@ -757,8 +758,8 @@ export async function updateMySentRequest(req, res) {
   if ("document_owner_cnic" in req.body) {
     const submittedCnic = String(req.body.document_owner_cnic ?? "").trim();
     if (submittedCnic) {
-      const normalized = submittedCnic.replace(/\D/g, "");
-      if (!/^\d{13}$/.test(normalized)) {
+      const normalized = normalizeCnic(submittedCnic);
+      if (cnicError(submittedCnic)) {
         throw new ApiError(400, "document_owner_cnic must be a valid CNIC (XXXXX-XXXXXXX-X)");
       }
     }

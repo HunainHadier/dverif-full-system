@@ -107,6 +107,12 @@ beforeAll(async () => {
   ]);
 
   orgId = org.insertId;
+  // Offer lifecycle assertions use a separate reviewer; explicitly save that
+  // policy now that missing policy rows default to non-strict for Org Admins.
+  await db.query(
+    "INSERT INTO organization_approval_policies (organization_id, strict_dual_control, created_at, updated_at) VALUES (?, 1, NOW(), NOW())",
+    [orgId],
+  );
 
   const [other] = await db.query("INSERT INTO organizations (uuid, name) VALUES (UUID(), ?)", [
     `Recruitment Other ${Date.now()}`,

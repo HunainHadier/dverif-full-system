@@ -281,17 +281,16 @@ function audit(actor, action, entityType, entityId, details = {}) {
  *
  * @returns {Promise<{ workflow: { uuid: string; name: string }, steps: number }>}
  */
-export async function getApprovalPolicy(orgId) {
-  try {
-    const [rows] = await pool.query(
-      "SELECT strict_dual_control FROM organization_approval_policies WHERE organization_id=?",
-      [orgId]
-    );
-    if (Array.isArray(rows) && rows.length) return { strict_dual_control: Boolean(rows[0].strict_dual_control) };
-    return { strict_dual_control: true };
-  } catch (err) {
-    return { strict_dual_control: true };
+export async function getApprovalPolicy(orgId, conn = pool) {
+  const [rows] = await conn.query(
+    "SELECT strict_dual_control FROM organization_approval_policies WHERE organization_id=?",
+    [orgId]
+  );
+  if (Array.isArray(rows) && rows.length) {
+    const value = rows[0].strict_dual_control;
+    return { strict_dual_control: value === true || value === 1 || value === "1" };
   }
+  return { strict_dual_control: false };
 }
 
 export async function setApprovalPolicy(orgId, { strictDualControl }, conn = pool) {
@@ -392,7 +391,7 @@ export async function startApproval(input) {
     let actorName = null;
     if (requestedByUuid) {
       try {
-        const [uRows] = await pool.query("SELECT org_role, full_name FROM users WHERE uuid=? AND organization=?", [
+        const [uRows] = await conn.query("SELECT org_role, full_name FROM users WHERE uuid=? AND organization=?", [
           requestedByUuid,
           orgId,
         ]);
@@ -458,18 +457,25 @@ export async function startApproval(input) {
     await recordHistory(conn, {
       requestUuid,
       step: firstStep,
-      decision: "pending",
+      approverUuid: autoApproveSelf ? requestedByUuid : null,
+      approverName: autoApproveSelf ? actorName : null,
+      decision: autoApproveSelf ? "approved" : "pending",
+      comments: autoApproveSelf
+        ? "Auto-approved under single-control policy (strict dual control disabled)"
+        : null,
     });
 
     await conn.commit();
 
-    await createNotificationForUsers({
-      userIds: approvers,
-      type: "approval_pending",
-      title: "Approval required",
-      message: title || `A new ${entityType.replace(/_/g, " ")} is waiting for your approval`,
-      referenceId: requestUuid,
-    });
+    if (approvers.length) {
+      await createNotificationForUsers({
+        userIds: approvers,
+        type: "approval_pending",
+        title: "Approval required",
+        message: title || `A new ${entityType.replace(/_/g, " ")} is waiting for your approval`,
+        referenceId: requestUuid,
+      });
+    }
 
     audit(
       { actorType: "user", actorId: requestedByUuid, actorName: null, actorRole: null },
@@ -479,11 +485,21 @@ export async function startApproval(input) {
       { moduleKey, workflowId: workflow.id, step: firstStep.name }
     );
 
+    if (autoApproveSelf) {
+      audit(
+        { actorType: "user", actorId: requestedByUuid, actorName, actorRole: "org_admin" },
+        "approval.auto_approve",
+        entityType,
+        entityUuid,
+        { moduleKey, workflowId: workflow.id, step: firstStep.name, policy: "strict_dual_control_disabled" }
+      );
+    }
+
     return {
       approvalRequestUuid: requestUuid,
-      status: "pending",
-      currentStep: firstStep.name,
-      currentStepOrder: firstStep.step_order,
+      status: autoApproveSelf ? "approved" : "pending",
+      currentStep: autoApproveSelf ? null : firstStep.name,
+      currentStepOrder: autoApproveSelf ? null : firstStep.step_order,
       approverCount: approvers.length,
     };
   } catch (err) {

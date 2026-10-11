@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { AlertCircle, Check, Eye, FileText, Loader2, RefreshCw, UserPlus, Users } from "lucide-react";
+import { AlertCircle, Check, Eye, FileText, Loader2, Pencil, RefreshCw, UserPlus, Users } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -27,6 +27,7 @@ import {
   candidatesService,
   jobOpeningsService,
   type Candidate,
+  type CandidateDetail,
   type CandidateStage,
 } from "@/services";
 import { RESUME_ACCEPT } from "@/lib/documentTypes";
@@ -81,6 +82,7 @@ export function CandidatesPage() {
   const [stage, setStage] = useState<CandidateStage | "">("");
   const [openingUuid, setOpeningUuid] = useState("");
   const [adding, setAdding] = useState(false);
+  const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [viewing, setViewing] = useState<Candidate | null>(null);
 
   const openings = useQuery({
@@ -164,10 +166,18 @@ export function CandidatesPage() {
       key: "actions",
       header: t("recruitment.actions"),
       render: (c) => (
-        <Button variant="ghost" size="sm" onClick={() => setViewing(c)}>
-          <Eye className="mr-2 h-3.5 w-3.5" />
-          {t("recruitment.resume")}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setViewing(c)}>
+            <Eye className="mr-2 h-3.5 w-3.5" />
+            {t("recruitment.resume")}
+          </Button>
+          {c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
+            <Button variant="ghost" size="sm" onClick={() => setEditingCandidate(c)}>
+              <Pencil className="mr-2 h-3.5 w-3.5" />
+              {t("recruitment.editCandidate")}
+            </Button>
+          ) : null}
+        </div>
       ),
     },
   ];
@@ -250,15 +260,25 @@ export function CandidatesPage() {
       </div>
 
       <AddCandidateDialog
-        open={adding}
+        open={adding || Boolean(editingCandidate)}
+        candidate={editingCandidate}
         openings={openings.data ?? []}
-        onOpenChange={setAdding}
+        onOpenChange={(next) => {
+          if (!next) {
+            setAdding(false);
+            setEditingCandidate(null);
+          } else if (!editingCandidate) setAdding(true);
+        }}
         onDone={invalidate}
       />
 
       <CandidateSheet
         candidateUuid={viewing?.uuid ?? null}
         onOpenChange={(v) => !v && setViewing(null)}
+        onEdit={(candidate) => {
+          setViewing(null);
+          setEditingCandidate(candidate);
+        }}
       />
     </ModuleGate>
   );
@@ -335,11 +355,13 @@ function ParsedFieldHint({
 
 function AddCandidateDialog({
   open,
+  candidate,
   openings,
   onOpenChange,
   onDone,
 }: {
   open: boolean;
+  candidate: Candidate | null;
   openings: { uuid: string; title: string }[];
   onOpenChange: (v: boolean) => void;
   onDone: () => void;
@@ -397,19 +419,19 @@ function AddCandidateDialog({
   useEffect(() => {
     if (!open) return;
     reset({
-      opening_uuid: openings[0]?.uuid ?? "",
-      full_name: "",
-      email: "",
-      phone: "",
-      cnic: "",
-      cover_letter: "",
-      notes: "",
+      opening_uuid: candidate?.job_opening_uuid ?? openings[0]?.uuid ?? "",
+      full_name: candidate?.full_name ?? "",
+      email: candidate?.email ?? "",
+      phone: candidate?.phone ?? "",
+      cnic: candidate?.cnic ? formatCNIC(candidate.cnic) : "",
+      cover_letter: candidate?.cover_letter ?? "",
+      notes: candidate?.notes ?? "",
     });
     setResumeFile(null);
     setParsed(null);
     setParseFailed(false);
     setIdentityErrors({});
-  }, [open, openings, reset]);
+  }, [open, candidate?.uuid, openings, reset]);
 
   /*
    * Read the CV the moment it is dropped, not on submit.
@@ -485,29 +507,31 @@ function AddCandidateDialog({
       }
       setIdentityErrors({});
 
-      const candidate = await candidatesService.create({
-        opening_uuid: v.opening_uuid,
-        full_name: v.full_name,
+      const payload = {
+        full_name: v.full_name.trim(),
         // Empty -> undefined rather than "": an empty string is a supplied value and
         // would be stored as an email address of "" instead of a null.
-        email: v.email.trim() || undefined,
+        email: v.email.trim(),
         phone: v.phone.trim() || undefined,
         // Maskless: the column holds 13 digits, and the CV prefill strips the
         // dashes so both sources agree on one stored shape.
         cnic: normalizeCNIC(v.cnic) || undefined,
         cover_letter: v.cover_letter || undefined,
         notes: v.notes || undefined,
-      });
+      };
+      const saved = candidate
+        ? await candidatesService.update(candidate.uuid, payload)
+        : await candidatesService.create({ opening_uuid: v.opening_uuid, ...payload });
 
       if (resumeFile) {
         try {
-          await candidatesService.uploadResume(candidate.uuid, [resumeFile]);
-          return { candidate, resumeAttached: true };
+          await candidatesService.uploadResume(saved.uuid, [resumeFile]);
+          return { candidate: saved, resumeAttached: true };
         } catch {
-          return { candidate, resumeAttached: false };
+          return { candidate: saved, resumeAttached: false };
         }
       }
-      return { candidate, resumeAttached: null };
+      return { candidate: saved, resumeAttached: null };
     },
     onSuccess: (result) => {
       onDone();
@@ -516,11 +540,11 @@ function AddCandidateDialog({
         // Candidate saved, CV not attached. Both halves said out loud, so the
         // recruiter knows to retry the CV on the candidate's row rather than
         // assuming the whole save failed.
-        toast.warning(`${t("recruitment.candidateCreated")} ${t("recruitment.resumeAttachFailed")}`);
+        toast.warning(`${t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated")} ${t("recruitment.resumeAttachFailed")}`);
       } else if (result.resumeAttached === null) {
-        toast.success(t("recruitment.candidateCreatedWithoutResume"));
+        toast.success(t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreatedWithoutResume"));
       } else {
-        toast.success(t("recruitment.candidateCreated"));
+        toast.success(t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated"));
       }
     },
     // The duplicate-application case lands here: one row per candidate per opening is
@@ -537,6 +561,7 @@ function AddCandidateDialog({
     },
   });
 
+  const editing = Boolean(candidate);
   const busy = parse.isPending || create.isPending;
 
   return (
@@ -544,16 +569,17 @@ function AddCandidateDialog({
       open={open}
       onOpenChange={onOpenChange}
       form={form}
-      title={t("recruitment.newCandidate")}
+      title={t(editing ? "recruitment.editCandidate" : "recruitment.newCandidate")}
       submitLabel={t("recruitment.save")}
       cancelLabel={t("recruitment.cancel")}
       onSubmit={(v) => create.mutate(v)}
     >
       <div className="space-y-3">
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.opening")}</span>
+          <span className="font-medium">{t("recruitment.opening")} *</span>
           <select
             {...form.register("opening_uuid", { required: true })}
+            disabled={editing}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {openings.map((o) => (
@@ -561,6 +587,9 @@ function AddCandidateDialog({
                 {o.title}
               </option>
             ))}
+            {candidate && !openings.some((o) => o.uuid === candidate.job_opening_uuid) ? (
+              <option value={candidate.job_opening_uuid}>{candidate.opening_title ?? t("recruitment.opening")}</option>
+            ) : null}
           </select>
         </label>
 
@@ -649,17 +678,17 @@ function AddCandidateDialog({
         </div>
 
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidateName")}</span>
+          <span className="font-medium">{t("recruitment.candidateName")} *</span>
           <input
             {...form.register("full_name", { required: true })}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidateEmail")}</span>
+          <span className="font-medium">{t("recruitment.candidateEmail")} *</span>
           <input
             type="email"
-            {...form.register("email")}
+            {...form.register("email", { required: true })}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           />
         </label>
@@ -730,9 +759,11 @@ function AddCandidateDialog({
 function CandidateSheet({
   candidateUuid,
   onOpenChange,
+  onEdit,
 }: {
   candidateUuid: string | null;
   onOpenChange: (v: boolean) => void;
+  onEdit: (candidate: CandidateDetail) => void;
 }) {
   const { t } = useTranslation();
   const open = Boolean(candidateUuid);
@@ -757,6 +788,12 @@ function CandidateSheet({
 
         {c ? (
           <div className="space-y-4">
+            {c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
+              <Button className="w-full" variant="outline" onClick={() => onEdit(c)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                {t("recruitment.editCandidate")}
+              </Button>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Badge variant={CANDIDATE_STAGE_VARIANT[c.stage]}>{t(STAGE_LABEL[c.stage])}</Badge>
               {c.rating != null ? (

@@ -97,18 +97,11 @@ const ROUTES = [
   ["GET", "/api/v1/org/interviews"],
   ["POST", "/api/v1/org/interviews/11111111-1111-4111-8111-111111111111/feedback"],
   ["GET", "/api/v1/org/offers"],
-  // Merge-tag completion check. Must be readable BEFORE approval is requested,
-  // because that is where an incomplete offer is caught rather than at send time.
+  // Prepare and preview are available before direct offer dispatch.
   ["GET", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/prepare"],
-  // Render the offer and report which tags are still unresolved.
   ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/preview"],
-  ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/approval"],
-  ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/approval/decide"],
-  ["GET", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/approval"],
   ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/send"],
-  // Records the candidate's accept/decline. Org-authenticated by design: there is no
-  // candidate-facing portal, so an HR user records the response on their behalf.
-  ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/respond"],
+  ["POST", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/hire"],
   ["DELETE", "/api/v1/org/candidate-attachments/11111111-1111-4111-8111-111111111111"],
   ["GET", "/api/v1/org/candidate-attachments/11111111-1111-4111-8111-111111111111/download"],
 ];

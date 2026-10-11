@@ -45,6 +45,7 @@ import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { orgService, type OrgAdminUserRecord, type UUID } from "@/services";
 import { digitsOnly, formatCNIC, parseFeatureAccess } from "@/lib/utils";
+import { cnicError, normalizeCNIC } from "@/lib/contactFormat";
 
 export const Route = createFileRoute("/_app/org/admins")({
   beforeLoad: () => {
@@ -603,7 +604,8 @@ function CreateSubAdminDialog({
     const e: Record<string, string> = {};
     if (!fullName.trim()) e.fullName = "Name is required";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "A valid email is required";
-    if (!/^\d{13}$/.test(cnic.replace(/\D/g, ""))) e.cnic = "A valid 13-digit CNIC is required";
+    if (!normalizeCNIC(cnic)) e.cnic = "CNIC is required";
+    else if (cnicError(cnic)) e.cnic = cnicError(cnic)!;
     if (phone && !/^[0-9+\-() ]{6,30}$/.test(phone)) e.phone = "Invalid phone number";
     setErrors(e);
     if (Object.keys(e).length) return;
@@ -613,7 +615,7 @@ function CreateSubAdminDialog({
       const res = await orgService.adminUsers.create({
         full_name: fullName.trim(),
         email: email.trim(),
-        cnic: cnic.replace(/\D/g, ""),
+        cnic: normalizeCNIC(cnic),
         phone: phone.trim() || undefined,
         feature_access: access,
       });

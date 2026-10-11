@@ -5,6 +5,7 @@ import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { generatePayslipPdf } from "../utils/payslipPdf.js";
+import { CURRENCY } from "../utils/currency.js";
 import { randomUUID } from "node:crypto";
 import * as payrollService from "../services/payroll.service.js";
 const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalaryRecordLines } =
@@ -148,13 +149,19 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
   const totalAllowances = moneyField(allowances + automatic.totalAddition, "allowances");
   const totalDeductions = moneyField(deductions + automatic.totalDeduction, "deductions");
 
-  // Cap net at zero (deductions cannot exceed earnings).
-  const net = Math.max(0, computedNet(basic, totalAllowances, totalDeductions));
+  const expenseReimbursement = expenseLine?.amount ?? 0;
+  // Reimbursements are payable earnings but remain separate from contractual
+  // allowances in the stored salary record.
+  const net = Math.max(
+    0,
+    computedNet(basic, totalAllowances + expenseReimbursement, totalDeductions),
+  );
 
   return {
     basic,
     allowances: totalAllowances,
     deductions: totalDeductions,
+    expenseReimbursement,
     net,
     lines,
     summary,
@@ -362,12 +369,22 @@ export async function generatePayroll(req, res) {
       // salary_record_lines has to point at it and the two are written in the same
       // transaction. UUID() inside the INSERT would return the value to nobody.
       const recordUuid = randomUUID();
+      const carried = carriedExpenses.get(emp.uuid) ?? [];
+      const carriedExpenseReimbursement = moneyField(
+        carried.reduce((sum, line) => sum + Number(line.amount || 0), 0),
+        "expense reimbursement",
+      );
+      const expenseReimbursement = moneyField(
+        computed.expenseReimbursement + carriedExpenseReimbursement,
+        "expense reimbursement",
+      );
+      const netSalary = moneyField(computed.net + carriedExpenseReimbursement, "net salary");
 
       await conn.query(
         `INSERT INTO salary_records
            (uuid, employee_uuid, organization_id, month, year, basic_salary,
-            allowances, deductions, net_salary, notes, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            allowances, deductions, expense_reimbursement, net_salary, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           recordUuid,
           emp.uuid,
@@ -377,7 +394,8 @@ export async function generatePayroll(req, res) {
           computed.basic,
           computed.allowances,
           computed.deductions,
-          computed.net,
+          expenseReimbursement,
+          netSalary,
           null,
           createdBy,
         ]
@@ -404,7 +422,6 @@ export async function generatePayroll(req, res) {
        * Only the LINE is carried. No claim is re-consumed, because these claims are
        * already paid; re-consuming them would be a second disbursement.
        */
-      const carried = carriedExpenses.get(emp.uuid) ?? [];
       if (carried.length) {
         await insertSalaryRecordLines({
           conn,
@@ -538,6 +555,7 @@ export async function previewPayroll(req, res) {
       basic_salary: computed.basic,
       allowances: computed.allowances,
       deductions: computed.deductions,
+      expense_reimbursement: computed.expenseReimbursement,
       net_salary: computed.net,
       lines: computed.lines,
       attendance: {
@@ -578,9 +596,13 @@ export async function previewPayroll(req, res) {
       basic: moneyField(acc.basic + Number(i.basic_salary), "basic"),
       allowances: moneyField(acc.allowances + Number(i.allowances), "allowances"),
       deductions: moneyField(acc.deductions + Number(i.deductions), "deductions"),
+      expense_reimbursement: moneyField(
+        acc.expense_reimbursement + Number(i.expense_reimbursement),
+        "expense reimbursement",
+      ),
       net: moneyField(acc.net + Number(i.net_salary), "net"),
     }),
-    { basic: 0, allowances: 0, deductions: 0, net: 0 },
+    { basic: 0, allowances: 0, deductions: 0, expense_reimbursement: 0, net: 0 },
   );
 
   return ok(res, { month: m, year: y, items, totals, count: items.length }, "Payroll preview");
@@ -591,9 +613,13 @@ export async function getPayrollPolicy(req, res) {
   const orgId = req.scopeOrgId;
   const [policies] = await pool.query("SELECT * FROM organization_payroll_policies WHERE organization_id=?", [orgId]);
   const [weeks] = policies.length ? await pool.query("SELECT mon,tue,wed,thu,fri,sat,sun FROM work_week_config WHERE organization_id=?", [orgId]) : [[]];
+  // Normalized on the way out for the same reason getConfiguredPayrollPolicy does
+  // it: a row written before the currency was fixed may still hold NULL or a
+  // stale code, and the client must never see one.
+  const policy = policies[0] ? { ...policies[0], currency: CURRENCY } : null;
   return ok(res, {
     configured: policies[0]?.is_configured === 1 || policies[0]?.is_configured === true,
-    policy: policies[0] ?? null,
+    policy,
     work_week: weeks[0] ?? null,
   }, "Payroll policy");
 }
@@ -607,8 +633,11 @@ export async function updatePayrollPolicy(req, res) {
   if (!dayKeys.every((day) => typeof week[day] === "boolean") || !dayKeys.some((day) => week[day])) {
     throw new ApiError(400, "Choose at least one working day; each weekday must be explicitly set on or off.");
   }
-  const currency = String(body.currency ?? "").trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) throw new ApiError(400, "Enter a valid three-letter payroll currency code.");
+  // Currency is no longer an input. Anything a client sends in `currency` is
+  // ignored rather than rejected, so an older client (or a stale saved form)
+  // keeps working and cannot reintroduce a second currency; the value written
+  // below is always the single application currency.
+  const currency = CURRENCY;
   const payFrequency = String(body.pay_frequency ?? "");
   if (!["weekly", "biweekly", "semi_monthly", "monthly"].includes(payFrequency)) throw new ApiError(400, "Select a supported pay frequency.");
   const basis = String(body.daily_rate_basis ?? "");
@@ -753,7 +782,7 @@ export async function listOrgSalaryRecords(req, res) {
   );
   const [rows] = await pool.query(
     `SELECT sr.uuid, sr.employee_uuid, sr.month, sr.year, sr.basic_salary,
-            sr.allowances, sr.deductions, sr.net_salary, sr.notes, sr.created_at,
+            sr.allowances, sr.deductions, sr.expense_reimbursement, sr.net_salary, sr.notes, sr.created_at,
             e.full_name AS employee_name, e.email AS employee_email, dg.name AS designation,
             o.name AS organization_name
      FROM salary_records sr
@@ -817,7 +846,7 @@ export async function listAllSalaryRecords(req, res) {
   );
   const [rows] = await pool.query(
     `SELECT sr.uuid, sr.employee_uuid, sr.month, sr.year, sr.basic_salary,
-            sr.allowances, sr.deductions, sr.net_salary, sr.notes, sr.created_at,
+            sr.allowances, sr.deductions, sr.expense_reimbursement, sr.net_salary, sr.notes, sr.created_at,
             e.full_name AS employee_name, e.email AS employee_email, dg.name AS designation,
             o.uuid AS organization_uuid, o.name AS organization_name
      FROM salary_records sr
@@ -970,7 +999,7 @@ export async function exportOrgSalaryRecords(req, res) {
 
   const [rows] = await pool.query(
     `SELECT sr.employee_uuid, sr.month, sr.year, sr.basic_salary,
-            sr.allowances, sr.deductions, sr.net_salary, sr.notes, sr.created_at,
+            sr.allowances, sr.deductions, sr.expense_reimbursement, sr.net_salary, sr.notes, sr.created_at,
             e.full_name AS employee_name, e.email AS employee_email, dg.name AS designation
      FROM salary_records sr
      JOIN employees e ON e.uuid = sr.employee_uuid
@@ -980,7 +1009,7 @@ export async function exportOrgSalaryRecords(req, res) {
     params
   );
 
-  const header = "Employee,Email,Designation,Month,Year,Basic Salary,Allowances,Deductions,Net Salary,Notes";
+  const header = "Employee,Email,Designation,Month,Year,Basic Salary,Allowances,Expense Reimbursement,Deductions,Net Salary,Notes";
   const lines = rows.map((r) => [
     r.employee_name,
     r.employee_email,
@@ -989,6 +1018,7 @@ export async function exportOrgSalaryRecords(req, res) {
     r.year,
     r.basic_salary,
     r.allowances,
+    r.expense_reimbursement,
     r.deductions,
     r.net_salary,
     r.notes,
@@ -1038,7 +1068,7 @@ export async function mySalaryRecords(req, res) {
   );
   const [rows] = await pool.query(
     `SELECT sr.uuid, sr.employee_uuid, sr.month, sr.year, sr.basic_salary,
-            sr.allowances, sr.deductions, sr.net_salary, sr.notes, sr.created_at,
+            sr.allowances, sr.deductions, sr.expense_reimbursement, sr.net_salary, sr.notes, sr.created_at,
             e.full_name AS employee_name, e.email AS employee_email, dg.name AS designation,
             o.name AS organization_name
      FROM salary_records sr

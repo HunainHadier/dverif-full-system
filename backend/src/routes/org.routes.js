@@ -58,9 +58,10 @@ import {
   listCandidates,
   getCandidate,
   createApplication,
+  updateCandidate,
   moveApplicationStage,
   startOfferApplication,
-  respondToOffer,
+  hireOffer,
   getPipeline,
   listInterviews,
   scheduleInterview,
@@ -68,10 +69,8 @@ import {
   listOffers,
   getOfferPreparation,
   previewOffer,
-  requestOfferApproval,
-  decideOfferApproval,
-  getOfferApprovalStatus,
   sendOffer,
+  downloadOfferPdf,
   uploadResume,
   removeResume,
   downloadResume,
@@ -420,6 +419,7 @@ router.post("/candidates", recruitmentMgmt, asyncHandler(createApplication));
 
 router.get("/applications", recruitmentMgmt, asyncHandler(listCandidates));
 router.post("/applications", recruitmentMgmt, asyncHandler(createApplication));
+router.put("/candidates/:uuid", recruitmentMgmt, asyncHandler(updateCandidate));
 router.get("/applications/:uuid", recruitmentMgmt, asyncHandler(getCandidate));
 router.post("/applications/:uuid/move-stage", recruitmentMgmt, asyncHandler(moveApplicationStage));
 // A candidate is never hired from the pipeline. Only an accepted sent offer can
@@ -446,23 +446,15 @@ router.post("/interviews", recruitmentMgmt, asyncHandler(scheduleInterview));
 router.post("/interviews/:uuid/feedback", recruitmentMgmt, asyncHandler(recordInterviewFeedback));
 
 // ---- Offers ----
-// Approve/reject live in the SHARED approval workflow engine, not in this module.
-// No custom approval UI: the frontend renders ApprovalTimeline against
-// getOfferApproval, which returns the engine's append-only step history under the
-// component's own prop names.
 router.get("/offers", recruitmentMgmt, asyncHandler(listOffers));
 router.get("/offers/:uuid/prepare", recruitmentMgmt, asyncHandler(getOfferPreparation));
+router.get("/offers/:uuid/pdf", recruitmentMgmt, asyncHandler(downloadOfferPdf));
 router.post("/offers/:uuid/preview", recruitmentMgmt, asyncHandler(previewOffer));
-router.post("/offers/:uuid/approval", recruitmentMgmt, asyncHandler(requestOfferApproval));
 // ONLY the employee-create route escalates. `portal_access` is not read by the
 // offer-response path any more (see respondToOffer), so keeping it on that route
 // would gate a field nothing looks at — a permission check that appears to
 // protect something while actually only confusing whoever reads it.
-router.post("/offers/:uuid/respond", recruitmentMgmt, asyncHandler(respondToOffer));
-router.post("/offers/:uuid/approval/decide", recruitmentMgmt, asyncHandler(decideOfferApproval));
-router.get("/offers/:uuid/approval", recruitmentMgmt, asyncHandler(getOfferApprovalStatus));
-// Registered after /approval and /approval/decide so neither can be read as this
-// route's :uuid. Express matches in registration order.
+router.post("/offers/:uuid/hire", recruitmentMgmt, asyncHandler(hireOffer));
 router.post("/offers/:uuid/send", recruitmentMgmt, asyncHandler(sendOffer));
 
 // ---- Resumes ----

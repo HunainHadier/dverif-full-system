@@ -8,6 +8,8 @@ import * as attachments from "./attachments.service.js";
 import { getTemplate, listTemplates } from "./hrLetters.service.js";
 import { renderTemplate, validateBody, tagsForLetterType, tagLabel, unsupportedTags } from "../utils/letterMerge.js";
 import { sendRecruitmentOfferEmail } from "../utils/mailer.js";
+import { generateHrLetterPdf } from "../utils/hrLetterPdf.js";
+import { cnicError, normalizeCnic } from "../utils/contactFormat.js";
 import { ocrExtract } from "./documentService.js";
 
 /**
@@ -154,26 +156,44 @@ async function assertOrgOwnedId({ orgId, table, id, label, conn }) {
   return numeric;
 }
 
+async function resolveOrgRecordId({ orgId, table, id, name, label, conn }) {
+  if (id !== undefined && id !== null && id !== "") {
+    return assertOrgOwnedId({ orgId, table, id, label, conn });
+  }
+  if (!name || !String(name).trim()) throw new ApiError(400, `${label.toLowerCase()} is required`);
+  const [rows] = await conn.query(
+    `SELECT id FROM ${table} WHERE organization_id=? AND LOWER(TRIM(name))=LOWER(TRIM(?)) LIMIT 1`,
+    [orgId, String(name).trim()]
+  );
+  if (!rows.length) throw new ApiError(400, `${label} was not found in this organization`);
+  return rows[0].id;
+}
+
 export async function createOpening({
   orgId,
   actorUuid,
   title,
   departmentId,
   designationId,
+  departmentName,
+  designationName,
   location,
-  employmentType = "full_time",
+  employmentType,
   description,
   status = "draft",
-  vacancies = 1,
+  vacancies,
   conn = pool,
 }) {
   if (!title || !String(title).trim()) throw new ApiError(400, "title is required");
+  if (!location || !String(location).trim()) throw new ApiError(400, "location is required");
+  if (!description || !String(description).trim()) throw new ApiError(400, "description is required");
   if (!JOB_STATUSES.includes(status)) {
     throw new ApiError(400, `status must be one of: ${JOB_STATUSES.join(", ")}`);
   }
   if (!EMPLOYMENT_TYPES.includes(employmentType)) {
     throw new ApiError(400, `employment_type must be one of: ${EMPLOYMENT_TYPES.join(", ")}`);
   }
+  if (employmentType === undefined) throw new ApiError(400, "employment_type is required");
   const seats = Number(vacancies);
   if (!Number.isInteger(seats) || seats < 1) {
     // 0 would mean "a vacancy that cannot be filled", which is not a thing; the
@@ -181,17 +201,19 @@ export async function createOpening({
     throw new ApiError(400, "vacancies must be a positive whole number");
   }
 
-  const department_id = await assertOrgOwnedId({
+  const department_id = await resolveOrgRecordId({
     orgId,
     table: "departments",
     id: departmentId,
+    name: departmentName,
     label: "Department",
     conn,
   });
-  const designation_id = await assertOrgOwnedId({
+  const designation_id = await resolveOrgRecordId({
     orgId,
     table: "designations",
     id: designationId,
+    name: designationName,
     label: "Designation",
     conn,
   });
@@ -231,6 +253,14 @@ export async function createOpening({
 
 export async function getOpening({ orgId, openingUuid, conn = pool }) {
   const opening = await loadOpening({ orgId, openingUuid, conn });
+  const [[names]] = await conn.query(
+    `SELECT dp.name AS department_name, dg.name AS designation_name
+       FROM job_openings o
+       LEFT JOIN departments dp ON dp.id=o.department_id AND dp.organization_id=o.organization_id
+       LEFT JOIN designations dg ON dg.id=o.designation_id AND dg.organization_id=o.organization_id
+      WHERE o.uuid=? AND o.organization_id=?`,
+    [openingUuid, orgId]
+  );
   const [counts] = await conn.query(
     `SELECT COUNT(*) AS total,
             SUM(CASE WHEN stage='hired' THEN 1 ELSE 0 END) AS hired,
@@ -244,6 +274,8 @@ export async function getOpening({ orgId, openingUuid, conn = pool }) {
 
   return {
     ...opening,
+    department_name: names?.department_name ?? null,
+    designation_name: names?.designation_name ?? null,
     // Read back through isoDate(), never toISOString(): mysql2 builds a DATE at
     // local midnight, so on this server (UTC+5) a joining date arrives as the
     // previous day and every hire would be filed under the wrong day.
@@ -357,6 +389,8 @@ export async function updateOpening({
   title,
   departmentId,
   designationId,
+  departmentName,
+  designationName,
   location,
   employmentType,
   description,
@@ -389,29 +423,11 @@ export async function updateOpening({
   if (description !== undefined) add("description", description ? String(description).trim() : null);
   if (status !== undefined) add("status", status);
 
-  if (departmentId !== undefined) {
-    add(
-      "department_id",
-      await assertOrgOwnedId({
-        orgId,
-        table: "departments",
-        id: departmentId,
-        label: "Department",
-        conn,
-      })
-    );
+  if (departmentName !== undefined || departmentId !== undefined) {
+    add("department_id", await resolveOrgRecordId({ orgId, table: "departments", id: departmentId, name: departmentName, label: "Department", conn }));
   }
-  if (designationId !== undefined) {
-    add(
-      "designation_id",
-      await assertOrgOwnedId({
-        orgId,
-        table: "designations",
-        id: designationId,
-        label: "Designation",
-        conn,
-      })
-    );
+  if (designationName !== undefined || designationId !== undefined) {
+    add("designation_id", await resolveOrgRecordId({ orgId, table: "designations", id: designationId, name: designationName, label: "Designation", conn }));
   }
 
   if (vacancies !== undefined) {
@@ -474,6 +490,18 @@ export async function loadCandidate({ orgId, candidateUuid, conn = pool, forUpda
   return rows[0];
 }
 
+async function assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn }) {
+  const [feedback] = await conn.query(
+    `SELECT outcome FROM interviews
+      WHERE organization_id=? AND candidate_uuid=? AND status='completed'
+      ORDER BY scheduled_at DESC, id DESC LIMIT 1`,
+    [orgId, candidateUuid]
+  );
+  if (!['passed', 'failed'].includes(feedback[0]?.outcome)) {
+    throw new ApiError(409, "Record the interview feedback and select Passed or Failed before moving this candidate forward.");
+  }
+}
+
 /**
  * File an application.
  *
@@ -495,6 +523,7 @@ export async function createCandidate({
   conn = pool,
 }) {
   if (!fullName || !String(fullName).trim()) throw new ApiError(400, "full_name is required");
+  if (!email || !String(email).trim()) throw new ApiError(400, "email is required");
 
   let address = email ? String(email).trim().toLowerCase() : null;
   // Lowercased before the duplicate check so "Ali@x.com" and "ali@x.com" are the
@@ -505,6 +534,28 @@ export async function createCandidate({
   }
 
   const opening = await loadOpening({ orgId, openingUuid, conn, requireStatus: "open" });
+
+  const normalizedPhone = phone ? String(phone).replace(/\D/g, "") : "";
+  if (cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
+  const normalizedCnic = normalizeCnic(cnic);
+  const [existingCandidates] = await conn.query(
+    `SELECT full_name, email, phone, cnic FROM candidates WHERE organization_id=?`,
+    [orgId]
+  );
+  const duplicate = existingCandidates.find((existing) =>
+    (address && String(existing.email ?? "").trim().toLowerCase() === address) ||
+    (normalizedPhone && String(existing.phone ?? "").replace(/\D/g, "") === normalizedPhone) ||
+    (normalizedCnic && String(existing.cnic ?? "").replace(/\D/g, "") === normalizedCnic)
+  );
+  if (duplicate) {
+    if (address && String(duplicate.email ?? "").trim().toLowerCase() === address) {
+      throw new ApiError(409, "A candidate with this email already exists");
+    }
+    if (normalizedPhone && String(duplicate.phone ?? "").replace(/\D/g, "") === normalizedPhone) {
+      throw new ApiError(409, "A candidate with this phone number already exists");
+    }
+    throw new ApiError(409, "A candidate with this CNIC already exists");
+  }
 
   const uuid = randomUUID();
   try {
@@ -520,7 +571,7 @@ export async function createCandidate({
         String(fullName).trim(),
         address,
         phone ? String(phone).trim() : null,
-        cnic ? String(cnic).trim() : null,
+        normalizedCnic || null,
         coverLetter ? String(coverLetter).trim() : null,
         notes ? String(notes).trim() : null,
         actorUuid ?? null,
@@ -549,6 +600,80 @@ export async function createCandidate({
   });
 
   return getCandidate({ orgId, candidateUuid: uuid, conn });
+}
+
+export async function updateCandidate({
+  orgId,
+  actorUuid,
+  candidateUuid,
+  fullName,
+  email,
+  phone,
+  cnic,
+  coverLetter,
+  notes,
+  conn = pool,
+}) {
+  const candidate = await loadCandidate({ orgId, candidateUuid, conn });
+  if (["sent", "hired"].includes(candidate.offer_status) || candidate.stage === "hired") {
+    throw new ApiError(409, "A candidate cannot be edited after the offer has been sent or they have been hired");
+  }
+  const nextName = fullName === undefined ? candidate.full_name : String(fullName).trim();
+  const nextEmail = email === undefined ? candidate.email : String(email).trim().toLowerCase();
+  if (!nextName) throw new ApiError(400, "full_name is required");
+  if (!nextEmail) throw new ApiError(400, "email is required");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new ApiError(400, "email is not a valid address");
+
+  const nextPhone = phone === undefined ? candidate.phone : (phone ? String(phone).trim() : null);
+  if (cnic !== undefined && cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
+  const nextCnic = cnic === undefined ? candidate.cnic : (normalizeCnic(cnic) || null);
+  const [existingCandidates] = await conn.query(
+    `SELECT full_name, email, phone, cnic FROM candidates WHERE organization_id=? AND uuid<>?`,
+    [orgId, candidateUuid]
+  );
+  const duplicate = existingCandidates.find((existing) =>
+    String(existing.email ?? "").trim().toLowerCase() === nextEmail ||
+    (nextPhone && String(existing.phone ?? "").replace(/\D/g, "") === String(nextPhone).replace(/\D/g, "")) ||
+    (nextCnic && String(existing.cnic ?? "").replace(/\D/g, "") === nextCnic)
+  );
+  if (duplicate) {
+    if (String(duplicate.email ?? "").trim().toLowerCase() === nextEmail) throw new ApiError(409, "A candidate with this email already exists");
+    if (nextPhone && String(duplicate.phone ?? "").replace(/\D/g, "") === String(nextPhone).replace(/\D/g, "")) throw new ApiError(409, "A candidate with this phone number already exists");
+    throw new ApiError(409, "A candidate with this CNIC already exists");
+  }
+
+  const invalidatesPreparedOffer = Boolean(candidate.offer_status && !["sent", "hired"].includes(candidate.offer_status));
+  await conn.query(
+    `UPDATE candidates
+        SET full_name=?, email=?, phone=?, cnic=?, cover_letter=?, notes=?,
+            stage=IF(?, 'selected', stage),
+            offer_status=IF(?, NULL, offer_status),
+            offer_template_uuid=IF(?, NULL, offer_template_uuid),
+            offer_values=IF(?, NULL, offer_values),
+            offer_body_snapshot=IF(?, NULL, offer_body_snapshot),
+            offer_snapshot_hash=IF(?, NULL, offer_snapshot_hash),
+            offer_template_hash=IF(?, NULL, offer_template_hash),
+            offer_snapshot_at=IF(?, NULL, offer_snapshot_at),
+            updated_at=NOW()
+      WHERE uuid=? AND organization_id=?`,
+    [
+      nextName, nextEmail, nextPhone, nextCnic,
+      coverLetter === undefined ? candidate.cover_letter ?? null : (coverLetter ? String(coverLetter).trim() : null),
+      notes === undefined ? candidate.notes ?? null : (notes ? String(notes).trim() : null),
+      invalidatesPreparedOffer, invalidatesPreparedOffer, invalidatesPreparedOffer,
+      invalidatesPreparedOffer, invalidatesPreparedOffer, invalidatesPreparedOffer,
+      invalidatesPreparedOffer, invalidatesPreparedOffer, candidateUuid, orgId,
+    ]
+  );
+  logAudit({
+    actorType: "user",
+    actorId: actorUuid ?? null,
+    action: "candidate.update",
+    entityType: ATTACHMENT_ENTITY.CANDIDATE,
+    entityId: candidateUuid,
+    details: { offer_invalidated: invalidatesPreparedOffer },
+  });
+  return getCandidate({ orgId, candidateUuid, conn });
 }
 
 /**
@@ -633,7 +758,15 @@ export async function listCandidates({
     `SELECT c.*, o.title AS opening_title,
             (SELECT COUNT(*) FROM interviews i
               WHERE i.organization_id = c.organization_id
-                AND i.candidate_uuid = c.uuid AND i.status = 'completed') AS completed_interviews
+                AND i.candidate_uuid = c.uuid AND i.status = 'completed') AS completed_interviews,
+            (SELECT COUNT(*) FROM interviews i
+              WHERE i.organization_id = c.organization_id
+                AND i.candidate_uuid = c.uuid AND i.status IN ('scheduled','completed')) AS valid_interviews,
+            CASE WHEN (SELECT i.outcome FROM interviews i
+              WHERE i.organization_id = c.organization_id
+                AND i.candidate_uuid = c.uuid AND i.status='completed'
+              ORDER BY i.scheduled_at DESC, i.id DESC LIMIT 1) IN ('passed','failed')
+              THEN 1 ELSE 0 END AS feedback_recorded_interviews
        FROM candidates c
        LEFT JOIN job_openings o ON o.uuid = c.job_opening_uuid AND o.organization_id = c.organization_id
       WHERE ${where}
@@ -647,6 +780,8 @@ export async function listCandidates({
       ...r,
       rating: r.rating === null ? null : money(r.rating),
       completed_interviews: Number(r.completed_interviews ?? 0),
+      valid_interviews: Number(r.valid_interviews ?? 0),
+      feedback_recorded_interviews: Number(r.feedback_recorded_interviews ?? 0),
     })),
     total: Number(total),
     page,
@@ -721,6 +856,10 @@ export async function updateCandidateStage({
       409,
       `A candidate at "${candidate.stage}" can only move to: ${allowed.join(", ")}`,
     );
+  }
+
+  if (["selected", "offered"].includes(stage)) {
+    await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn });
   }
 
   if (stage === "rejected" && !rejectionReason) {
@@ -901,7 +1040,7 @@ async function hireCandidateInTransaction({
   const candidate = await loadCandidate({ orgId, candidateUuid, conn: db, forUpdate: true });
 
   if (!offerAcceptance || candidate.offer_status !== "sent") {
-    throw new ApiError(409, "An employee can be created only after the candidate accepts a sent offer");
+    throw new ApiError(409, "A candidate can be hired only after the offer has been sent");
   }
   if (!["selected", "offered"].includes(candidate.stage)) {
     // Includes already-hired, so a second click on the Hire button says why rather
@@ -917,15 +1056,29 @@ async function hireCandidateInTransaction({
     throw new ApiError(409, "This candidate already has an employee record");
   }
 
+  await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn: db });
+
   // The opening's vacancies are checked INSIDE the transaction, and the count is
   // taken with the row locked above, so two recruiters hiring for a one-seat
   // opening cannot both pass the check.
   const [openings] = await db.query(
-    "SELECT vacancies, designation_id, department_id, employment_type FROM job_openings WHERE uuid=? AND organization_id=?",
+    "SELECT vacancies, designation_id, department_id, employment_type, interview_required FROM job_openings WHERE uuid=? AND organization_id=?",
     [candidate.job_opening_uuid, orgId]
   );
   const opening = openings[0];
   if (!opening) throw new ApiError(404, "The job opening for this candidate no longer exists");
+
+  if (opening.interview_required) {
+    const [finalInterviews] = await db.query(
+      `SELECT outcome FROM interviews
+        WHERE organization_id=? AND candidate_uuid=? AND status='completed'
+        ORDER BY scheduled_at DESC, id DESC LIMIT 1`,
+      [orgId, candidateUuid]
+    );
+    if (finalInterviews[0]?.outcome !== "passed") {
+      throw new ApiError(409, "Complete the interview and record a passing result before hiring this candidate.");
+    }
+  }
 
   const [[agg]] = await db.query(
     "SELECT COUNT(*) AS hired FROM candidates WHERE organization_id=? AND job_opening_uuid=? AND stage='hired'",
@@ -944,15 +1097,18 @@ async function hireCandidateInTransaction({
   const employeeDesignation = designationId ?? opening.designation_id ?? null;
   const employeeDepartment = departmentId ?? opening.department_id ?? null;
 
-  // The sent/approved offer snapshot is the offer letter. Hiring must not create a
-  // second draft HR letter after acceptance; it converts the accepted offer once.
+  // The sent offer snapshot is the offer letter. Hiring must not create a
+  // second draft HR letter after marking the candidate hired; it converts the offer once.
   const approvedOfferValues = parseOfferValues(candidate.offer_values);
   const effectiveCnic = cnic ?? candidate.cnic ?? approvedOfferValues.cnic ?? null;
+  const normalizedEffectiveCnic = normalizeCnic(effectiveCnic);
+  if (!normalizedEffectiveCnic) throw new ApiError(400, "CNIC is required before hiring");
+  if (cnicError(effectiveCnic)) throw new ApiError(400, "CNIC must be 13 digits");
   const effectiveJoiningDate = joiningDate ?? approvedOfferValues.joining_date ?? null;
   const startingSalaryRaw = approvedOfferValues.new_salary;
   const startingSalary = startingSalaryRaw == null || String(startingSalaryRaw).trim() === "" ? null : Number(String(startingSalaryRaw).replace(/,/g, ""));
   if (startingSalaryRaw != null && String(startingSalaryRaw).trim() !== "" && (!Number.isFinite(startingSalary) || startingSalary <= 0)) {
-    throw new ApiError(409, "The approved offer salary is not a valid positive amount. Revise the offer and obtain approval again before acceptance.");
+    throw new ApiError(409, "The offer salary is not a valid positive amount. Revise the offer before hiring.");
   }
 
   /*
@@ -975,7 +1131,7 @@ async function hireCandidateInTransaction({
       candidate.full_name,
       candidate.email,
       candidate.phone,
-      effectiveCnic ? String(effectiveCnic).trim() : null,
+      normalizedEffectiveCnic,
       employeeDesignation,
       employeeDepartment,
       opening.employment_type === "internship" ? "intern" : opening.employment_type,
@@ -1013,11 +1169,11 @@ async function hireCandidateInTransaction({
   // concurrent hires, one matches this row and the other matches nothing.
   const [result] = await db.query(
     `UPDATE candidates
-        SET stage='hired', converted_employee_uuid=?, offer_status='accepted',
+        SET cnic=?, stage='hired', converted_employee_uuid=?, offer_status='hired',
             offer_response_at=NOW(), offer_response_notes=?, hired_at=COALESCE(?, NOW()),
             converted_at=NOW(), updated_at=NOW()
       WHERE uuid=? AND organization_id=? AND stage IN ('selected','offered') AND offer_status='sent' AND converted_employee_uuid IS NULL`,
-    [employeeUuid, responseNotes?.trim() || null, now, candidateUuid, orgId]
+    [normalizedEffectiveCnic, employeeUuid, responseNotes?.trim() || null, now, candidateUuid, orgId]
   );
 
   if (!result.affectedRows) {
@@ -1067,8 +1223,8 @@ async function hireCandidateInTransaction({
  * (whether money was promised) is exactly the one that must not drift.
  *
  * So this list is a VIEW over candidates joined to their letter. It is read-only by
- * construction: an offer cannot be edited here, only issued or revoked, and both of
- * those act on the letter through hrLetters.service.js.
+ * construction: an offer is prepared before hiring, mailed directly from this page,
+ * and converted to an employee only when the recruiter marks it hired.
  */
 export async function listOffers({
   orgId,
@@ -1078,12 +1234,7 @@ export async function listOffers({
   offset = 0,
   conn = pool,
 }) {
-  // ONLY `hired`. Not `offered` too, as an earlier version had it: an offer letter is
-  // created by hireCandidate, so a candidate still at `offered` has no letter and
-  // every action on that row would 409. Listing them here produced offers the user
-  // could not approve, send, or even inspect — a row whose only possible outcome was
-  // an error. Approval and sending are POST-hire, so `hired` is the whole population.
-  const clauses = ["c.organization_id = ?", "(c.offer_status IS NOT NULL OR c.stage = 'hired')"];
+  const clauses = ["c.organization_id = ?", "c.offer_status IS NOT NULL"];
   const params = [orgId];
 
   if (openingUuid) {
@@ -1098,9 +1249,14 @@ export async function listOffers({
     params
   );
   const [rows] = await conn.query(
-    `SELECT c.uuid AS candidate_uuid, c.full_name, c.email, c.stage, c.hired_at, c.offer_status, c.offer_sent_at, c.offer_response_at, c.offer_response_notes,
+    `SELECT c.uuid AS candidate_uuid, c.full_name, c.email, c.cnic, c.stage, c.hired_at, c.offer_status, c.offer_sent_at, c.offer_response_at, c.offer_response_notes,
             c.offer_letter_uuid, c.converted_employee_uuid, c.offer_template_uuid, c.offer_values,
             c.offer_body_snapshot, c.offer_snapshot_hash,
+            CASE WHEN (SELECT i.outcome FROM interviews i
+              WHERE i.organization_id=c.organization_id AND i.candidate_uuid=c.uuid
+                AND i.status='completed'
+              ORDER BY i.scheduled_at DESC, i.id DESC LIMIT 1) IN ('passed','failed')
+              THEN 1 ELSE 0 END AS feedback_recorded_interviews,
             o.title AS opening_title,
             l.reference_no, l.status AS letter_status, l.title AS letter_title,
             l.issued_at, l.qr_token
@@ -1124,11 +1280,9 @@ export async function listOffers({
       /**
        * Whether this offer can be sent.
        *
-       * False for a candidate who was hired without a letter, and for one already
-       * issued. The UI uses it to disable the button rather than to decide server
-       * behaviour — issueLetter refuses anything that is not a draft anyway.
+       * Only a prepared offer with a saved body and candidate email can be sent.
        */
-      can_send: r.letter_status === "draft",
+      can_send: ["ready", "draft", "pending_approval", "approved"].includes(r.offer_status) && Boolean(r.offer_body_snapshot && r.email),
     })),
     total: Number(total),
     page,
@@ -1153,21 +1307,10 @@ export async function listOffers({
 /**
  * Send a candidate's offer letter.
  *
- * A THIN WRAPPER over hrLetters, deliberately. Every rule about what a letter may
- * say -- unresolved merge tags, QR signing being configured, re-issuing an already
- * issued letter -- already lives in hrLetters.service.js and is enforced there in a
- * transaction. Re-implementing any of it here would create a second place to get it
- * wrong, and the failure would be printing "Dear , your salary is $" onto a document
- * a candidate has already signed.
+ * Sends the prepared offer directly to the candidate. The saved snapshot is checked
+ * before dispatch so the candidate receives the terms the recruiter reviewed.
  *
- * REQUIRES AN APPROVED OFFER APPROVAL, checked here rather than in the controller
- * because this is the irreversible step: issuing mints a QR token and freezes the
- * merged body. A candidate can sit at `offered` indefinitely; they cannot obtain a
- * signed offer without an approver having decided it.
- *
- * The candidate is re-read first so the letter uuid comes from THIS org's row rather
- * than from the request body. Pointing this at another tenant's letter would issue
- * their document.
+ * The candidate is re-read in the current organization before sending.
  *
  * NOTE `conn`, not `db`: an earlier sweep of this file renamed the connection
  * parameter to `db` inside this function too, so it no longer honoured a caller's
@@ -1181,45 +1324,47 @@ export async function sendOffer({ orgId, actorUuid, candidateUuid, conn = pool }
   try {
     if (own) await db.beginTransaction();
     const candidate = await loadCandidate({ orgId, candidateUuid, conn: db, forUpdate: true });
+    await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn: db });
     if (!["selected", "offered"].includes(candidate.stage)) throw new ApiError(409, "Only a selected candidate can receive an offer");
     if (!candidate.email) throw new ApiError(409, "Add the candidate?s email address before sending the offer");
-    const approval = await getOfferApproval({ orgId, candidateUuid, conn: db });
-    if (!approval || approval.status !== "approved") throw new ApiError(409, "Offer must be approved before it can be sent");
-    const approved = approval.payload ?? {};
     const storedValues = parseOfferValues(candidate.offer_values);
     const currentHash = createHash("sha256").update(stableJson({ template_uuid: candidate.offer_template_uuid, values: storedValues, body: candidate.offer_body_snapshot })).digest("hex");
+    const sendableStatuses = candidate.offer_status === "sent"
+      ? ["sent"]
+      : ["ready", "draft", "pending_approval", "approved"];
     if (!candidate.offer_template_uuid || !candidate.offer_body_snapshot || currentHash !== candidate.offer_snapshot_hash ||
-        approved.snapshot_hash !== candidate.offer_snapshot_hash || approved.rendered_body !== candidate.offer_body_snapshot ||
-        approved.offer_template_uuid !== candidate.offer_template_uuid) {
-      throw new ApiError(409, "Approved offer content has changed. Review it and submit for approval again.");
+        !sendableStatuses.includes(candidate.offer_status)) {
+      throw new ApiError(409, "Prepare the offer content before sending it.");
     }
     const currentTemplate = await getTemplate({ orgId, templateUuid: candidate.offer_template_uuid });
     const currentTemplateHash = createHash("sha256").update(currentTemplate.body).digest("hex");
     if (currentTemplate.letter_type !== "offer" || currentTemplateHash !== candidate.offer_template_hash) {
-      throw new ApiError(409, "The approved Offer Letter template changed. Review the offer and submit it for approval again.");
+      throw new ApiError(409, "The Offer Letter template changed. Review and prepare the offer again.");
     }
     try {
       await sendRecruitmentOfferEmail({
         to: candidate.email,
         candidateName: candidate.full_name,
-        openingTitle: approved.opening_title ?? "",
+        openingTitle: candidate.opening_title ?? "",
         renderedBody: candidate.offer_body_snapshot,
       });
     } catch (error) {
       logAudit({ actorType: "user", actorId: actorUuid ?? null, action: "candidate.offer.send.failed",
         entityType: ATTACHMENT_ENTITY.CANDIDATE, entityId: candidate.uuid,
         details: { error: String(error?.message ?? "delivery failed").slice(0, 240) } });
-      throw new ApiError(502, "The offer email could not be sent. Check the mail configuration and retry; the offer remains approved.");
+      throw new ApiError(502, "Offer email delivery failed", {
+        publicMessage: "Offer email could not be sent. Verify the organization mail settings and retry; the offer is still ready to send.",
+      });
     }
     const [updated] = await db.query(
-      "UPDATE candidates SET offer_status='sent', offer_sent_at=NOW(), updated_at=NOW() WHERE uuid=? AND organization_id=? AND stage IN ('selected','offered') AND offer_status='approved'",
+      "UPDATE candidates SET offer_status='sent', offer_sent_at=NOW(), updated_at=NOW() WHERE uuid=? AND organization_id=? AND stage IN ('selected','offered') AND offer_status IN ('ready','draft','pending_approval','approved','sent')",
       [candidate.uuid, orgId]
     );
     if (!updated.affectedRows) throw new ApiError(409, "Offer state changed; refresh and try again");
     if (own) await db.commit();
     logAudit({ actorType: "user", actorId: actorUuid ?? null, action: "candidate.offer.send",
       entityType: ATTACHMENT_ENTITY.CANDIDATE, entityId: candidate.uuid,
-      details: { approval_request_uuid: approval.uuid, snapshot_hash: candidate.offer_snapshot_hash } });
+      details: { snapshot_hash: candidate.offer_snapshot_hash } });
     return { candidate_uuid: candidate.uuid, status: "sent", sent_at: new Date().toISOString() };
   } catch (error) {
     if (own) await db.rollback();
@@ -1227,6 +1372,30 @@ export async function sendOffer({ orgId, actorUuid, candidateUuid, conn = pool }
   } finally {
     if (own) db.release();
   }
+}
+
+/** Render the saved offer snapshot as a downloadable PDF for organization staff. */
+export async function downloadOfferPdf({ orgId, candidateUuid, conn = pool }) {
+  const { candidate, context } = await offerContext({ orgId, candidateUuid, conn });
+  if (!candidate.offer_body_snapshot || !candidate.offer_snapshot_hash) {
+    throw new ApiError(404, "No prepared offer letter is available for this candidate");
+  }
+  const values = parseOfferValues(candidate.offer_values);
+  const referenceNo = String(values.reference_no || `OFR-${candidate.uuid.slice(0, 8).toUpperCase()}`);
+  const letter = {
+    letter_type: "offer",
+    title: `Offer for ${context.opening_title}`,
+    reference_no: referenceNo,
+    body_snapshot: candidate.offer_body_snapshot,
+    status: candidate.offer_sent_at ? "issued" : "draft",
+    issued_at: candidate.offer_sent_at ?? candidate.offer_snapshot_at ?? new Date(),
+  };
+  const buffer = await generateHrLetterPdf({
+    letter,
+    employeeName: context.full_name,
+    organizationName: context.organization_name,
+  });
+  return { buffer, filename: `${referenceNo.replace(/[^\\w.-]+/g, "-")}.pdf` };
 }
 
 /**
@@ -1247,47 +1416,18 @@ export async function sendOffer({ orgId, actorUuid, candidateUuid, conn = pool }
  * something. The controller handles the field it still receives on the body.
  */
 export async function respondToOffer({
-  orgId, actorUuid, candidateUuid, response, joiningDate, cnic,
+  orgId, actorUuid, candidateUuid, joiningDate, cnic,
   designationId, departmentId, emergencyContact, comments, conn = pool,
 }) {
   const candidate = await loadCandidate({ orgId, candidateUuid, conn, forUpdate: true });
   if (!["selected", "offered"].includes(candidate.stage) || candidate.offer_status !== "sent") {
-    throw new ApiError(409, "Only a sent offer can receive a response");
+    throw new ApiError(409, "Only a sent offer can be marked hired");
   }
-  if (response === "declined") {
-    const [updated] = await conn.query(
-      "UPDATE candidates SET stage='declined', offer_status='declined', offer_response_at=NOW(), offer_response_notes=?, updated_at=NOW() WHERE uuid=? AND organization_id=? AND stage IN ('selected','offered') AND offer_status='sent'",
-      [comments?.trim() || null, candidate.uuid, orgId]
-    );
-    if (!updated.affectedRows) throw new ApiError(409, "Offer state changed; refresh and try again");
-    logAudit({ actorType: "user", actorId: actorUuid ?? null, action: "candidate.offer.declined",
-      entityType: ATTACHMENT_ENTITY.CANDIDATE, entityId: candidate.uuid, details: { comments: comments ?? null } });
-    return { candidate: await getCandidate({ orgId, candidateUuid, conn }), employee_uuid: null };
-  }
-  if (response !== "accepted") throw new ApiError(400, "response must be accepted or declined");
   return hireCandidate({
     orgId, actorUuid, candidateUuid, cnic, joiningDate, designationId, departmentId,
     emergencyContact, offerAcceptance: true, responseNotes: comments, conn,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Offer approval -- the only approve/reject path for offers
-//
-// Offers route through the SHARED approval workflow engine rather than carrying
-// their own approve/reject columns, because that engine already encodes the rules
-// that are easy to get wrong once and expensive to learn twice:
-//
-//   - one in-flight approval per entity, via a generated `live_entity_uuid` column
-//     AND a unique index, so a double submit cannot open two chains
-//   - rejection is terminal, and a resubmission is allowed afterwards
-//   - the step history is append-only, which is exactly what ApprovalTimeline renders
-//
-// The alternative -- an `offer_status` column on candidates with an approve button --
-// would be a second approval mechanism living beside the engine, with its own idea of
-// who may approve what and no shared audit trail. That is the parallel implementation
-// this avoids.
-// ---------------------------------------------------------------------------
 
 const OFFER_INPUT_TAGS = new Set(["designation", "department", "joining_date", "cnic", "new_salary"]);
 
@@ -1365,15 +1505,21 @@ export async function previewOffer({ orgId, candidateUuid, templateUuid, values 
   if (!template.is_active) throw new ApiError(409, "This offer template is inactive");
   const compatible = validateBody(template.body, "offer");
   if (!compatible.valid) throw new ApiError(400, compatible.problems.join("; "));
-  if (!compatible.tags.includes("new_salary")) throw new ApiError(400, "Offer Letter templates must include $new_salary so the approved offer and the employee payroll setup contain the same salary term.");
+  if (!compatible.tags.includes("new_salary")) throw new ApiError(400, "Offer Letter templates must include $new_salary so the offer and employee payroll setup contain the same salary term.");
   const supplied = {};
   for (const [key, value] of Object.entries(values ?? {})) {
     const tag = key.toLowerCase();
     if (!OFFER_INPUT_TAGS.has(tag)) continue;
     supplied[tag] = String(value ?? "").trim();
+    if (tag === "cnic") {
+      if (cnicError(supplied[tag])) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
+      supplied[tag] = normalizeCnic(supplied[tag]);
+    }
     if (supplied[tag].length > 500) throw new ApiError(400, `${tagLabel(tag, "offer")} must be 500 characters or fewer`);
   }
   const resolvedValues = { ...offerDefaults(context), ...supplied };
+  if (cnicError(resolvedValues.cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
+  resolvedValues.cnic = normalizeCnic(resolvedValues.cnic);
   // These values are authoritative and cannot be overridden by client input.
   resolvedValues.employee_name = context.full_name;
   resolvedValues.organization_name = context.organization_name;
@@ -1397,209 +1543,6 @@ export async function previewOffer({ orgId, candidateUuid, templateUuid, values 
 }
 
 /** The (module_key, entity_type) pair offers register under. */
-export const OFFER_APPROVAL = {
-  moduleKey: "recruitment_management",
-  entityType: "candidate_offer",
-};
-
-/**
- * Submit a drafted appointment letter for approval.
- *
- * THE STAGE GATE IS `hired`, NOT `offered` — and that is the whole point of the
- * lifecycle being post-hire.
- *
- * An offer letter is created by `hireCandidate`, in the same transaction that creates
- * the employee row. So a candidate who has not been hired has no letter to approve,
- * and gating on `offered` allowed exactly the sequence that cannot work: approve an
- * offer, then discover `sendOffer` refuses it with 409 because there is nothing to
- * send. The flow is therefore:
- *
- *     hired (employee record + DRAFT appointment letter)
- *       -> submitted for approval
- *       -> approved
- *       -> sent/issued (mints the reference number and the QR token)
- *
- * The candidate signs the issued letter and joins on `joining_date`, which is a
- * separate field from the hire date — so issuing a letter after the record exists is
- * not "late", it is the ordinary sequence for a start date in the future.
- */
-export async function requestOfferApproval({
-  orgId,
-  actorUuid,
-  candidateUuid,
-  comments,
-  conn = pool,
-}) {
-  const candidate = await loadCandidate({ orgId, candidateUuid, conn });
-
-  if (!["selected", "offered"].includes(candidate.stage)) {
-    throw new ApiError(409, "Select the candidate before submitting an offer");
-  }
-  if (candidate.offer_status !== "draft") {
-    throw new ApiError(409, "Prepare and validate the offer draft before submitting it for approval");
-  }
-  if (!candidate.offer_template_uuid || !candidate.offer_body_snapshot || !candidate.offer_snapshot_hash) {
-    throw new ApiError(409, "Choose an Offer Letter template and complete all required offer fields before approval");
-  }
-  const offerTemplate = await getTemplate({ orgId, templateUuid: candidate.offer_template_uuid });
-  if (offerTemplate.letter_type !== "offer") throw new ApiError(400, "Only Offer Letter templates can be submitted for recruitment approval");
-  const templateCheck = validateBody(offerTemplate.body, "offer");
-  if (!templateCheck.valid) throw new ApiError(400, templateCheck.problems.join("; "));
-  const savedValues = parseOfferValues(candidate.offer_values);
-  const savedRender = renderTemplate(offerTemplate.body, savedValues);
-  const savedHash = createHash("sha256").update(stableJson({ template_uuid: candidate.offer_template_uuid, values: savedValues, body: candidate.offer_body_snapshot })).digest("hex");
-  const savedTemplateHash = createHash("sha256").update(offerTemplate.body).digest("hex");
-  if (savedRender.unresolved.length || savedRender.text !== candidate.offer_body_snapshot || savedHash !== candidate.offer_snapshot_hash || savedTemplateHash !== candidate.offer_template_hash) {
-    throw new ApiError(409, "The offer snapshot is incomplete or changed. Reopen the draft, review its preview and try again.");
-  }
-
-  const { startApproval } = await import("./approvalWorkflow.service.js");
-  await startApproval({
-    orgId,
-    moduleKey: OFFER_APPROVAL.moduleKey,
-    entityType: OFFER_APPROVAL.entityType,
-    entityUuid: candidate.uuid,
-    requestedByUuid: actorUuid,
-    title: `Offer — ${candidate.full_name}`,
-    payload: {
-      candidate_uuid: candidate.uuid,
-      candidate_name: candidate.full_name,
-      opening_uuid: candidate.job_opening_uuid,
-      opening_title: candidate.opening_title ?? null,
-      offer_letter_uuid: candidate.offer_letter_uuid,
-      offer_template_uuid: candidate.offer_template_uuid,
-      offer_template_hash: candidate.offer_template_hash,
-      offer_values: parseOfferValues(candidate.offer_values),
-      rendered_body: candidate.offer_body_snapshot,
-      snapshot_hash: candidate.offer_snapshot_hash,
-      comments: comments ?? null,
-    },
-  });
-  await conn.query(
-    "UPDATE candidates SET offer_status='pending_approval', updated_at=NOW() WHERE uuid=? AND organization_id=?",
-    [candidate.uuid, orgId]
-  );
-
-  logAudit({
-    actorType: "user",
-    actorId: actorUuid ?? null,
-    action: "candidate.offer.approval.request",
-    entityType: ATTACHMENT_ENTITY.CANDIDATE,
-    entityId: candidate.uuid,
-    details: { stage: candidate.stage },
-  });
-
-  return getOfferApproval({ orgId, candidateUuid, conn });
-}
-
-/**
- * Approve or reject a submitted appointment letter.
- *
- * ON REJECT THE CANDIDATE IS **NOT** MOVED OUT OF `hired`. The earlier version moved
- * them to `rejected`, which was correct while approval was a pre-hire step, and is
- * wrong now that it is post-hire: this candidate already HAS an employee record and a
- * payroll identity, and flipping their pipeline stage to `rejected` would leave the
- * roster claiming someone does not exist who has a CNIC, a designation and a payslip.
- *
- * So a rejection now means exactly what it says — "this letter's terms are wrong" —
- * and leaves the hire intact. The reason is recorded on the CANDIDATE (still
- * `hired`, so the board keeps showing them) and in the approval's outcome notes, and
- * the recruiter reverts the letter to draft and submits again. What the letter needs
- * fixing and whether the person should be employed are two separate questions, and
- * conflating them is how a rejected offer letter used to delete a real hire.
- */
-export async function decideOfferApproval({
-  orgId,
-  actorUuid,
-  candidateUuid,
-  decision,
-  comments,
-  conn = pool,
-}) {
-  if (!["approve", "reject"].includes(decision)) {
-    throw new ApiError(400, "decision must be approve or reject");
-  }
-  const candidate = await loadCandidate({ orgId, candidateUuid, conn });
-
-  const approval = await getOfferApproval({ orgId, candidateUuid, conn });
-  if (!approval) throw new ApiError(404, "This offer has not been submitted for approval");
-  if (approval.status !== "pending") {
-    throw new ApiError(409, `This offer approval was already ${approval.status}`);
-  }
-
-  const { decideApproval } = await import("./approvalWorkflow.service.js");
-  await decideApproval({
-    orgId,
-    requestUuid: approval.uuid,
-    actorUuid,
-    decision,
-    comments: comments ?? null,
-  });
-  await conn.query(
-    "UPDATE candidates SET offer_status=?, updated_at=NOW() WHERE uuid=? AND organization_id=?",
-    [decision === "approve" ? "approved" : "rejected", candidate.uuid, orgId]
-  );
-
-  if (decision === "reject") {
-    // Appended to any existing notes rather than replacing them: the recruiter's own
-    // notes are the only record of how this hire was reached, and overwriting them
-    // with a letter-terms comment would destroy that.
-    const reason = comments?.trim() || "The appointment letter was rejected in approval";
-    const merged = candidate.notes ? `${candidate.notes}\n\n${reason}` : reason;
-    await conn.query(
-      `UPDATE candidates SET \`notes\` = ?, updated_at = NOW() WHERE uuid = ? AND organization_id = ?`,
-      [merged, candidate.uuid, orgId]
-    );
-  }
-
-  logAudit({
-    actorType: "user",
-    actorId: actorUuid ?? null,
-    action: `candidate.offer.approval.${decision}`,
-    entityType: ATTACHMENT_ENTITY.CANDIDATE,
-    entityId: candidate.uuid,
-    details: { approval_request_uuid: approval.uuid },
-  });
-
-  return getOfferApproval({ orgId, candidateUuid, conn });
-}
-
-/**
- * The offer's approval record, shaped for ApprovalTimeline.
- *
- * `steps` and `currentStepOrder` are the component's exact prop names, because
- * getApprovalStatus already returns those keys from the append-only history. No
- * mapping layer, so nothing here can drift from what the component renders.
- *
- * Loads the candidate first so an unknown uuid 404s here rather than resolving to a
- * null approval that the UI would render as "no approval yet" for someone else's row.
- */
-export async function getOfferApproval({ orgId, candidateUuid, conn = pool }) {
-  await loadCandidate({ orgId, candidateUuid, conn });
-  const { getApprovalStatus } = await import("./approvalWorkflow.service.js");
-  const record = await getApprovalStatus({
-    orgId,
-    entityType: OFFER_APPROVAL.entityType,
-    entityUuid: candidateUuid,
-  });
-  if (!record) return null;
-
-  return {
-    uuid: record.uuid,
-    status: record.status,
-    title: record.title,
-    requested_at: record.requested_at,
-    resolved_at: record.resolved_at,
-    resolved_by_uuid: record.resolved_by_uuid,
-    outcome_notes: record.outcome_notes,
-    // The ApprovalTimeline prop names, verbatim.
-    steps: record.history ?? [],
-    currentStepOrder: record.current_step_order ?? null,
-    current_step_name: record.current_step_name ?? null,
-    payload: parseOfferValues(record.payload),
-  };
-}
-
 // ===========================================================================
 // Interviews
 // ===========================================================================
@@ -1993,45 +1936,7 @@ export async function getPipelineBoard({ orgId, openingUuid, conn = pool }) {
 // Starting an offer — the ONE action that puts a person on the roster
 // ---------------------------------------------------------------------------
 
-/**
- * START AN OFFER: hire the candidate AND submit their letter for approval.
- *
- * THIS IS THE ENTRY POINT TO THE MODULE, AND IT EXISTS BECAUSE `hireCandidate` ON ITS
- * OWN WAS THE GAP.
- *
- * What the UI used to do was call `hireCandidate` directly from a button on the
- * pipeline's Offered card. That function creates the employee record and drafts the
- * letter — and then stops. Nothing submitted the letter anywhere. So the observed
- * outcome was exactly what a real test found: a person on the payroll whose offer was
- * never sent, never approved, and never would be, because every remaining step lived
- * on a different screen that nothing pointed them to. The employee record is the one
- * write in this module that cannot be undone from the UI, and it was the one write
- * with no enforced follow-up.
- *
- * So the two writes are now one action with one name. `hireCandidate` stays exactly as
- * it is — a single atomic hire, still used directly by tests and by any caller that
- * genuinely wants a bare hire — but the PIPELINE calls this instead, because a hire
- * reached from a pipeline card is always the first half of an offer.
- *
- * ORDER IS LOAD-BEARING, AND IT IS THE OTHER WAY ROUND FROM WHAT IT LOOKS LIKE:
- * hire FIRST, then start the approval.
- *
- *   - The approval must be post-hire. `requestOfferApproval` gates on `hired`, because
- *     the letter it approves is created by the hire. So approval cannot go first.
- *   - Therefore the workflow is PREFLIGHTED before the hire. `preflightApproval` does
- *     the exact checks `startApproval` does — workflow exists, has steps, first step
- *     has an approver — without writing anything. That closes the window in which a
- *     misconfigured workflow would leave an orphaned employee, which is the failure
- *     this function is for.
- *
- * IF THE APPROVAL STILL FAILS AFTER A COMMITTED HIRE, the failure is reported as the
- * recoverable state it actually is, rather than hidden or half-rolled-back: the
- * employee exists and the letter is drafted, so the Offers tab shows the row with a
- * "Submit for approval" button and the recruiter finishes the job there. Rolling the
- * hire back would be worse — it would delete a real person to tidy up a workflow
- * misconfiguration, and `startApproval` writes on its own connection, so the approval
- * could not be rolled back with it anyway.
- */
+/** Prepare the offer snapshot and leave it ready for direct email dispatch. */
 export async function startCandidateOffer({
   orgId, actorUuid, candidateUuid, overrideFailedInterviewReason = null,
   overrideFailedInterviewAuthorized = false, offerTemplateUuid, offerValues = {}, conn = pool,
@@ -2039,18 +1944,19 @@ export async function startCandidateOffer({
   assertUuid(candidateUuid, "Candidate UUID");
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
   if (!["selected", "offered"].includes(candidate.stage)) throw new ApiError(409, "Only a selected candidate can receive an offer");
-  if (["pending_approval", "sent", "accepted", "declined"].includes(candidate.offer_status)) {
+  await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn });
+  if (["sent", "hired"].includes(candidate.offer_status)) {
     throw new ApiError(409, "This offer cannot be changed in its current state");
   }
-  if (!offerTemplateUuid) throw new ApiError(400, "Select an Offer Letter template before submitting for approval");
+  if (!offerTemplateUuid) throw new ApiError(400, "Select an Offer Letter template before creating the offer");
   const prepared = await previewOffer({ orgId, candidateUuid, templateUuid: offerTemplateUuid, values: offerValues, conn });
   if (prepared.unresolved.length) {
     const labels = prepared.missing_fields.map((field) => field.label);
-    throw new ApiError(400, `Complete these offer fields before approval: ${[...new Set(labels)].join(", ")}`);
+    throw new ApiError(400, `Complete these offer fields before creating the offer: ${[...new Set(labels)].join(", ")}`);
   }
   const preparedHash = createHash("sha256").update(stableJson({ template_uuid: prepared.template_uuid, values: prepared.values, body: prepared.rendered_body })).digest("hex");
-  if (candidate.offer_status === "approved" && candidate.offer_snapshot_hash === preparedHash) {
-    throw new ApiError(409, "This offer content is already approved and unchanged");
+  if (candidate.offer_status === "ready" && candidate.offer_snapshot_hash === preparedHash) {
+    throw new ApiError(409, "This offer is already ready and unchanged");
   }
   const [[opening]] = await conn.query(
     "SELECT interview_required FROM job_openings WHERE organization_id=? AND uuid=?",
@@ -2073,23 +1979,20 @@ export async function startCandidateOffer({
       [overrideFailedInterviewReason.trim(), actorUuid, candidate.uuid, orgId]
     );
   }
-  const { preflightApproval } = await import("./approvalWorkflow.service.js");
-  await preflightApproval({
-    orgId, moduleKey: OFFER_APPROVAL.moduleKey, entityType: OFFER_APPROVAL.entityType,
-    actorUuid, conn,
-  });
   const offerValuesJson = JSON.stringify(prepared.values);
   const snapshotHash = createHash("sha256").update(stableJson({ template_uuid: prepared.template_uuid, values: prepared.values, body: prepared.rendered_body })).digest("hex");
-  await conn.query(
+  const [updatedCandidate] = await conn.query(
     `UPDATE candidates
-        SET offer_status='draft', offer_template_uuid=?, offer_values=?, offer_body_snapshot=?,
+        SET stage='offered', offer_status='ready', offer_template_uuid=?, offer_values=?, offer_body_snapshot=?,
             offer_snapshot_hash=?, offer_template_hash=?, offer_snapshot_at=NOW(), updated_at=NOW()
-      WHERE uuid=? AND organization_id=?`,
+      WHERE uuid=? AND organization_id=? AND stage IN ('selected','offered')`,
     [prepared.template_uuid, offerValuesJson, prepared.rendered_body, snapshotHash, prepared.template_hash, candidate.uuid, orgId]
   );
-  const approval = await requestOfferApproval({ orgId, actorUuid, candidateUuid, conn });
+  if (!updatedCandidate.affectedRows) {
+    throw new ApiError(409, "Candidate stage changed while the offer was being prepared. Refresh and try again.");
+  }
   logAudit({ actorType: "user", actorId: actorUuid ?? null, action: "candidate.offer.start",
     entityType: ATTACHMENT_ENTITY.CANDIDATE, entityId: candidateUuid,
-    details: { approval_request_uuid: approval?.uuid ?? null, interview_override: finalOutcome === "failed" } });
-  return { candidate: await getCandidate({ orgId, candidateUuid, conn }), approval };
+    details: { stage: "offered", offer_status: "ready", interview_override: finalOutcome === "failed" } });
+  return { candidate: await getCandidate({ orgId, candidateUuid, conn }) };
 }

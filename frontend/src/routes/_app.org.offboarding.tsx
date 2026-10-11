@@ -36,7 +36,6 @@ import {
     type ClearanceQueueRow,
     type ExitRequestDetail,
     type ExitRequestListRow,
-    type ExitRequestType,
     type ExitStatus,
     type SettlementCalc,
     type UUID,
@@ -58,6 +57,22 @@ export const Route = createFileRoute("/_app/org/offboarding")({
 });
 
 const PAGE_SIZE = 10;
+
+function calendarDaysUntil(isoDate: string): number {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  if (!year || !month || !day) return 0;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetUtc = Date.UTC(year, month - 1, day);
+  return Math.max(0, Math.round((targetUtc - todayUtc) / 86_400_000));
+}
+
+function localTodayIso(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
 
 const STATUS_VARIANT: Record<ExitStatus, "default" | "secondary" | "outline" | "destructive"> = {
   pending: "outline",
@@ -150,11 +165,9 @@ function OrgOffboardingPage() {
       render: (r) => <span className="text-sm">{formatDate(r.last_working_day)}</span>,
     },
     {
-      key: "notice_period_days",
-      header: t("offboarding.notice"),
-      render: (r) => (
-        <span className="text-sm">{t("offboarding.days", { count: r.notice_period_days })}</span>
-      ),
+      key: "days_until_last_working_day",
+      header: t("offboarding.daysUntilLastWorkingDay"),
+      render: (r) => <span className="text-sm">{t("offboarding.days", { count: r.days_until_last_working_day })}</span>,
     },
     {
       key: "clearance",
@@ -213,7 +226,7 @@ function OrgOffboardingPage() {
           </TabsList>
 
           <TabsContent value="requests">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <SearchInput
                 value={search}
                 onChange={setSearch}
@@ -247,6 +260,7 @@ function OrgOffboardingPage() {
                   emptyIcon={Users}
                   emptyTitle={t("offboarding.noExits")}
                   emptyDescription={t("offboarding.noExitsDescription")}
+                  emptyClassName="py-8"
                 />
               </CardContent>
             </Card>
@@ -265,6 +279,7 @@ function OrgOffboardingPage() {
                   emptyIcon={CheckCircle2}
                   emptyTitle={t("offboarding.noClearances")}
                   emptyDescription={t("offboarding.noClearancesDescription")}
+                  emptyClassName="py-8"
                 />
               </CardContent>
             </Card>
@@ -331,9 +346,15 @@ function clearanceColumns(
       ),
     },
     {
-      key: "department",
+      key: "pending_departments",
       header: t("offboarding.department"),
-      render: (r) => <Badge variant="secondary">{r.department}</Badge>,
+      render: (r) => (
+        <div className="flex flex-wrap gap-1">
+          {r.pending_departments.map((department) => (
+            <Badge key={department} variant="secondary">{department}</Badge>
+          ))}
+        </div>
+      ),
     },
     {
       key: "last_working_day",
@@ -401,13 +422,15 @@ function ExitDetailSheet({
   });
 
   const review = useMutation({
-    mutationFn: (vars: { decision: "approved" | "rejected"; notes?: string }) =>
+    mutationFn: (vars: { decision: "approved" | "rejected"; notes?: string; lastWorkingDay: string }) =>
       offboardingService.review(uuid as UUID, {
         decision: vars.decision,
+        last_working_day: vars.decision === "approved" ? vars.lastWorkingDay : undefined,
         decision_notes: vars.notes,
       }),
-    onSuccess: () => {
-      toast.success(t("offboarding.reviewSaved"));
+    onSuccess: (result) => {
+      if (result._email_warning) toast.warning(result._email_warning);
+      else toast.success(t("offboarding.reviewSaved"));
       setReviewOpen(false);
       onChanged();
     },
@@ -494,8 +517,8 @@ function ExitDetailSheet({
               <Field label={t("offboarding.lastWorkingDay")}>
                 {formatDate(d.last_working_day)}
               </Field>
-              <Field label={t("offboarding.notice")}>
-                {t("offboarding.days", { count: d.notice_period_days })}
+              <Field label={t("offboarding.daysUntilLastWorkingDay")}>
+                {t("offboarding.days", { count: d.days_until_last_working_day })}
               </Field>
               <Field label={t("offboarding.submitted")}>{formatDate(d.created_at)}</Field>
               {d.reason ? (
@@ -599,7 +622,7 @@ function ExitDetailSheet({
         detail={d}
         pending={review.isPending}
         onClose={() => setReviewOpen(false)}
-        onSubmit={(decision, notes) => review.mutate({ decision, notes })}
+        onSubmit={(decision, notes, lastWorkingDay) => review.mutate({ decision, notes, lastWorkingDay })}
       />
     </Sheet>
   );
@@ -625,14 +648,18 @@ function ReviewDialog({
   detail: ExitRequestDetail | undefined;
   pending: boolean;
   onClose: () => void;
-  onSubmit: (decision: "approved" | "rejected", notes: string) => void;
+  onSubmit: (decision: "approved" | "rejected", notes: string, lastWorkingDay: string) => void;
 }) {
   const { t } = useTranslation();
   const [notes, setNotes] = useState("");
+  const [lastWorkingDay, setLastWorkingDay] = useState("");
 
   useEffect(() => {
-    if (open) setNotes("");
-  }, [open]);
+    if (open) {
+      setNotes("");
+      setLastWorkingDay(detail?.last_working_day ?? "");
+    }
+  }, [open, detail?.last_working_day]);
 
   return (
     <FormDialog
@@ -642,7 +669,9 @@ function ReviewDialog({
       description={t("offboarding.reviewDescription")}
       submitLabel={t("offboarding.approve")}
       cancelLabel={t("common.cancel")}
-      onSubmit={() => onSubmit("approved", notes)}
+      onSubmit={() => {
+        if (lastWorkingDay) onSubmit("approved", notes, lastWorkingDay);
+      }}
     >
       <div className="space-y-3">
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -651,7 +680,7 @@ function ReviewDialog({
             {detail
               ? t("offboarding.submittedLastDay", {
                   lastDay: formatDate(detail.last_working_day),
-                  notice: t("offboarding.days", { count: detail.notice_period_days }),
+                  days: t("offboarding.days", { count: detail.days_until_last_working_day }),
                 })
               : ""}
           </p>
@@ -659,6 +688,19 @@ function ReviewDialog({
             <p className="mt-1 text-xs text-muted-foreground">{detail.reason}</p>
           ) : null}
         </div>
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
+          <input
+            type="date"
+            required
+            value={lastWorkingDay}
+            onChange={(e) => setLastWorkingDay(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          />
+          <span className="text-xs text-muted-foreground">
+            {t("offboarding.confirmLastWorkingDayHint")}
+          </span>
+        </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.decisionNotes")}</span>
           <textarea
@@ -671,7 +713,7 @@ function ReviewDialog({
           variant="outline"
           className="w-full"
           loading={pending}
-          onClick={() => onSubmit("rejected", notes)}
+          onClick={() => onSubmit("rejected", notes, lastWorkingDay)}
         >
           {t("offboarding.reject")}
         </Button>
@@ -704,9 +746,7 @@ function NewExitDialog({
 }) {
   const { t } = useTranslation();
   const [employeeUuid, setEmployeeUuid] = useState("");
-  const [requestType, setRequestType] = useState<ExitRequestType>("resignation");
-  const [noticeDays, setNoticeDays] = useState("");
-  const [lastWorkingDay, setLastWorkingDay] = useState(() => new Date().toISOString().slice(0, 10));
+  const [lastWorkingDay, setLastWorkingDay] = useState(localTodayIso);
   const [reason, setReason] = useState("");
   const [hrNotes, setHrNotes] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -721,21 +761,19 @@ function NewExitDialog({
     mutationFn: () =>
       offboardingService.create({
         employee_uuid: employeeUuid,
-        request_type: requestType,
-        notice_period_days: noticeDays.trim() ? Number(noticeDays) : 0,
+        request_type: "termination",
         last_working_day: lastWorkingDay,
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
         hr_notes: hrNotes.trim() || undefined,
       }),
-    onSuccess: () => {
-      toast.success(t("offboarding.exitSubmitted"));
+    onSuccess: (result) => {
+      if (result._email_warning) toast.warning(result._email_warning);
+      else toast.success(t("offboarding.exitSubmitted"));
       setEmployeeUuid("");
-      setRequestType("resignation");
-      setNoticeDays("");
       setReason("");
       setHrNotes("");
       setErrors({});
-      setLastWorkingDay(new Date().toISOString().slice(0, 10));
+      setLastWorkingDay(localTodayIso());
       onCreated();
     },
     onError: (e) => toast.error(apiErrorMessage(e, t("offboarding.exitSubmitFailed"))),
@@ -744,10 +782,8 @@ function NewExitDialog({
   const handleSubmit = () => {
     const next: Record<string, string> = {};
     if (!employeeUuid) next.employeeUuid = t("offboarding.employeeRequired");
-    const days = noticeDays.trim() ? Number(noticeDays) : 0;
-    if (noticeDays.trim() && (!Number.isInteger(days) || days < 0))
-      next.noticeDays = t("offboarding.noticeInvalid");
     if (!lastWorkingDay) next.lastWorkingDay = t("offboarding.lastDayRequired");
+    if (!reason.trim()) next.reason = t("offboarding.exitReasonRequired");
     setErrors(next);
     if (Object.keys(next).length === 0) submit.mutate();
   };
@@ -792,35 +828,12 @@ function NewExitDialog({
         ) : null}
       </div>
 
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("offboarding.requestTypeLabel")} *</span>
-        <select
-          value={requestType}
-          onChange={(e) => setRequestType(e.target.value as ExitRequestType)}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
-        >
-          <option value="resignation">{t("offboarding.requestType.resignation")}</option>
-          <option value="termination">{t("offboarding.requestType.termination")}</option>
-        </select>
-      </label>
+      <div className="space-y-1 text-sm">
+        <span className="font-medium">{t("offboarding.requestTypeLabel")}</span>
+        <div><Badge variant="outline">{t("offboarding.requestType.termination")}</Badge></div>
+      </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("offboarding.noticePeriod")}</span>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={noticeDays}
-            onChange={(e) => setNoticeDays(e.target.value)}
-            placeholder="0"
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-          {errors.noticeDays ? (
-            <span className="block text-xs text-destructive">{errors.noticeDays}</span>
-          ) : null}
-        </label>
-
+      <div className="space-y-1">
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
           <input
@@ -833,10 +846,15 @@ function NewExitDialog({
             <span className="block text-xs text-destructive">{errors.lastWorkingDay}</span>
           ) : null}
         </label>
+        {lastWorkingDay ? (
+          <p className="text-xs text-muted-foreground">
+            {t("offboarding.daysUntilLastWorkingDay")}: {t("offboarding.days", { count: calendarDaysUntil(lastWorkingDay) })}
+          </p>
+        ) : null}
       </div>
 
       <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("offboarding.reason")}</span>
+        <span className="font-medium">{t("offboarding.reason")} *</span>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -844,6 +862,9 @@ function NewExitDialog({
           placeholder={t("offboarding.reasonPlaceholder")}
           className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
         />
+        {errors.reason ? (
+          <span className="block text-xs text-destructive">{errors.reason}</span>
+        ) : null}
       </label>
 
       <label className="block space-y-1 text-sm">
@@ -1048,26 +1069,6 @@ function SettlementBreakdown({ s }: { s: SettlementCalc }) {
           </span>
           <span className="font-mono">{formatCurrency(s.leave.amount)}</span>
         </p>
-      </section>
-
-      <section className="rounded-md border p-3">
-        <h4 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-          {t("offboarding.notice")}
-        </h4>
-        <p className="text-xs text-muted-foreground">
-          {t("offboarding.noticeServed", {
-            served: s.notice.notice_days_served,
-            required: s.notice.notice_period_days,
-          })}
-        </p>
-        {s.notice.shortfall_days > 0 ? (
-          <p className="mt-1 flex justify-between text-xs font-medium">
-            <span>{t("offboarding.noticeShortfall", { days: s.notice.shortfall_days })}</span>
-            <span className="font-mono">−{formatCurrency(s.notice.recovery)}</span>
-          </p>
-        ) : (
-          <p className="mt-1 text-xs text-muted-foreground">{t("offboarding.noticeFullyServed")}</p>
-        )}
       </section>
 
       <section className="rounded-md border p-3">

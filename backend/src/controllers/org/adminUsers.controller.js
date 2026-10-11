@@ -10,6 +10,7 @@ import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { normalizedFeatureAccess } from "../../utils/permissions.js";
 import { assertIdentityAvailable, rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
+import { cnicError, normalizeCnic } from "../../utils/contactFormat.js";
 
 /**
  * Sub-admins are organization users with org_role='sub_admin'. They are
@@ -67,8 +68,8 @@ export async function createAdminUser(req, res) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new ApiError(400, "email is required and must be valid");
   }
-  const normalizedCnic = cnic ? String(cnic).replace(/\D/g, "") : "";
-  if (!/^\d{13}$/.test(normalizedCnic)) {
+  const normalizedCnic = normalizeCnic(cnic);
+  if (!normalizedCnic || cnicError(cnic)) {
     throw new ApiError(400, "cnic must be a valid 13-digit CNIC");
   }
 

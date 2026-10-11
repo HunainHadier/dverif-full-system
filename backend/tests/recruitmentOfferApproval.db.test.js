@@ -99,6 +99,12 @@ beforeAll(async () => {
   ]);
 
   orgId = org.insertId;
+  // These integration scenarios exercise the separate-approver path. The policy
+  // fallback is intentionally non-strict, so persist strict mode explicitly here.
+  await db.query(
+    "INSERT INTO organization_approval_policies (organization_id, strict_dual_control, created_at, updated_at) VALUES (?, 1, NOW(), NOW())",
+    [orgId],
+  );
 
   // The engine's default workflow resolves its first step's approvers by
   // approver_type, and the default step is 'org_admin'. So an org_admin has to

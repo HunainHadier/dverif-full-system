@@ -78,6 +78,7 @@ export function DataTable<T>({
   emptyTitle,
   emptyDescription,
   emptyAction,
+  emptyClassName,
   /** Show the pager even for a single page — useful when total is meaningful. */
   showPagination = true,
   className,
@@ -95,6 +96,7 @@ export function DataTable<T>({
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
+  emptyClassName?: string;
   showPagination?: boolean;
   className?: string;
 }) {
@@ -118,6 +120,7 @@ export function DataTable<T>({
           title={emptyTitle ?? t("hr.dataTable.emptyTitle")}
           description={emptyDescription ?? t("hr.dataTable.emptyDescription")}
           action={emptyAction}
+          className={emptyClassName}
         />
       </div>
     );

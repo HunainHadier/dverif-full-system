@@ -3,6 +3,7 @@ import { buildFeatureAccess, type FeatureAccessMap } from "@/lib/featureKeys";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { uiLocale } from "@/i18n";
+import { formatCNIC as formatCNICValue } from "@/lib/contactFormat";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -56,10 +57,7 @@ export function formatDateTime(value?: string | Date | null, locale: string = ui
 }
 
 export function formatCNIC(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 13);
-  if (digits.length <= 5) return digits;
-  if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-  return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
+  return formatCNICValue(value);
 }
 
 /** Keep only digits from a raw input value (for phone/number fields). */

@@ -169,6 +169,7 @@ export type PayrollPreviewItem = {
   basic_salary: number | string;
   allowances: number | string;
   deductions: number | string;
+  expense_reimbursement: number | string;
   net_salary: number | string;
   lines: PayrollLine[];
   attendance: {
@@ -205,12 +206,18 @@ export type PayrollPreview = {
     basic: number | string;
     allowances: number | string;
     deductions: number | string;
+    expense_reimbursement: number | string;
     net: number | string;
   };
   count: number;
 };
 
 export type PayrollPolicy = {
+  /**
+   * Read-only. The API always reports the application's single currency (PKR);
+   * it is not an administrator-settable field and is deliberately absent from
+   * `PayrollPolicyInput`.
+   */
   currency: string;
   pay_frequency: "weekly" | "biweekly" | "semi_monthly" | "monthly";
   daily_rate_basis: "actual_working_days" | "calendar_days" | "fixed_30";
@@ -227,9 +234,12 @@ export type PayrollPolicy = {
   work_week: Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", boolean>;
 };
 
+/** What the policy form actually submits — everything except the currency. */
+export type PayrollPolicyInput = Omit<PayrollPolicy, "currency">;
+
 export const orgSalaryService = {
   policy: () => api.get<{ configured: boolean; policy: PayrollPolicy | null; work_week: Record<string, number> | null }>("/org/payroll-policy").then((r) => r.data),
-  savePolicy: (data: PayrollPolicy) => api.put<{ configured: true; policy: PayrollPolicy; work_week: Record<string, number> }>("/org/payroll-policy", data).then((r) => r.data),
+  savePolicy: (data: PayrollPolicyInput) => api.put<{ configured: true; policy: PayrollPolicy; work_week: Record<string, number> }>("/org/payroll-policy", data).then((r) => r.data),
   list: (
     params: {
       page?: number;

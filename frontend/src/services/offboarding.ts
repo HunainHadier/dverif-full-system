@@ -60,7 +60,7 @@ export type ExitRequestDetail = {
   employee_name: string;
   designation: string | null;
   request_type: ExitRequestType;
-  notice_period_days: number;
+  days_until_last_working_day: number;
   /** Already normalised to YYYY-MM-DD by the API, never a Date. */
   last_working_day: string;
   reason: string | null;
@@ -86,7 +86,7 @@ export type ExitRequestListRow = {
   employee_name: string;
   designation: string | null;
   request_type: ExitRequestType;
-  notice_period_days: number;
+  days_until_last_working_day: number;
   last_working_day: string;
   status: ExitStatus;
   reason: string | null;
@@ -141,15 +141,7 @@ export type SettlementCalc = {
   working_days_in_month: number;
   per_day_rate: number | string;
   leave: { rows: LeaveEncashmentRow[]; encashable_days: number; amount: number };
-  notice: {
-    notice_period_days: number;
-    notice_days_served: number;
-    shortfall_days: number;
-    recovery: number;
-    /** Negative when it reduces the payout. */
-    adjustment: number;
-    notice_given_on: string;
-  };
+  days_until_last_working_day: number;
   assets: OutstandingAssets & {
     /** The amount actually taken out of the settlement. */
     applied: number;
@@ -170,7 +162,7 @@ export type ClearanceQueueRow = {
   status: ExitStatus;
   request_type: ExitRequestType;
   last_working_day: string;
-  department: ClearanceDepartment;
+  pending_departments: ClearanceDepartment[];
   pending_count: number;
   total_count: number;
   assets_outstanding: number;
@@ -193,7 +185,7 @@ export type MyExit = {
     uuid: UUID;
     status: ExitStatus;
     request_type: ExitRequestType;
-    notice_period_days: number;
+    days_until_last_working_day: number;
     last_working_day: string;
     reason: string | null;
     decision_notes: string | null;
@@ -232,36 +224,32 @@ export const offboardingService = {
 
   create: (data: {
     employee_uuid: UUID;
-    request_type: ExitRequestType;
-    notice_period_days?: number;
+    request_type: "termination";
     last_working_day: string;
-    reason?: string;
+    reason: string;
     hr_notes?: string;
   }) =>
     api
-      .post<{ exit_request: ExitRequestDetail }>("/org/offboarding/exit-requests", data)
-      .then((r) => r.data.exit_request),
+      .post<{ exit_request: ExitRequestDetail; _email_warning?: string | null }>("/org/offboarding/exit-requests", data)
+      .then((r) => r.data),
 
   /**
-   * Approve or reject. The notice period is settable here because the submitted
-   * value is the employee's guess and the approved value is the contract - which
-   * is also the figure any shortfall is recovered against.
+   * Approve or reject, with an optional confirmed last working day.
    */
   review: (
     uuid: UUID,
     data: {
       decision: "approved" | "rejected";
-      notice_period_days?: number;
       last_working_day?: string;
       decision_notes?: string;
     },
   ) =>
     api
-      .post<{ exit_request: ExitRequestDetail }>(
+      .post<{ exit_request: ExitRequestDetail; _email_warning?: string | null }>(
         `/org/offboarding/exit-requests/${uuid}/review`,
         data,
       )
-      .then((r) => r.data.exit_request),
+      .then((r) => r.data),
 
   clearTask: (uuid: UUID, checklistUuid: UUID, notes?: string) =>
     api
@@ -324,8 +312,8 @@ export const offboardingService = {
 export const myResignationService = {
   get: () => api.get<MyExit>("/my/resignation").then((r) => r.data),
 
-  submit: (data: { last_working_day: string; reason?: string }) =>
+  submit: (data: { last_working_day: string; reason: string }) =>
     api
-      .post<{ exit_request: ExitRequestDetail }>("/my/resignation", data)
-      .then((r) => r.data.exit_request),
+      .post<{ exit_request: ExitRequestDetail; _email_warning?: string | null }>("/my/resignation", data)
+      .then((r) => r.data),
 };

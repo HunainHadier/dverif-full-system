@@ -152,6 +152,33 @@ describe("startApproval — one in-flight approval per entity", () => {
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "approval.start" }));
   });
 
+  it("auto-approves an Org Admin submission when strict dual-control is absent", async () => {
+    const conn = fakeConn([
+      ["SELECT uuid FROM approval_requests", []],
+      ["SELECT id, uuid, name FROM workflow_definitions", [{ id: WF_ID, uuid: "wf", name: "Expense" }]],
+      ["SELECT id, uuid, step_order", stepRows(1)],
+      ["SELECT strict_dual_control", []],
+      ["SELECT org_role, full_name FROM users", [{ org_role: "org_admin", full_name: "Owner" }]],
+      ["INSERT INTO approval_requests", [{ insertId: 5 }]],
+      ["SELECT uuid, current_step_order", [{ uuid: REQ_UUID, current_step_order: null }]],
+    ]);
+
+    const result = await startApproval(startInput());
+
+    expect(result).toMatchObject({
+      status: "approved",
+      currentStep: null,
+      currentStepOrder: null,
+      approverCount: 0,
+    });
+    const historyInsert = conn.query.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO approval_step_history"),
+    );
+    expect(historyInsert[1]).toContain("approved");
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "approval.auto_approve" }));
+    expect(createNotificationForUsers).not.toHaveBeenCalled();
+  });
+
   it("persists a synthesised default one-step workflow when the org has none", async () => {
     const conn = fakeConn([
       ...happyRoutes([], [{ id: 1, uuid: "s1", step_order: 1, name: "Organization Admin", approver_type: "org_admin", approver_uuid: null }]),

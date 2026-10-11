@@ -14702,7 +14702,6 @@ CREATE TABLE `exit_requests` (
   `employee_name` varchar(200) NOT NULL,
   `designation` varchar(150) DEFAULT NULL,
   `request_type` enum('resignation','termination') NOT NULL,
-  `notice_period_days` int(11) NOT NULL DEFAULT 0,
   `last_working_day` date NOT NULL,
   `reason` varchar(1000) DEFAULT NULL,
   `status` enum('pending','approved','rejected','completed') NOT NULL DEFAULT 'pending',
@@ -14721,8 +14720,8 @@ CREATE TABLE `exit_requests` (
 -- Dumping data for table `exit_requests`
 --
 
-INSERT INTO `exit_requests` (`id`, `uuid`, `organization_id`, `employee_uuid`, `employee_name`, `designation`, `request_type`, `notice_period_days`, `last_working_day`, `reason`, `status`, `decided_by`, `decided_at`, `decision_notes`, `completed_at`, `hr_notes`, `created_by`, `created_at`, `updated_at`) VALUES
-(1464, '3dd492fc-10a1-47e6-a680-274bb4523c56', 1735, '39e3165c-c3e8-11f1-9ff0-9840bb468dc0', 'Ali Raza Khan', 'HR Manager', 'termination', 10, '2026-10-09', NULL, 'approved', '6145269f-c3df-11f1-9ff0-9840bb468dc0', '2026-10-09 19:49:59', NULL, NULL, NULL, '6145269f-c3df-11f1-9ff0-9840bb468dc0', '2026-10-09 19:44:07', '2026-10-09 19:49:59');
+INSERT INTO `exit_requests` (`id`, `uuid`, `organization_id`, `employee_uuid`, `employee_name`, `designation`, `request_type`, `last_working_day`, `reason`, `status`, `decided_by`, `decided_at`, `decision_notes`, `completed_at`, `hr_notes`, `created_by`, `created_at`, `updated_at`) VALUES
+(1464, '3dd492fc-10a1-47e6-a680-274bb4523c56', 1735, '39e3165c-c3e8-11f1-9ff0-9840bb468dc0', 'Ali Raza Khan', 'HR Manager', 'termination', '2026-10-09', NULL, 'approved', '6145269f-c3df-11f1-9ff0-9840bb468dc0', '2026-10-09 19:49:59', NULL, NULL, NULL, '6145269f-c3df-11f1-9ff0-9840bb468dc0', '2026-10-09 19:44:07', '2026-10-09 19:49:59');
 
 -- --------------------------------------------------------
 
@@ -14806,9 +14805,6 @@ CREATE TABLE `final_settlements` (
   `per_day_rate` decimal(14,2) NOT NULL DEFAULT 0.00,
   `leave_encashment_days` decimal(8,2) NOT NULL DEFAULT 0.00,
   `leave_encashment_amount` decimal(14,2) NOT NULL DEFAULT 0.00,
-  `notice_period_days` int(11) NOT NULL DEFAULT 0,
-  `notice_days_served` int(11) NOT NULL DEFAULT 0,
-  `notice_pay_adjustment` decimal(14,2) NOT NULL DEFAULT 0.00,
   `asset_deductions` decimal(14,2) NOT NULL DEFAULT 0.00,
   `asset_deductions_exposure` decimal(14,2) NOT NULL DEFAULT 0.00,
   `unreturned_asset_count` int(11) NOT NULL DEFAULT 0,
@@ -16055,7 +16051,7 @@ CREATE TABLE `organization_ip_rules` (
 
 CREATE TABLE `organization_payroll_policies` (
   `organization_id` bigint(20) UNSIGNED NOT NULL,
-  `currency` char(3) DEFAULT NULL,
+  `currency` char(3) NOT NULL DEFAULT 'PKR',
   `pay_frequency` enum('weekly','biweekly','semi_monthly','monthly') DEFAULT NULL,
   `daily_rate_basis` enum('actual_working_days','calendar_days','fixed_30') DEFAULT NULL,
   `hours_per_workday` decimal(5,2) DEFAULT NULL,
@@ -16322,6 +16318,7 @@ CREATE TABLE `salary_records` (
   `basic_salary` decimal(14,2) NOT NULL DEFAULT 0.00,
   `allowances` decimal(14,2) NOT NULL DEFAULT 0.00,
   `deductions` decimal(14,2) NOT NULL DEFAULT 0.00,
+  `expense_reimbursement` decimal(14,2) NOT NULL DEFAULT 0.00,
   `net_salary` decimal(14,2) NOT NULL DEFAULT 0.00,
   `notes` text DEFAULT NULL,
   `created_by` bigint(20) UNSIGNED DEFAULT NULL,
@@ -16332,8 +16329,8 @@ CREATE TABLE `salary_records` (
 -- Dumping data for table `salary_records`
 --
 
-INSERT INTO `salary_records` (`id`, `uuid`, `employee_uuid`, `organization_id`, `month`, `year`, `basic_salary`, `allowances`, `deductions`, `net_salary`, `notes`, `created_by`, `created_at`) VALUES
-(350, '2e55de6c-7c88-45ed-9b76-9e2665ae4c36', '7334c515-c3e8-11f1-9ff0-9840bb468dc0', 1735, 10, 2026, 95000.00, 0.00, 94999.96, 0.04, NULL, 1462, '2026-10-09 19:21:29');
+INSERT INTO `salary_records` (`id`, `uuid`, `employee_uuid`, `organization_id`, `month`, `year`, `basic_salary`, `allowances`, `deductions`, `expense_reimbursement`, `net_salary`, `notes`, `created_by`, `created_at`) VALUES
+(350, '2e55de6c-7c88-45ed-9b76-9e2665ae4c36', '7334c515-c3e8-11f1-9ff0-9840bb468dc0', 1735, 10, 2026, 95000.00, 0.00, 0.00, 94999.96, 0.04, NULL, 1462, '2026-10-09 19:21:29');
 
 --
 -- Triggers `salary_records`
@@ -18471,6 +18468,47 @@ ALTER TABLE `workflow_steps`
 ALTER TABLE `work_week_config`
   ADD CONSTRAINT `fk_work_week_org` FOREIGN KEY (`organization_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE;
 COMMIT;
+
+-- Resignations can only be filed by the employee linked to the exit record.
+DROP TRIGGER IF EXISTS `bi_exit_requests_self_resignation`;
+DELIMITER $$
+CREATE TRIGGER `bi_exit_requests_self_resignation`
+BEFORE INSERT ON `exit_requests`
+FOR EACH ROW
+BEGIN
+  IF NEW.`request_type` = 'resignation' AND NOT EXISTS (
+    SELECT 1 FROM `employees` e
+     WHERE e.`uuid` = NEW.`employee_uuid`
+       AND e.`organization_id` = NEW.`organization_id`
+       AND e.`linked_user_uuid` = NEW.`created_by`
+  ) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Employees must submit their own resignation';
+  END IF;
+END$$
+DELIMITER ;
+
+DROP TRIGGER IF EXISTS `bu_exit_requests_self_resignation`;
+DELIMITER $$
+CREATE TRIGGER `bu_exit_requests_self_resignation`
+BEFORE UPDATE ON `exit_requests`
+FOR EACH ROW
+BEGIN
+  IF NEW.`request_type` = 'resignation'
+     AND (OLD.`request_type` <> NEW.`request_type`
+       OR OLD.`employee_uuid` <> NEW.`employee_uuid`
+       OR NOT (OLD.`created_by` <=> NEW.`created_by`))
+     AND NOT EXISTS (
+       SELECT 1 FROM `employees` e
+        WHERE e.`uuid` = NEW.`employee_uuid`
+          AND e.`organization_id` = NEW.`organization_id`
+          AND e.`linked_user_uuid` = NEW.`created_by`
+     ) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Employees must submit their own resignation';
+  END IF;
+END$$
+DELIMITER ;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;

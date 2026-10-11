@@ -57,6 +57,7 @@ import {
   type SalaryRecord,
   type EmployeeRecord,
   type PayrollPolicy,
+  type PayrollPolicyInput,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -435,7 +436,7 @@ function OrgPayrollPage() {
         }
       />
 
-      {!payrollPolicy.isLoading && !payrollPolicy.data?.configured ? <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"><span>Payroll is blocked until your organization confirms working days, currency, pay frequency and deduction rules.</span><Button size="sm" variant="outline" onClick={() => setTab("settings")}>Configure payroll policy</Button></div> : null}
+      {!payrollPolicy.isLoading && !payrollPolicy.data?.configured ? <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"><span>Payroll is blocked until your organization confirms working days, pay frequency and deduction rules.</span><Button size="sm" variant="outline" onClick={() => setTab("settings")}>Configure payroll policy</Button></div> : null}
 
       <Tabs
         value={tab}
@@ -622,6 +623,9 @@ function OrgPayrollPage() {
                             {t("payroll.allowances")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap text-right">
+                            {t("payroll.expenseReimbursement", "Expense reimbursement")}
+                          </TableHead>
+                          <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.deductions")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap text-right">
@@ -664,6 +668,12 @@ function OrgPayrollPage() {
                               className="whitespace-nowrap text-right text-sm text-muted-foreground"
                             >
                               {money(r.allowances)}
+                            </TableCell>
+                            <TableCell
+                              data-label="Expense reimbursement"
+                              className="whitespace-nowrap text-right text-sm text-muted-foreground"
+                            >
+                              {money(r.expense_reimbursement)}
                             </TableCell>
                             <TableCell
                               data-label="Deductions"
@@ -1049,14 +1059,14 @@ function OrgPayrollPage() {
 
 
 type PolicyFieldForm = {
-  currency: string; pay_frequency: string; daily_rate_basis: string; shift_start_time: string; hours_per_workday: string;
+  pay_frequency: string; daily_rate_basis: string; shift_start_time: string; hours_per_workday: string;
   late_grace_minutes: string; late_arrivals_per_penalty: string; late_penalty_days: string;
   overtime_multiplier: string; deduct_unpaid_leave: string; deduct_absences: string;
   deduct_late_arrivals: string; pay_approved_overtime: string;
   work_week: Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", string>;
 };
 const EMPTY_POLICY_FORM: PolicyFieldForm = {
-  currency: "", pay_frequency: "", daily_rate_basis: "", shift_start_time: "", hours_per_workday: "",
+  pay_frequency: "", daily_rate_basis: "", shift_start_time: "", hours_per_workday: "",
   late_grace_minutes: "", late_arrivals_per_penalty: "", late_penalty_days: "",
   overtime_multiplier: "", deduct_unpaid_leave: "", deduct_absences: "",
   deduct_late_arrivals: "", pay_approved_overtime: "",
@@ -1074,7 +1084,7 @@ function PayrollPolicySettings() {
     if (!result?.configured || !result.policy || !result.work_week) return;
     const policy = result.policy as PayrollPolicy;
     setForm({
-      currency: policy.currency ?? "", pay_frequency: policy.pay_frequency ?? "", daily_rate_basis: policy.daily_rate_basis ?? "",
+      pay_frequency: policy.pay_frequency ?? "", daily_rate_basis: policy.daily_rate_basis ?? "",
       shift_start_time: String(policy.shift_start_time ?? "").slice(0, 5),
       hours_per_workday: String(policy.hours_per_workday ?? ""), late_grace_minutes: String(policy.late_grace_minutes ?? ""),
       late_arrivals_per_penalty: String(policy.late_arrivals_per_penalty ?? ""), late_penalty_days: String(policy.late_penalty_days ?? ""),
@@ -1085,17 +1095,17 @@ function PayrollPolicySettings() {
     });
   }, [policyQ.data]);
   const save = useMutation({
-    mutationFn: (data: PayrollPolicy) => orgSalaryService.savePolicy(data),
+    mutationFn: (data: PayrollPolicyInput) => orgSalaryService.savePolicy(data),
     onSuccess: () => { toast.success("Payroll policy saved and confirmed"); qc.invalidateQueries({ queryKey: ["orgPayrollPolicy"] }); setValidation(""); },
     onError: (e) => toast.error(apiErrorMessage(e, "Could not save payroll policy")),
   });
   const setField = (key: keyof Omit<PolicyFieldForm, "work_week">, value: string) => setForm((old) => ({ ...old, [key]: value }));
   const submit = () => {
-    const values = [form.currency, form.pay_frequency, form.daily_rate_basis, form.shift_start_time, form.hours_per_workday, form.late_grace_minutes, form.late_arrivals_per_penalty, form.late_penalty_days, form.overtime_multiplier, form.deduct_unpaid_leave, form.deduct_absences, form.deduct_late_arrivals, form.pay_approved_overtime, ...PAYROLL_DAYS.map((day) => form.work_week[day])];
+    const values = [form.pay_frequency, form.daily_rate_basis, form.shift_start_time, form.hours_per_workday, form.late_grace_minutes, form.late_arrivals_per_penalty, form.late_penalty_days, form.overtime_multiplier, form.deduct_unpaid_leave, form.deduct_absences, form.deduct_late_arrivals, form.pay_approved_overtime, ...PAYROLL_DAYS.map((day) => form.work_week[day])];
     if (values.some((value) => value === "")) { setValidation("Complete every policy field. Choose on/off for each payroll rule and workday; blank is not treated as company policy."); return; }
     if (!PAYROLL_DAYS.some((day) => form.work_week[day] === "on")) { setValidation("Select at least one working day."); return; }
     save.mutate({
-      currency: form.currency.toUpperCase(), pay_frequency: form.pay_frequency as PayrollPolicy["pay_frequency"], daily_rate_basis: form.daily_rate_basis as PayrollPolicy["daily_rate_basis"],
+      pay_frequency: form.pay_frequency as PayrollPolicy["pay_frequency"], daily_rate_basis: form.daily_rate_basis as PayrollPolicy["daily_rate_basis"],
       shift_start_time: form.shift_start_time, hours_per_workday: Number(form.hours_per_workday), late_grace_minutes: Number(form.late_grace_minutes), late_arrivals_per_penalty: Number(form.late_arrivals_per_penalty),
       late_penalty_days: Number(form.late_penalty_days), overtime_multiplier: Number(form.overtime_multiplier),
       deduct_unpaid_leave: form.deduct_unpaid_leave === "on", deduct_absences: form.deduct_absences === "on", deduct_late_arrivals: form.deduct_late_arrivals === "on", pay_approved_overtime: form.pay_approved_overtime === "on",
@@ -1109,8 +1119,7 @@ function PayrollPolicySettings() {
     <div><h2 className="font-semibold">Organization payroll policy</h2><p className="text-sm text-muted-foreground">No attendance or leave deduction rule is assumed. Payroll preview and finalization stay blocked until an administrator explicitly confirms this policy.</p></div>
     {policyQ.isLoading ? <p className="text-sm">Loading payroll policy?</p> : null}
     {policyQ.data?.configured ? <p className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-sm">Policy confirmed. Changes apply to future payroll previews and runs.</p> : <p className="rounded border border-amber-500/30 bg-amber-500/5 p-2 text-sm">Setup required. Legacy organizations must review the work week and every deduction rule before payroll can be finalized.</p>}
-    <div className="grid gap-3 sm:grid-cols-3">
-      <label className="space-y-1 text-sm"><span className="font-medium">Currency (ISO 4217)</span><Input maxLength={3} value={form.currency} onChange={(e) => setField("currency", e.target.value.toUpperCase())} placeholder="e.g. PKR" /></label>
+    <div className="grid gap-3 sm:grid-cols-2">
       {selectField("Pay frequency", "pay_frequency", [["weekly", "Weekly"], ["biweekly", "Biweekly"], ["semi_monthly", "Semi-monthly"], ["monthly", "Monthly"]])}
       {selectField("Daily rate divisor", "daily_rate_basis", [["actual_working_days", "Configured working days in period"], ["calendar_days", "Calendar days in period"], ["fixed_30", "Fixed 30-day divisor"]])}
     </div>

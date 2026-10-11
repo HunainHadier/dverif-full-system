@@ -28,6 +28,7 @@ import {
 } from "@/services";
 import { apiErrorMessage } from "@/lib/utils";
 import { usePermissions } from "@/lib/permissions";
+import { cnicError, formatCNIC, normalizeCNIC } from "@/lib/contactFormat";
 
 export const Route = createFileRoute("/_app/org/recruitment/pipeline")({
   head: () => ({ meta: [{ title: "Recruitment Pipeline — Dverif" }] }),
@@ -61,6 +62,7 @@ export const Route = createFileRoute("/_app/org/recruitment/pipeline")({
  */
 export function RecruitmentPipelinePage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [openingUuid, setOpeningUuid] = useState("");
   const [search, setSearch] = useState("");
@@ -200,9 +202,15 @@ export function RecruitmentPipelinePage() {
                   onDragOverState={(on) => setDragOver(on ? col.stage : null)}
                   onDropCandidate={(uuid) => {
                     setDragOver(null);
+                    const candidate = visible.find((item) => item.uuid === uuid);
+                    if (["selected", "offered"].includes(col.stage) && Number(candidate?.feedback_recorded_interviews ?? 0) < 1) {
+                      toast.error("Record the interview feedback and select Passed or Failed before moving this candidate forward.");
+                      return;
+                    }
                     move.mutate({ uuid, stage: col.stage });
                   }}
                   onHire={setHiring}
+                  onViewOffer={() => void navigate({ to: "/org/recruitment/offers" })}
                 />
               ))}
             </div>
@@ -253,6 +261,7 @@ function PipelineColumn({
   onDragOverState,
   onDropCandidate,
   onHire,
+  onViewOffer,
 }: {
   stage: CandidateStage;
   candidates: Candidate[];
@@ -261,6 +270,7 @@ function PipelineColumn({
   onDragOverState: (on: boolean) => void;
   onDropCandidate: (uuid: string) => void;
   onHire: (c: Candidate) => void;
+  onViewOffer: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -291,7 +301,7 @@ function PipelineColumn({
       </div>
 
       {candidates.map((c) => (
-        <PipelineCard key={c.uuid} candidate={c} draggable={!busy} onHire={() => onHire(c)} />
+        <PipelineCard key={c.uuid} candidate={c} draggable={!busy} onHire={() => onHire(c)} onViewOffer={onViewOffer} />
       ))}
 
       {isDragOver && !candidates.length ? (
@@ -307,10 +317,12 @@ function PipelineCard({
   candidate,
   draggable,
   onHire,
+  onViewOffer,
 }: {
   candidate: Candidate;
   draggable: boolean;
   onHire?: () => void;
+  onViewOffer?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -350,12 +362,12 @@ function PipelineCard({
         one-click gesture — the click opens a dialog that asks to confirm.
       */}
       {candidate.offer_status ? (
-        <Button size="sm" variant="outline" className="w-full" onClick={() => window.location.href = "/org/recruitment/offers"}>
+        <Button size="sm" variant="outline" className="w-full" onClick={onViewOffer}>
           <Eye className="mr-2 h-3.5 w-3.5" />
           {t("recruitment.viewOffer", "View offer")}
         </Button>
       ) : (candidate.stage === "selected" || candidate.stage === "offered") && onHire ? (
-        <Button size="sm" className="w-full" onClick={onHire}>
+        <Button size="sm" className="w-full" onClick={onHire} disabled={Number(candidate.feedback_recorded_interviews ?? 0) < 1} title={Number(candidate.feedback_recorded_interviews ?? 0) < 1 ? "Record the interview feedback and select Passed or Failed before moving this candidate forward." : undefined}>
           <UserPlus className="mr-2 h-3.5 w-3.5" />
           {t("recruitment.prepareOffer", "Prepare offer")}
         </Button>
@@ -371,6 +383,14 @@ type OfferPreparationForm = {
   offer_values: Record<string, string>;
 };
 
+function offerPreviewErrorMessage(error: unknown, fallback: string, invalidUuidMessage: string) {
+  const message = apiErrorMessage(error, "");
+  if (/template uuid must be a valid uuid/i.test(message)) {
+    return invalidUuidMessage;
+  }
+  return message || fallback;
+}
+
 export function HireDialog({
   candidate,
   opening,
@@ -383,6 +403,7 @@ export function HireDialog({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const open = Boolean(candidate);
   const qc = useQueryClient();
   const permissions = usePermissions();
@@ -395,7 +416,10 @@ export function HireDialog({
     enabled: open,
   });
   const templateUuid = form.watch("offer_template_uuid");
-  const selectedTemplate = preparation.data?.templates.find((item) => item.uuid === templateUuid);
+  const offerTemplates = (preparation.data?.templates ?? []).filter(
+    (item) => item.letter_type === "offer" && item.is_active === 1,
+  );
+  const selectedTemplate = offerTemplates.find((item) => item.uuid === templateUuid);
 
   useEffect(() => {
     if (!candidate) {
@@ -412,7 +436,11 @@ export function HireDialog({
     const data = preparation.data;
     if (!data || !open) return;
     const current = form.getValues("offer_template_uuid");
-    const selected = current || data.selected_template_uuid || data.templates[0]?.uuid || "";
+    const activeOfferTemplates = data.templates.filter(
+      (item) => item.letter_type === "offer" && item.is_active === 1,
+    );
+    const selected = [current, data.selected_template_uuid, activeOfferTemplates[0]?.uuid]
+      .find((uuid) => activeOfferTemplates.some((item) => item.uuid === uuid)) ?? "";
     const existingValues = form.getValues("offer_values") ?? {};
     const next = { ...data.default_values, ...existingValues };
     form.reset({ offer_template_uuid: selected, offer_values: next });
@@ -432,12 +460,12 @@ export function HireDialog({
       void qc.invalidateQueries({ queryKey: ["recruitment-offers"] });
       onDone();
       onOpenChange(false);
-      toast.success(t("recruitment.offerRequested", "Offer submitted for approval"));
+      toast.success(t("recruitment.offerReady", "Offer is ready to send"));
+      void navigate({ to: "/org/recruitment/offers" });
     },
     onError: (e) => {
-      // The server already names the rule that rejected the offer -- "Workflow
-      // step X has no active approver assigned", "Complete these offer fields:
-      // ...", "This opening requires a passed final interview". Discarding that
+      // The server names the rule that rejected the offer, including missing fields
+      // or an unmet interview requirement. Discarding that
       // to point at the template sent people editing the one thing that was
       // fine, so the real message wins whenever the server gave one.
       form.setError("root.server", {
@@ -454,6 +482,14 @@ export function HireDialog({
 
   const submitOffer = async (values: OfferPreparationForm) => {
     form.clearErrors("root.server");
+    if (!offerTemplates.some((template) => template.uuid === values.offer_template_uuid)) {
+      form.setError("root.server", {
+        message: offerTemplates.length
+          ? t("recruitment.selectOfferTemplate", "Select an Offer Letter template first.")
+          : t("recruitment.noOfferTemplates", "No active Offer Letter template is available. Add one to continue."),
+      });
+      return;
+    }
     if (preparation.data?.candidate.final_interview_outcome === "failed" && !permissions.override_failed_interview) {
       form.setError("root.server", { message: t("recruitment.noInterviewOverridePermission", "Ask an organization administrator with interview override permission to review this exception.") });
       return;
@@ -462,6 +498,17 @@ export function HireDialog({
       form.setError("root.server", { message: t("recruitment.overrideReasonRequired", "Enter a reason for the failed-interview exception.") });
       return;
     }
+    const offerCnic = values.offer_values?.cnic ?? "";
+    const cnicProblem = cnicError(offerCnic);
+    if (cnicProblem) {
+      form.setError("offer_values.cnic", { type: "validate", message: cnicProblem });
+      form.setError("root.server", { message: cnicProblem });
+      return;
+    }
+    const offerValues = {
+      ...values.offer_values,
+      ...(offerCnic ? { cnic: normalizeCNIC(offerCnic) } : {}),
+    };
     const missing = fields.filter((field) => !String(values.offer_values?.[field.tag] ?? "").trim());
     if (missing.length) {
       for (const field of missing) {
@@ -474,7 +521,7 @@ export function HireDialog({
     try {
       const checked = await offersService.preview(candidate!.uuid, {
         template_uuid: values.offer_template_uuid,
-        values: values.offer_values,
+        values: offerValues,
       });
       setPreview(checked);
       if (checked.unknown.length || checked.unresolved.length) {
@@ -487,15 +534,25 @@ export function HireDialog({
         form.setError("root.server", { message: t("recruitment.offerMissingSummary", "Complete the required offer fields shown above before submitting.") });
         return;
       }
-      submit.mutate(values);
-    } catch {
-      form.setError("root.server", { message: t("recruitment.offerPreviewFailed", "Offer values could not be validated. Check the template and try again.") });
+      submit.mutate({ ...values, offer_values: offerValues });
+    } catch (error) {
+      form.setError("root.server", {
+        message: offerPreviewErrorMessage(
+          error,
+          t("recruitment.offerPreviewFailed", "Could not preview the offer. Check the template and values."),
+          t("recruitment.invalidOfferTemplate", "Select an active Offer Letter template, then preview again."),
+        ),
+      });
     }
   };
 
   const showPreview = async () => {
-    if (!candidate || !templateUuid) {
-      form.setError("root.server", { message: t("recruitment.selectOfferTemplate", "Select an Offer Letter template first.") });
+    if (!candidate || !offerTemplates.some((template) => template.uuid === templateUuid)) {
+      form.setError("root.server", {
+        message: offerTemplates.length
+          ? t("recruitment.selectOfferTemplate", "Select an Offer Letter template first.")
+          : t("recruitment.noOfferTemplates", "No active Offer Letter template is available. Add one to continue."),
+      });
       return;
     }
     try {
@@ -511,8 +568,14 @@ export function HireDialog({
           message: `${field.label} is required`,
         });
       }
-    } catch {
-      form.setError("root.server", { message: t("recruitment.offerPreviewFailed", "Preview unavailable. Check this Offer Letter template and its merge tags.") });
+    } catch (error) {
+      form.setError("root.server", {
+        message: offerPreviewErrorMessage(
+          error,
+          t("recruitment.offerPreviewFailed", "Preview unavailable. Check this Offer Letter template and its merge tags."),
+          t("recruitment.invalidOfferTemplate", "Select an active Offer Letter template, then preview again."),
+        ),
+      });
     }
   };
 
@@ -531,8 +594,8 @@ export function HireDialog({
       }}
       form={form}
       title={t("recruitment.prepareOffer", "Prepare offer")}
-      description={`${candidate?.full_name ?? ""} ? ${t("recruitment.offerTermsApproval", "Complete the offer terms for approval")}`}
-      submitLabel={t("recruitment.submitOfferApproval", "Submit offer for approval")}
+      description={`${candidate?.full_name ?? ""} · ${t("recruitment.offerTermsApproval", "Complete the offer details before sending")}`}
+      submitLabel={t("recruitment.createOffer", "Create offer")}
       cancelLabel={t("recruitment.cancel")}
       size="lg"
       onSubmit={submitOffer}
@@ -549,20 +612,39 @@ export function HireDialog({
           <select onChange={(event) => { form.setValue("offer_template_uuid", event.target.value, { shouldDirty: true }); form.clearErrors(); setPreview(null); }} value={templateUuid}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
             <option value="">{t("recruitment.selectOfferTemplate", "Select an Offer Letter template")}</option>
-            {(preparation.data?.templates ?? []).filter((tpl) => tpl.letter_type === "offer" && tpl.is_active === 1).map((tpl) => (
+            {offerTemplates.map((tpl) => (
               <option key={tpl.uuid} value={tpl.uuid}>{tpl.name}</option>
             ))}
           </select>
           {form.formState.errors.offer_template_uuid?.message ? <span className="text-xs text-destructive">{form.formState.errors.offer_template_uuid.message}</span> : null}
         </label>
+        {preparation.data && offerTemplates.length === 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+            <p>{t("recruitment.noOfferTemplates", "No active Offer Letter template is available. Add one to continue.")}</p>
+            <Button type="button" variant="outline" onClick={() => void navigate({ to: "/org/letter-templates" })}>
+              {t("recruitment.addOfferTemplate", "Add offer letter")}
+            </Button>
+          </div>
+        ) : null}
         {selectedTemplate && fields.length ? <div className="grid gap-3 sm:grid-cols-2">
           {fields.map((tag) => {
             const fieldError = (form.formState.errors.offer_values as Record<string, { message?: string }> | undefined)?.[tag.tag]?.message;
             const label = tag.tag === "new_salary" ? t("recruitment.offeredSalary", "Offered salary") : tag.label;
+            const fieldPath = `offer_values.${tag.tag}` as `offer_values.${string}`;
+            const registeredField = form.register(fieldPath);
             return <label key={tag.tag} htmlFor={`offer-field-${tag.tag}`} className="block space-y-1.5 text-sm">
               <span className="font-medium">{label}</span>
-              <input id={`offer-field-${tag.tag}`} aria-label={label} {...form.register(`offer_values.${tag.tag}` as `offer_values.${string}`)}
+              <input id={`offer-field-${tag.tag}`} aria-label={label} {...registeredField}
+                value={tag.tag === "cnic" ? formatCNIC(form.watch(fieldPath) ?? "") : undefined}
+                onChange={tag.tag === "cnic" ? (event) => {
+                  const formatted = formatCNIC(event.target.value);
+                  form.setValue(fieldPath, formatted, { shouldDirty: true, shouldValidate: true });
+                  if (cnicError(formatted)) form.setError(fieldPath, { type: "validate", message: cnicError(formatted) ?? undefined });
+                  else form.clearErrors(fieldPath);
+                } : registeredField.onChange}
                 type={tag.tag === "joining_date" ? "date" : "text"}
+                inputMode={tag.tag === "cnic" ? "numeric" : undefined}
+                maxLength={tag.tag === "cnic" ? 15 : undefined}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
               {tag.help ? <span className="block text-xs text-muted-foreground">{tag.help}</span> : null}
               {fieldError ? <span className="block text-xs text-destructive">{fieldError}</span> : null}

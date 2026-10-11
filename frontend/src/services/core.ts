@@ -1011,6 +1011,7 @@ export type SalaryRecord = {
   basic_salary: string | number;
   allowances: string | number;
   deductions: string | number;
+  expense_reimbursement: string | number;
   net_salary: string | number;
   notes?: string | null;
   created_at?: string;

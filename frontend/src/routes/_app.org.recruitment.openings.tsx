@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Briefcase } from "lucide-react";
+import { Briefcase, Plus, Trash2 } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -14,9 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
 import { RecruitmentTabs } from "@/components/hr/RecruitmentTabs";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useAuth } from "@/lib/auth";
 import {
   JOB_STATUS_VARIANT,
   jobOpeningsService,
+  orgService,
   type EmploymentType,
   type JobOpening,
   type JobStatus,
@@ -49,6 +53,7 @@ export function OpeningsPage() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<JobOpening | null>(null);
   const [creating, setCreating] = useState(false);
+  const [managing, setManaging] = useState<"department" | "designation" | null>(null);
 
   const list = useQuery({
     queryKey: ["recruitment-openings"],
@@ -145,8 +150,10 @@ export function OpeningsPage() {
     {
       key: "actions",
       header: t("recruitment.actions"),
+      headerClassName: "w-[260px] text-center",
+      className: "w-[260px] text-center",
       render: (o) => (
-        <div className="flex items-center justify-end gap-1">
+        <div className="flex items-center justify-center gap-1">
           <Button variant="ghost" size="sm" onClick={() => setEditing(o)}>
             {t("recruitment.editOpening")}
           </Button>
@@ -207,6 +214,7 @@ export function OpeningsPage() {
       <OpeningDialog
         open={creating || Boolean(editing)}
         opening={editing}
+        onManage={setManaging}
         onOpenChange={(v) => {
           if (!v) {
             setCreating(false);
@@ -215,6 +223,7 @@ export function OpeningsPage() {
         }}
         onDone={invalidate}
       />
+      <ManageOpeningOptionsDialog type={managing} onOpenChange={(open) => !open && setManaging(null)} />
     </ModuleGate>
   );
 }
@@ -244,16 +253,32 @@ type OpeningForm = {
 function OpeningDialog({
   open,
   opening,
+  onManage,
   onOpenChange,
   onDone,
 }: {
   open: boolean;
   opening: JobOpening | null;
+  onManage: (type: "department" | "designation") => void;
   onOpenChange: (v: boolean) => void;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
   const isEdit = Boolean(opening);
+  const openingDetails = useQuery({
+    queryKey: ["recruitment-opening", opening?.uuid],
+    queryFn: () => jobOpeningsService.get(opening!.uuid),
+    enabled: open && isEdit,
+  });
+  const currentOpening = openingDetails.data ?? opening;
+  const departments = useQuery({
+    queryKey: ["org-departments"],
+    queryFn: () => orgService.departments.list(),
+  });
+  const designations = useQuery({
+    queryKey: ["org-designations"],
+    queryFn: () => orgService.designations.list(),
+  });
 
   const form = useForm<OpeningForm>({
     defaultValues: {
@@ -271,16 +296,16 @@ function OpeningDialog({
 
   useEffect(() => {
     reset({
-      title: opening?.title ?? "",
-      department_name: opening?.department_name ?? "",
-      designation_name: opening?.designation_name ?? "",
-      location: opening?.location ?? "",
-      employment_type: opening?.employment_type ?? "full_time",
-      vacancies: String(opening?.vacancies ?? 1),
-      description: opening?.description ?? "",
-      status: opening?.status ?? "open",
+      title: currentOpening?.title ?? "",
+      department_name: currentOpening?.department_name ?? "",
+      designation_name: currentOpening?.designation_name ?? "",
+      location: currentOpening?.location ?? "",
+      employment_type: currentOpening?.employment_type ?? "full_time",
+      vacancies: String(currentOpening?.vacancies ?? 1),
+      description: currentOpening?.description ?? "",
+      status: currentOpening?.status ?? "open",
     });
-  }, [opening, reset]);
+  }, [currentOpening, reset]);
 
   const save = useMutation({
     mutationFn: (values: OpeningForm) => {
@@ -290,9 +315,11 @@ function OpeningDialog({
       if (isEdit) {
         return jobOpeningsService.update(opening!.uuid, {
           title: values.title,
+          department_name: values.department_name,
+          designation_name: values.designation_name,
           employment_type: values.employment_type,
-          location: values.location || undefined,
-          description: values.description || undefined,
+          location: values.location,
+          description: values.description,
           status: values.status,
           // `undefined` leaves it alone; an explicit number is how it is changed.
           ...(vacancies != null ? { vacancies } : {}),
@@ -300,9 +327,11 @@ function OpeningDialog({
       }
       return jobOpeningsService.create({
         title: values.title,
+        department_name: values.department_name,
+        designation_name: values.designation_name,
         employment_type: values.employment_type,
-        location: values.location || undefined,
-        description: values.description || undefined,
+        location: values.location,
+        description: values.description,
         status: values.status,
         ...(vacancies != null ? { vacancies } : {}),
       });
@@ -327,37 +356,61 @@ function OpeningDialog({
     >
       <div className="space-y-3">
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.openingTitle")}</span>
+          <span className="font-medium">{t("recruitment.openingTitle")} *</span>
           <input
             {...form.register("title", { required: true })}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.department")}</span>
-          <input
-            {...form.register("department_name")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.designation")}</span>
-          <input
-            {...form.register("designation_name")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.location")}</span>
-          <input
-            {...form.register("location")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.employmentType")}</span>
+          <span className="flex items-center justify-between">
+            <span className="font-medium">{t("recruitment.department")} *</span>
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => onManage("department")}>Manage</button>
+          </span>
           <select
-            {...form.register("employment_type")}
+            {...form.register("department_name", { required: true })}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            disabled={departments.isLoading}
+          >
+            <option value="">{departments.isLoading ? t("common.loading") : t("recruitment.selectDepartment", "Select department")}</option>
+            {currentOpening?.department_name && !(departments.data ?? []).some((d) => d.name === currentOpening.department_name) ? (
+              <option value={currentOpening.department_name}>{currentOpening.department_name}</option>
+            ) : null}
+            {(departments.data ?? []).map((department) => (
+              <option key={department.uuid} value={department.name}>{department.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block space-y-1 text-sm">
+          <span className="flex items-center justify-between">
+            <span className="font-medium">{t("recruitment.designation")} *</span>
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => onManage("designation")}>Manage</button>
+          </span>
+          <select
+            {...form.register("designation_name", { required: true })}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            disabled={designations.isLoading}
+          >
+            <option value="">{designations.isLoading ? t("common.loading") : t("recruitment.selectDesignation", "Select designation")}</option>
+            {currentOpening?.designation_name && !(designations.data ?? []).some((d) => d.name === currentOpening.designation_name) ? (
+              <option value={currentOpening.designation_name}>{currentOpening.designation_name}</option>
+            ) : null}
+            {(designations.data ?? []).map((designation) => (
+              <option key={designation.uuid} value={designation.name}>{designation.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{t("recruitment.location")} *</span>
+          <input
+            {...form.register("location", { required: true })}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          />
+        </label>
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{t("recruitment.employmentType")} *</span>
+          <select
+            {...form.register("employment_type", { required: true })}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {(
@@ -370,23 +423,110 @@ function OpeningDialog({
           </select>
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.vacancies")}</span>
+          <span className="font-medium">{t("recruitment.vacancies")} *</span>
           <input
             type="number"
-            min={0}
-            {...form.register("vacancies")}
+            min={1}
+            {...form.register("vacancies", { required: true, min: 1 })}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           />
         </label>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.descriptionLabel")}</span>
+          <span className="font-medium">{t("recruitment.descriptionLabel")} *</span>
           <textarea
-            {...form.register("description")}
+            {...form.register("description", { required: true })}
             rows={3}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
           />
         </label>
       </div>
     </FormDialog>
+  );
+}
+
+function ManageOpeningOptionsDialog({
+  type,
+  onOpenChange,
+}: {
+  type: "department" | "designation" | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const isDepartment = type === "department";
+  const queryKey = [isDepartment ? "org-departments" : "org-designations"];
+  const optionsQuery = useQuery({
+    queryKey,
+    queryFn: () => (isDepartment ? orgService.departments.list() : orgService.designations.list()),
+    enabled: type !== null,
+  });
+  const create = useMutation({
+    mutationFn: (value: string) =>
+      isDepartment ? orgService.departments.create(value) : orgService.designations.create(value),
+    onSuccess: () => {
+      setName("");
+      void qc.invalidateQueries({ queryKey });
+      toast.success(`${isDepartment ? "Department" : "Designation"} added`);
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, "Could not add item")),
+  });
+  const remove = useMutation({
+    mutationFn: (uuid: string) =>
+      isDepartment ? orgService.departments.remove(uuid) : orgService.designations.remove(uuid),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey });
+      toast.success("Removed");
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, "Could not remove item")),
+  });
+
+  return (
+    <Dialog open={type !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{isDepartment ? "Manage Departments" : "Manage Designations"}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="flex gap-2">
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={`New ${isDepartment ? "department" : "designation"} name`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && name.trim()) create.mutate(name.trim());
+              }}
+            />
+            <Button onClick={() => name.trim() && create.mutate(name.trim())} loading={create.isPending}>
+              <Plus className="mr-1.5 h-4 w-4" /> Add
+            </Button>
+          </div>
+          <div className="max-h-60 space-y-1.5 overflow-y-auto">
+            {(optionsQuery.data ?? []).map((option) => (
+              <div key={option.uuid} className="flex items-center justify-between rounded-md border border-border px-2 py-1.5 text-sm">
+                <span className="truncate">{option.name}</span>
+                {user?.org_role === "org_admin" ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                    onClick={() => remove.mutate(option.uuid)}
+                    loading={remove.isPending && remove.variables === option.uuid}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+            {!optionsQuery.isLoading && (optionsQuery.data ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground">No items yet.</p>
+            ) : null}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

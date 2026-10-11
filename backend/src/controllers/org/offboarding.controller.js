@@ -17,6 +17,7 @@ import {
   getMyExit,
 } from "../../services/offboarding.service.js";
 import { isoDate } from "../../utils/dateRange.js";
+import { sendOffboardingUpdateEmail } from "../../utils/mailer.js";
 
 /**
  * HTTP surface for offboarding.
@@ -36,7 +37,7 @@ import { isoDate } from "../../utils/dateRange.js";
 async function callerEmployee(orgId, req) {
   assertUuid(req.user?.uuid, "User UUID");
   const [rows] = await pool.query(
-    "SELECT uuid, full_name FROM employees WHERE linked_user_uuid=? AND organization_id=?",
+    "SELECT uuid, full_name, email FROM employees WHERE linked_user_uuid=? AND organization_id=?",
     [req.user.uuid, orgId],
   );
   if (!rows.length) {
@@ -59,7 +60,8 @@ export async function listExitChecklistPending(req, res) {
   const [rows] = await pool.query(
     `SELECT er.uuid AS exit_request_uuid, er.employee_uuid, er.employee_name, er.designation,
             er.status, er.request_type, er.last_working_day,
-            c.department,
+            GROUP_CONCAT(DISTINCT c.department
+              ORDER BY FIELD(c.department,'IT','Finance','Assets','HR') SEPARATOR ',') AS pending_departments,
             COUNT(*) AS pending_count,
             (SELECT COUNT(*) FROM offboarding_checklists c2
               WHERE c2.exit_request_uuid = er.uuid) AS total_count,
@@ -72,8 +74,8 @@ export async function listExitChecklistPending(req, res) {
         AND er.status IN ('pending','approved')
         AND c.status = 'pending'
       GROUP BY er.uuid, er.employee_uuid, er.employee_name, er.designation,
-               er.status, er.request_type, er.last_working_day, c.department
-      ORDER BY er.last_working_day ASC, c.department`,
+               er.status, er.request_type, er.last_working_day
+      ORDER BY er.last_working_day ASC, er.employee_name`,
     [orgId],
   );
 
@@ -84,6 +86,7 @@ export async function listExitChecklistPending(req, res) {
   const items = rows.map((r) => ({
     ...r,
     last_working_day: isoDate(r.last_working_day),
+    pending_departments: String(r.pending_departments ?? "").split(",").filter(Boolean),
   }));
 
   return ok(res, { items, count: items.length }, "Clearances outstanding");
@@ -128,7 +131,9 @@ export async function listExitRequests(req, res) {
   );
   const [rows] = await pool.query(
     `SELECT er.uuid, er.employee_uuid, er.employee_name, er.designation, er.request_type,
-            er.notice_period_days, er.last_working_day, er.status, er.reason,
+            er.last_working_day,
+            GREATEST(DATEDIFF(er.last_working_day, DATE(er.created_at)), 0) AS days_until_last_working_day,
+            er.status, er.reason,
             er.created_at, er.decided_at, er.completed_at,
             (SELECT COUNT(*) FROM offboarding_checklists c
               WHERE c.exit_request_uuid = er.uuid AND c.status = 'pending') AS clearance_pending,
@@ -158,15 +163,18 @@ export async function getExitRequestDetail(req, res) {
 
 export async function submitExitRequest(req, res) {
   const orgId = req.scopeOrgId;
-  const { employee_uuid, request_type, notice_period_days, last_working_day, reason, hr_notes } =
+  const { employee_uuid, request_type, last_working_day, reason, hr_notes } =
     req.body || {};
+
+  if (request_type !== "termination") {
+    throw new ApiError(403, "Org Admins can submit termination requests only. Employees must submit their own resignation.");
+  }
 
   const result = await createExitRequest({
     orgId,
     actorUuid: req.user?.uuid ?? null,
     employeeUuid: employee_uuid,
     requestType: request_type,
-    noticePeriodDays: notice_period_days,
     lastWorkingDay: last_working_day,
     reason,
     hrNotes: hr_notes,
@@ -185,19 +193,35 @@ export async function submitExitRequest(req, res) {
   });
 
   const detail = await getExitRequest({ orgId, exitUuid: result.uuid });
-  return created(res, { exit_request: detail }, "Exit request submitted");
+  let emailWarning = null;
+  try {
+    await sendOffboardingUpdateEmail({
+      to: result.employeeEmail,
+      employeeName: result.employeeName,
+      requestType: detail.request_type,
+      status: detail.status,
+      lastWorkingDay: detail.last_working_day,
+      daysUntilLastWorkingDay: detail.days_until_last_working_day,
+      reason: detail.reason,
+    });
+  } catch (error) {
+    emailWarning = result.employeeEmail
+      ? "Exit request saved, but its email could not be delivered. Check the employee email and mail settings."
+      : "Exit request saved, but this employee has no email address on file.";
+    console.error("Failed to send offboarding email:", error.message);
+  }
+  return created(res, { exit_request: detail, _email_warning: emailWarning }, "Exit request submitted");
 }
 
 export async function reviewExitRequest(req, res) {
   const orgId = req.scopeOrgId;
-  const { decision, notice_period_days, last_working_day, decision_notes } = req.body || {};
+  const { decision, last_working_day, decision_notes } = req.body || {};
 
   const detail = await decideExitRequest({
     orgId,
     actorUuid: req.user?.uuid ?? null,
     exitUuid: req.params.uuid,
     decision,
-    noticePeriodDays: notice_period_days,
     lastWorkingDay: last_working_day,
     // The body is snake_case and the service takes camelCase, so the rename is
     // explicit. Written as a bare `decisionNotes` this was a ReferenceError at
@@ -213,13 +237,33 @@ export async function reviewExitRequest(req, res) {
     entityType: "exit_request",
     entityId: req.params.uuid,
     details: {
-      notice_period_days: detail.notice_period_days,
       last_working_day: detail.last_working_day,
+      days_until_last_working_day: detail.days_until_last_working_day,
     },
     req,
   });
 
-  return ok(res, { exit_request: detail }, `Exit request ${decision}`);
+  let emailWarning = null;
+  try {
+    const [[employee]] = await pool.query(
+      "SELECT email FROM employees WHERE uuid=? AND organization_id=?",
+      [detail.employee_uuid, orgId],
+    );
+    await sendOffboardingUpdateEmail({
+      to: employee?.email,
+      employeeName: detail.employee_name,
+      requestType: detail.request_type,
+      status: detail.status,
+      lastWorkingDay: detail.last_working_day,
+      daysUntilLastWorkingDay: detail.days_until_last_working_day,
+      reason: detail.reason,
+    });
+  } catch (error) {
+    emailWarning = "Exit request was saved, but the employee email could not be delivered.";
+    console.error("Failed to send offboarding decision email:", error.message);
+  }
+
+  return ok(res, { exit_request: detail, _email_warning: emailWarning }, `Exit request ${decision}`);
 }
 
 export async function clearExitChecklistItem(req, res) {
@@ -371,9 +415,8 @@ export async function myExit(req, res) {
  * employee cannot file a termination against themselves, which would otherwise be
  * a way to have their own employment ended by an API call.
  *
- * notice_period_days is NOT set here: it is the contractual figure, and HR sets
- * it on review. An employee's guess at it must not become the number a shortfall
- * is recovered against.
+ * The last working day is the sole date input; its distance from the request date
+ * is calculated and returned to the employee.
  */
 export async function submitMyResignation(req, res) {
   const orgId = req.scopeOrgId ?? req.user?.organization;
@@ -387,7 +430,7 @@ export async function submitMyResignation(req, res) {
     actorUuid: req.user?.uuid ?? null,
     employeeUuid: employee.uuid,
     requestType: "resignation",
-    noticePeriodDays: 0,
+    submittedByEmployee: true,
     lastWorkingDay: req.body?.last_working_day,
     reason: req.body?.reason,
     hrNotes: null,
@@ -404,5 +447,22 @@ export async function submitMyResignation(req, res) {
   });
 
   const detail = await getExitRequest({ orgId, exitUuid: result.uuid });
-  return created(res, { exit_request: detail }, "Resignation submitted");
+  let emailWarning = null;
+  try {
+    await sendOffboardingUpdateEmail({
+      to: employee.email,
+      employeeName: employee.full_name,
+      requestType: detail.request_type,
+      status: detail.status,
+      lastWorkingDay: detail.last_working_day,
+      daysUntilLastWorkingDay: detail.days_until_last_working_day,
+      reason: detail.reason,
+    });
+  } catch (error) {
+    emailWarning = employee.email
+      ? "Resignation saved, but its confirmation email could not be delivered. Check mail settings."
+      : "Resignation saved, but no email address is on file for this employee.";
+    console.error("Failed to send resignation email:", error.message);
+  }
+  return created(res, { exit_request: detail, _email_warning: emailWarning }, "Resignation submitted");
 }

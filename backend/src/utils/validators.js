@@ -1,5 +1,6 @@
 import { z } from "zod";
 import ApiError from "./ApiError.js";
+import { cnicError, normalizeCnic } from "./contactFormat.js";
 
 /**
  * Reusable zod schemas.
@@ -24,8 +25,8 @@ import ApiError from "./ApiError.js";
 export const cnicSchema = z
   .string()
   .trim()
-  .transform((v) => v.replace(/[\s-]/g, ""))
-  .refine((v) => /^\d{13}$/.test(v), "CNIC must be 13 digits");
+  .refine((v) => Boolean(v) && !cnicError(v), "CNIC must be 13 digits")
+  .transform(normalizeCnic);
 
 /**
  * Phone: digits, spaces and the leading +. Kept deliberately permissive about

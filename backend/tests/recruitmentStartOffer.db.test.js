@@ -117,6 +117,12 @@ beforeAll(async () => {
   ]);
 
   orgId = org.insertId;
+  // This suite tests workflows that require a separate approver; don't rely on
+  // the non-strict fallback for organizations without a saved policy row.
+  await db.query(
+    "INSERT INTO organization_approval_policies (organization_id, strict_dual_control, created_at, updated_at) VALUES (?, 1, NOW(), NOW())",
+    [orgId],
+  );
 
   const [other] = await db.query("INSERT INTO organizations (uuid, name) VALUES (UUID(), ?)", [
     `Start offer other ${Date.now()}`,
@@ -304,6 +310,31 @@ describe.runIf(HAS_DB)("starting an offer prepares it, and creates NO employee",
     expect(stored.converted_employee_uuid).toBeNull();
     expect(stored.stage).not.toBe("hired");
     expect(stored.offer_status).toBe("pending_approval");
+  });
+
+  it("stores an Org Admin's auto-approved offer as approved when strict control is off", async () => {
+    const { candidate } = await atOffered("PreHire Auto Approved");
+    await db.query(
+      "UPDATE organization_approval_policies SET strict_dual_control=0 WHERE organization_id=?",
+      [orgId],
+    );
+    try {
+      const result = await prepareOffer({
+        orgId,
+        actorUuid: adminUuid,
+        candidateUuid: candidate.uuid,
+        templateUuid: startOfferTemplateUuid,
+        conn: db,
+      });
+      expect(result.approval?.status).toBe("approved");
+      const stored = await getCandidate({ orgId, candidateUuid: candidate.uuid, conn: db });
+      expect(stored.offer_status).toBe("approved");
+    } finally {
+      await db.query(
+        "UPDATE organization_approval_policies SET strict_dual_control=1 WHERE organization_id=?",
+        [orgId],
+      );
+    }
   });
 
   it("snapshots the rendered offer so the approval is about real terms", async () => {

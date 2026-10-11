@@ -2,6 +2,7 @@ import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
 import { assertUuid } from "../utils/publicResponse.js";
 import { isoDate as normaliseIsoDate } from "../utils/dateRange.js";
+import { CURRENCY } from "../utils/currency.js";
 
 /**
  * Payroll's view of what actually happened in a month.
@@ -71,15 +72,22 @@ export const PAYROLL_RULES = {
   DEFAULT_WORK_WEEK: null,
 };
 
-const REQUIRED_POLICY_FIELDS = ["currency", "pay_frequency", "daily_rate_basis", "hours_per_workday", "shift_start_time", "late_grace_minutes", "late_arrivals_per_penalty", "late_penalty_days", "overtime_multiplier", "deduct_unpaid_leave", "deduct_absences", "deduct_late_arrivals", "pay_approved_overtime"];
+// `currency` is NOT one of these. It was, when administrators could type a
+// three-letter code, and its absence here is the point: a currency is no longer
+// something an administrator confirms, so a NULL left over from before this
+// change must not keep blocking payroll. CURRENCY is applied below instead.
+const REQUIRED_POLICY_FIELDS = ["pay_frequency", "daily_rate_basis", "hours_per_workday", "shift_start_time", "late_grace_minutes", "late_arrivals_per_penalty", "late_penalty_days", "overtime_multiplier", "deduct_unpaid_leave", "deduct_absences", "deduct_late_arrivals", "pay_approved_overtime"];
 
 export async function getConfiguredPayrollPolicy(orgId, conn = pool) {
   const [rows] = await conn.query("SELECT * FROM organization_payroll_policies WHERE organization_id=? AND is_configured=1", [orgId]);
   const policy = rows[0];
   if (!policy || REQUIRED_POLICY_FIELDS.some((field) => policy[field] === null || policy[field] === undefined)) {
-    throw new ApiError(409, "Payroll policy is not configured. An organization administrator must confirm the work week, currency, pay frequency and deduction/overtime rules before preview or payroll generation.");
+    throw new ApiError(409, "Payroll policy is not configured. An organization administrator must confirm the work week, pay frequency and deduction/overtime rules before preview or payroll generation.");
   }
-  return policy;
+  // Normalized on read rather than trusted from the row, so every downstream
+  // consumer of the policy — payslips, salary lines, the preview response —
+  // reports the same currency even if a pre-PKR row is still in the table.
+  return { ...policy, currency: CURRENCY };
 }
 
 export function assertMonthYear(month, year) {

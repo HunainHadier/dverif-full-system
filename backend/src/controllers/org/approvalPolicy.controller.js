@@ -8,8 +8,9 @@ export async function getApprovalPolicyHandler(req, res) {
 }
 
 export async function updateApprovalPolicyHandler(req, res) {
+  const value = req.body?.strict_dual_control;
   const policy = await setApprovalPolicy(req.scopeOrgId, {
-    strictDualControl: Boolean(req.body?.strict_dual_control),
+    strictDualControl: value === true || value === 1 || value === "1" || value === "true",
   });
   logAudit({
     ...getActorFromReq(req),

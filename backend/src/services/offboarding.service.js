@@ -74,18 +74,12 @@ function isValidDate(value) {
  */
 const isoDate = (value) => normaliseIsoDate(value);
 
-/** Inclusive calendar-day count, matching the leave module's convention. */
-function inclusiveDays(fromIso, toIso) {
+/** Calendar days between the request date and last working day (not inclusive). */
+export function daysUntilLastWorkingDay(fromIso, toIso) {
   const from = new Date(`${fromIso}T00:00:00Z`).getTime();
   const to = new Date(`${toIso}T00:00:00Z`).getTime();
   if (Number.isNaN(from) || Number.isNaN(to)) return 0;
-  return Math.max(0, Math.round((to - from) / 86400000) + 1);
-}
-
-function addDaysIso(iso, days) {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + Number(days || 0));
-  return d.toISOString().slice(0, 10);
+  return Math.max(0, Math.round((to - from) / 86400000));
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +96,7 @@ function addDaysIso(iso, days) {
 export async function employeeOnRoster(orgId, employeeUuid, conn = pool) {
   assertUuid(employeeUuid, "Employee UUID");
   const [rows] = await conn.query(
-    `SELECT e.uuid, e.full_name, e.status, e.joining_date,
+    `SELECT e.uuid, e.full_name, e.email, e.status, e.joining_date, e.linked_user_uuid,
             dg.name AS designation
        FROM employees e
        LEFT JOIN designations dg ON dg.id = e.designation_id
@@ -148,7 +142,7 @@ export async function createExitRequest({
   actorUuid,
   employeeUuid,
   requestType = "resignation",
-  noticePeriodDays = 0,
+  submittedByEmployee = false,
   lastWorkingDay,
   reason,
   hrNotes,
@@ -162,16 +156,29 @@ export async function createExitRequest({
   if (!isValidDate(lastWorkingDay)) {
     throw new ApiError(400, "last_working_day must be a valid YYYY-MM-DD date");
   }
-  const notice = Number(noticePeriodDays);
-  if (!Number.isInteger(notice) || notice < 0) {
-    throw new ApiError(400, "notice_period_days must be a non-negative whole number");
+  const normalizedReason = typeof reason === "string" ? reason.trim() : "";
+  if (!normalizedReason) {
+    throw new ApiError(
+      400,
+      requestType === "termination"
+        ? "Please enter a reason for this termination request."
+        : "Please enter a reason for your resignation.",
+    );
   }
-
+  if (requestType === "resignation" && !submittedByEmployee) {
+    throw new ApiError(403, "Employees must submit their own resignation from their account");
+  }
+  if (submittedByEmployee && requestType !== "resignation") {
+    throw new ApiError(403, "Employees can only submit their own resignation");
+  }
   const own = conn === pool;
   const db = own ? await pool.getConnection() : conn;
   if (own) await db.beginTransaction();
   try {
     const employee = await employeeOnRoster(orgId, employeeUuid, db);
+    if (submittedByEmployee && (!actorUuid || employee.linked_user_uuid !== actorUuid)) {
+      throw new ApiError(403, "You can only submit your own resignation");
+    }
 
     const existing = await hasOpenExit(employeeUuid, db);
     if (existing) {
@@ -185,9 +192,9 @@ export async function createExitRequest({
     await db.query(
       `INSERT INTO exit_requests
          (uuid, organization_id, employee_uuid, employee_name, designation, request_type,
-          notice_period_days, last_working_day, reason, status, decided_by, decided_at, hr_notes,
+          last_working_day, reason, status, decided_by, decided_at, hr_notes,
           created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         uuid,
         orgId,
@@ -195,9 +202,8 @@ export async function createExitRequest({
         employee.full_name,
         employee.designation ?? null,
         requestType,
-        notice,
         lastWorkingDay,
-        reason ? String(reason).trim() : null,
+        normalizedReason || null,
         status,
         decidedBy,
         status === "pending" ? null : new Date(),
@@ -216,7 +222,13 @@ export async function createExitRequest({
     }
 
     if (own) await db.commit();
-    return { uuid, employeeUuid: employee.uuid, checklistTasks: CHECKLIST_TEMPLATE.length };
+    return {
+      uuid,
+      employeeUuid: employee.uuid,
+      employeeName: employee.full_name,
+      employeeEmail: employee.email ?? null,
+      checklistTasks: CHECKLIST_TEMPLATE.length,
+    };
   } catch (e) {
     if (own) await db.rollback();
     // The generated column enforces this too; translating the driver's error
@@ -258,6 +270,10 @@ export async function getExitRequest({ orgId, exitUuid, conn = pool }) {
   return {
     ...rows[0],
     last_working_day: isoDate(rows[0].last_working_day),
+    days_until_last_working_day: daysUntilLastWorkingDay(
+      isoDate(rows[0].created_at),
+      isoDate(rows[0].last_working_day),
+    ),
     checklist,
     settlement: settlements[0] ?? null,
     checklistSummary: summariseChecklist(checklist),
@@ -295,18 +311,13 @@ export function summariseChecklist(checklist) {
 }
 
 /**
- * Approve or reject an exit.
- *
- * Approval is the point at which the notice period is agreed, which is why the
- * decision may set it even if submission proposed something else. The submitted
- * value is a guess by an employee; the approved value is the contract.
+ * Approve or reject an exit. HR may confirm a revised last working day.
  */
 export async function decideExitRequest({
   orgId,
   actorUuid,
   exitUuid,
   decision,
-  noticePeriodDays,
   lastWorkingDay,
   decisionNotes,
   conn = pool,
@@ -316,7 +327,7 @@ export async function decideExitRequest({
   }
 
   const [rows] = await conn.query(
-    "SELECT uuid, status, notice_period_days, last_working_day FROM exit_requests WHERE uuid=? AND organization_id=?",
+    "SELECT uuid, status, last_working_day FROM exit_requests WHERE uuid=? AND organization_id=?",
     [exitUuid, orgId],
   );
   if (!rows.length) throw new ApiError(404, "Exit request not found");
@@ -328,21 +339,15 @@ export async function decideExitRequest({
     throw new ApiError(409, `This exit request was already ${existing.status}`);
   }
 
-  let notice = Number(noticePeriodDays);
-  if (noticePeriodDays === undefined || noticePeriodDays === null) notice = existing.notice_period_days;
-  if (!Number.isInteger(notice) || notice < 0) {
-    throw new ApiError(400, "notice_period_days must be a non-negative whole number");
-  }
-
   let lwd = lastWorkingDay ? lastWorkingDay : isoDate(existing.last_working_day);
   if (!isValidDate(lwd)) throw new ApiError(400, "last_working_day must be a valid YYYY-MM-DD date");
 
   await conn.query(
     `UPDATE exit_requests
-        SET status=?, notice_period_days=?, last_working_day=?, decision_notes=?,
+        SET status=?, last_working_day=?, decision_notes=?,
             decided_by=?, decided_at=NOW(), updated_at=NOW()
       WHERE uuid=? AND organization_id=?`,
-    [decision, notice, lwd, decisionNotes ? String(decisionNotes).trim() : null, actorUuid ?? null, exitUuid, orgId],
+    [decision, lwd, decisionNotes ? String(decisionNotes).trim() : null, actorUuid ?? null, exitUuid, orgId],
   );
 
   return getExitRequest({ orgId, exitUuid, conn });
@@ -483,29 +488,13 @@ export async function getEncashableLeaveDays({ orgId, employeeUuid, year, conn =
 }
 
 /**
- * Notice days actually served, from the date notice was given to the last day.
- *
- * Measured in CALENDAR days, not working days, and capped at the contractual
- * notice. Two reasons: a notice period is a contractual duration, and converting
- * it to working days would make serving it depend on how many weekends fell in
- * the window. The cap is what stops an employee who stayed three months past
- * their notice from generating a large positive recovery.
- */
-export function noticeDaysServed({ noticeGivenOn, lastWorkingDay, noticePeriodDays }) {
-  const served = inclusiveDays(noticeGivenOn, lastWorkingDay);
-  return Math.min(Math.max(0, served), Math.max(0, Number(noticePeriodDays) || 0));
-}
-
-/**
  * Calculate the Full & Final settlement, without writing it.
  *
  * The order of the arithmetic is the whole design:
  *
  *   gross            = unused PAID leave x per-day rate
- *   notice_recovery  = (notice contracted - notice served) x per-day rate, only
- *                      when the employee UNDER-SERVED
  *   asset_deduction  = value of assets still held, CAPPED at the gross payable
- *   net              = max(0, gross - notice_recovery - asset_deduction)
+ *   net              = max(0, gross - asset_deduction)
  *
  * Two of those deserve defending.
  *
@@ -552,7 +541,7 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
     }),
   );
 
-  // Working days of the LAST month, not of the notice period: a person leaving on
+  // Working days of the LAST month, not of the time between request and departure: a person leaving on
   // the 3rd spent most of the month working, and pricing their last fortnight
   // against a full 31-day month would understate a day of leave by half.
   const calendar = await getWorkingDaysForMonth({ orgId, month: exitMonth, year: exitYear, conn });
@@ -571,28 +560,15 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
   const workedDaysInExitMonth = calendar.workingDates.filter((d) => d <= lastWorkingDay).length;
   const workedDaysSalary = money(perDayRate * workedDaysInExitMonth);
 
-  const noticeGivenOn = isoDate(exit.created_at);
-  const served = noticeDaysServed({
-    noticeGivenOn,
-    lastWorkingDay,
-    noticePeriodDays: exit.notice_period_days,
-  });
-  const shortfallDays = Math.max(0, Number(exit.notice_period_days) - served);
-
-  // For company termination, do NOT deduct a notice shortfall fine from the employee.
-  const isTermination = exit.request_type === "termination";
-  const noticeRecovery = isTermination ? 0 : money(perDayRate * shortfallDays);
-  const noticePayAdjustment = isTermination ? 0 : money(-noticeRecovery);
-
   const assets = await getOutstandingAssets({ orgId, employeeUuid: exit.employee_uuid, conn });
   const exposure = assets.exposure;
 
   const gross = money(workedDaysSalary + leaveEncashment);
-  const availableForAssets = Math.max(0, gross - noticeRecovery);
+  const availableForAssets = Math.max(0, gross);
   // Capped. See the note above - this is the difference between a settlement and a
   // deduction that nobody can honour.
   const assetDeduction = money(Math.min(exposure, availableForAssets));
-  const net = money(Math.max(0, gross - noticeRecovery - assetDeduction));
+  const net = money(Math.max(0, gross - assetDeduction));
 
   return {
     exit_request_uuid: exitUuid,
@@ -607,14 +583,7 @@ export async function calculateSettlement({ orgId, exitUuid, conn = pool }) {
       amount: workedDaysSalary,
     },
     leave: { ...leave, amount: leaveEncashment },
-    notice: {
-      notice_period_days: Number(exit.notice_period_days),
-      notice_days_served: served,
-      shortfall_days: shortfallDays,
-      recovery: noticeRecovery,
-      adjustment: noticePayAdjustment,
-      notice_given_on: noticeGivenOn,
-    },
+    days_until_last_working_day: daysUntilLastWorkingDay(isoDate(exit.created_at), lastWorkingDay),
     assets: {
       count: assets.count,
       uncosted: assets.uncosted,
@@ -674,10 +643,9 @@ export async function saveSettlement({ orgId, actorUuid, exitUuid, notes, conn =
     `INSERT INTO final_settlements
        (uuid, organization_id, exit_request_uuid, employee_uuid, basic_salary,
         working_days_in_month, per_day_rate, leave_encashment_days, leave_encashment_amount,
-        notice_period_days, notice_days_served, notice_pay_adjustment,
         asset_deductions, asset_deductions_exposure, unreturned_asset_count,
         net_fnf_amount, status, notes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, NOW(), NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, NOW(), NOW())`,
     [
       uuid,
       orgId,
@@ -688,9 +656,6 @@ export async function saveSettlement({ orgId, actorUuid, exitUuid, notes, conn =
       calc.per_day_rate,
       calc.leave.encashable_days,
       calc.leave.amount,
-      calc.notice.notice_period_days,
-      calc.notice.notice_days_served,
-      calc.notice.adjustment,
       calc.assets.applied,
       calc.assets.exposure,
       calc.assets.count,
@@ -871,7 +836,7 @@ export async function getMyExit({ orgId, employeeUuid, conn = pool }) {
   const onRoster = employeeStatus === "current_employee" || employeeStatus === "active";
 
   const [rows] = await conn.query(
-    `SELECT er.uuid, er.status, er.request_type, er.notice_period_days, er.last_working_day,
+    `SELECT er.uuid, er.status, er.request_type, er.last_working_day,
             er.reason, er.decision_notes, er.created_at, er.decided_at, er.completed_at
        FROM exit_requests er
       WHERE er.employee_uuid = ? AND er.organization_id = ?
@@ -895,7 +860,7 @@ export async function getMyExit({ orgId, employeeUuid, conn = pool }) {
   const full = await getExitRequest({ orgId, exitUuid: exit.uuid, conn });
 
   const [settlement] = await conn.query(
-    `SELECT status, leave_encashment_days, leave_encashment_amount, notice_pay_adjustment,
+    `SELECT status, leave_encashment_days, leave_encashment_amount,
             net_fnf_amount, unreturned_asset_count
        FROM final_settlements WHERE exit_request_uuid = ?`,
     [exit.uuid],
@@ -911,8 +876,8 @@ export async function getMyExit({ orgId, employeeUuid, conn = pool }) {
       uuid: full.uuid,
       status: full.status,
       request_type: full.request_type,
-      notice_period_days: full.notice_period_days,
       last_working_day: full.last_working_day,
+      days_until_last_working_day: full.days_until_last_working_day,
       reason: full.reason,
       decision_notes: full.decision_notes,
       decision: full.decided_at ? full.status : null,

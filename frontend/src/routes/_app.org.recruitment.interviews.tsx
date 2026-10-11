@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
+import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { RecruitmentTabs } from "@/components/hr/RecruitmentTabs";
 import {
   CURRENT_EMPLOYEE_STATUSES,
@@ -115,6 +116,9 @@ export function InterviewsPage() {
     },
     onError: (e) => toast.error(apiErrorMessage(e, t("recruitment.interviewFailed"))),
   });
+
+  const hasVisibleInterviews = upcoming.length > 0 || past.length > 0;
+  const hasLoadedInterviews = (list.data?.length ?? 0) > 0;
 
   const columns = (rows: Interview[]): DataTableColumn<Interview>[] => [
     {
@@ -221,6 +225,7 @@ export function InterviewsPage() {
           placeholder={t("recruitment.searchInterviews")}
         />
 
+        {upcoming.length > 0 || !hasLoadedInterviews || !hasVisibleInterviews ? (
         <section className="space-y-2">
           <h2 className="text-sm font-medium">{t("recruitment.upcoming")}</h2>
           <DataTable
@@ -232,15 +237,21 @@ export function InterviewsPage() {
             // a lie about the schedule — it is about the FILTER. Both strings exist so
             // the table can tell those apart.
             emptyTitle={
-              search.trim() ? t("recruitment.noInterviewsMatch") : t("recruitment.noInterviews")
+              search.trim()
+                ? t("recruitment.noInterviewsMatch")
+                : hasLoadedInterviews
+                  ? t("recruitment.noUpcomingInterviews", "No upcoming interviews")
+                  : t("recruitment.noInterviews")
             }
             emptyDescription={
               search.trim()
                 ? t("recruitment.noInterviewsMatchDescription")
-                : t("recruitment.noInterviewsDescription")
+                : hasVisibleInterviews
+                  ? undefined
+                  : t("recruitment.noInterviewsDescription")
             }
             emptyAction={
-              search.trim() ? null : (
+              search.trim() || hasLoadedInterviews ? null : (
                 <Button onClick={() => setScheduling(true)}>
                   {t("recruitment.scheduleInterview")}
                 </Button>
@@ -248,11 +259,19 @@ export function InterviewsPage() {
             }
           />
         </section>
+        ) : null}
 
         {past.length ? (
           <section className="space-y-2">
             <h2 className="text-sm font-medium">{t("recruitment.pastInterviews")}</h2>
-            <DataTable columns={columns(past)} rows={past} showPagination={false} />
+            <DataTable
+            // A scheduled interview can fall into this section once its meeting
+            // time has passed. Keep its feedback action visible so recruiters can
+            // still complete it and record the pass/fail decision.
+            columns={columns(past)}
+              rows={past}
+              showPagination={false}
+            />
           </section>
         ) : null}
       </div>
@@ -336,6 +355,21 @@ function ScheduleDialog({
     },
   });
   const { reset } = form;
+  const interviewerUuid = form.watch("interviewer_uuid");
+  const interviewerOptions = useMemo(
+    () => [
+      { value: "", label: t("recruitment.interviewerUnassigned") },
+      ...(interviewers.data?.items ?? [])
+        .filter((employee) => CURRENT_EMPLOYEE_STATUSES.includes(employee.status))
+        .map((employee) => ({
+          value: employee.uuid,
+          label: employee.full_name,
+          hint: employee.designation ?? undefined,
+          keywords: employee.email ?? undefined,
+        })),
+    ],
+    [interviewers.data?.items, t],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -416,31 +450,16 @@ function ScheduleDialog({
           </select>
         </label>
 
-        {/*
-          A SELECT over the roster, not a text box. See ScheduleDialog's note: asking
-          for a `interviewer_uuid` by keyboard is a field no user can fill correctly,
-          and every attempt failed with a UUID validation error that read as though
-          THEY had mistyped something.
-        */}
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.interviewer")}</span>
-          <select
-            {...form.register("interviewer_uuid")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          >
-            <option value="">{t("recruitment.interviewerUnassigned")}</option>
-            {(interviewers.data?.items ?? [])
-              // Only current staff can interview. Offering a leaver would book a
-              // meeting with someone who no longer works here, and the server has no
-              // opinion about it either way.
-              .filter((e) => CURRENT_EMPLOYEE_STATUSES.includes(e.status))
-              .map((e) => (
-                <option key={e.uuid} value={e.uuid}>
-                  {e.full_name}
-                  {e.designation ? ` — ${e.designation}` : ""}
-                </option>
-              ))}
-          </select>
+          <SearchableSelect
+            items={interviewerOptions}
+            value={interviewerUuid}
+            onChange={(value) => form.setValue("interviewer_uuid", value, { shouldDirty: true })}
+            placeholder={t("recruitment.interviewerUnassigned")}
+            searchPlaceholder={t("recruitment.searchInterviewer", "Search interviewer...")}
+            emptyText={t("recruitment.noInterviewersFound", "No interviewers found.")}
+          />
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.scheduledAt")}</span>

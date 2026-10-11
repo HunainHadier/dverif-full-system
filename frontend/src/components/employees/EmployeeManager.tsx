@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -515,6 +515,27 @@ function EmployeeFormDialog({
     send_invite: false,
     organization_uuid: (editing as unknown as { organization_uuid?: string })?.organization_uuid ?? "",
   });
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      full_name: editing?.full_name ?? "",
+      cnic: editing?.cnic ?? "",
+      email: editing?.email ?? "",
+      phone: editing?.phone ?? "",
+      designation: editing?.designation ?? "",
+      department: editing?.department ?? "",
+      employment_type: editing?.employment_type ?? "",
+      work_location: editing?.work_location ?? "",
+      reporting_manager_uuid: editing?.reporting_manager_uuid ?? "",
+      status: (editing?.status ?? "current_employee") as EmployeeRecord["status"],
+      joining_date: editing?.joining_date ?? "",
+      emergency_contact: editing?.emergency_contact ?? "",
+      current_salary: editing ? String(editing.current_salary ?? "") : "",
+      send_invite: false,
+      organization_uuid: (editing as unknown as { organization_uuid?: string })?.organization_uuid ?? "",
+    });
+  }, [open, editing?.uuid]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);

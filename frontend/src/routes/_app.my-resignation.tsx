@@ -29,9 +29,9 @@ export const Route = createFileRoute("/_app/my-resignation")({
  * mirrors the backend's choice of authUser with no role check.
  *
  * The page is a status display first and a form second. Once a request exists,
- * the form is gone: the notice period is agreed with HR rather than declared
- * unilaterally, and letting someone keep editing a submitted date only produces
- * mismatches between what they think they agreed and what is on record.
+ * the form is gone: HR reviews the submitted last working day, and letting someone
+ * keep editing it only produces mismatches between what they expect and what is on
+ * record.
  */
 
 const STATUS_VARIANT: Record<ExitStatus, "default" | "secondary" | "outline" | "destructive"> = {
@@ -49,7 +49,15 @@ function todayIso(): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** A month out: the most common notice period, as a starting point not a promise. */
+function calendarDaysUntil(isoDate: string): number {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  if (!year || !month || !day) return 0;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.round((Date.UTC(year, month - 1, day) - todayUtc) / 86_400_000));
+}
+
+/** A month out as a convenient starting date; the employee can choose another. */
 function monthAheadIso(): string {
   const d = new Date();
   d.setMonth(d.getMonth() + 1);
@@ -63,6 +71,7 @@ function MyResignationPage() {
   const qc = useQueryClient();
   const [lastWorkingDay, setLastWorkingDay] = useState(monthAheadIso());
   const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState(false);
 
   const mine = useQuery({
     queryKey: ["my-resignation"],
@@ -73,11 +82,13 @@ function MyResignationPage() {
     mutationFn: () =>
       myResignationService.submit({
         last_working_day: lastWorkingDay,
-        reason: reason.trim() || undefined,
+        reason: reason.trim(),
       }),
-    onSuccess: () => {
-      toast.success(t("myResignation.submitted"));
+    onSuccess: (result) => {
+      if (result._email_warning) toast.warning(result._email_warning);
+      else toast.success(t("myResignation.submitted"));
       setReason("");
+      setReasonError(false);
       void qc.invalidateQueries({ queryKey: ["my-resignation"] });
     },
     onError: (e: unknown) => toast.error(apiErrorMessage(e, t("myResignation.submitFailed"))),
@@ -134,19 +145,8 @@ function MyResignationPage() {
                   <dd>{formatDate(request.last_working_day)}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-muted-foreground">{t("offboarding.notice")}</dt>
-                  <dd>
-                    {/* Three answers, not two. "To be confirmed" for a request HR
-                        has not ruled on yet, the agreed number once they have, and
-                        NOT a bare "0 day(s)" when there is no agreed number - which
-                        is what a completed exit recorded without one used to show,
-                        reading as though the employee served a zero-day notice. */}
-                    {request.status === "pending"
-                      ? t("myResignation.noticePending")
-                      : request.notice_period_days > 0
-                        ? t("offboarding.days", { count: request.notice_period_days })
-                        : t("myResignation.noticeNotSet")}
-                  </dd>
+                  <dt className="text-xs text-muted-foreground">{t("offboarding.daysUntilLastWorkingDay")}</dt>
+                  <dd>{t("offboarding.days", { count: request.days_until_last_working_day })}</dd>
                 </div>
               </dl>
 
@@ -248,20 +248,25 @@ function MyResignationPage() {
                   onChange={(e) => setLastWorkingDay(e.target.value)}
                   className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
                 />
-                {/* The one thing an employee always asks, answered before they ask.
-                    The agreed period comes out at review; this is only their
-                    proposed date. */}
-                <p className="text-xs text-muted-foreground">{t("myResignation.noticeHint")}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("myResignation.daysUntil", { count: calendarDaysUntil(lastWorkingDay) })}
+                </p>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="reason">{t("offboarding.reason")}</Label>
+                <Label htmlFor="reason">{t("offboarding.reason")} *</Label>
                 <Textarea
                   id="reason"
                   value={reason}
-                  onChange={(e) => setReason(e.target.value)}
+                  onChange={(e) => {
+                    setReason(e.target.value);
+                    if (e.target.value.trim()) setReasonError(false);
+                  }}
                   rows={3}
                   placeholder={t("myResignation.reasonPlaceholder")}
                 />
+                {reasonError ? (
+                  <p className="text-xs text-destructive">{t("myResignation.reasonRequired")}</p>
+                ) : null}
               </div>
               {submit.isError ? (
                 <p className="text-sm text-destructive">
@@ -270,9 +275,15 @@ function MyResignationPage() {
                 </p>
               ) : null}
               <Button
-                onClick={() => submit.mutate()}
+                onClick={() => {
+                  if (!reason.trim()) {
+                    setReasonError(true);
+                    return;
+                  }
+                  submit.mutate();
+                }}
                 loading={submit.isPending}
-                disabled={!lastWorkingDay}
+                disabled={!lastWorkingDay || submit.isPending}
               >
                 {t("myResignation.submit")}
               </Button>

@@ -398,6 +398,48 @@ export async function sendRecruitmentOfferEmail({ to, candidateName, openingTitl
   }));
 }
 
+export async function sendOffboardingUpdateEmail({
+  to,
+  employeeName,
+  requestType,
+  status,
+  lastWorkingDay,
+  daysUntilLastWorkingDay,
+  reason,
+}) {
+  if (!to) throw new Error("Employee email is required to send an offboarding update");
+  const transporter = requireTransport();
+  const appName = process.env.APP_NAME || "Dverif";
+  const safeName = esc(employeeName || "Employee");
+  const safeType = esc(requestType === "termination" ? "termination" : "resignation");
+  const safeStatus = esc(status);
+  const safeDate = esc(lastWorkingDay);
+  const safeReason = reason ? esc(reason) : "";
+  const days = Math.max(0, Number(daysUntilLastWorkingDay) || 0);
+  const text = [
+    `Dear ${employeeName || "Employee"},`,
+    "",
+    `Your ${requestType} request status is: ${status}.`,
+    `Last working day: ${lastWorkingDay}.`,
+    ...(reason ? [`Reason: ${reason}.`] : []),
+    `${days} calendar day(s) from the request date to the last working day.`,
+    "",
+    `Regards,\n${appName} HR`,
+  ].join("\n");
+  return transporter.sendMail(buildMail({
+    to,
+    subject: `${appName} - Offboarding update`,
+    text,
+    html: emailWrapper([
+      h1("Offboarding update"),
+      p(`Dear ${safeName}, your ${safeType} request status is: ${safeStatus}.`),
+      p(`Last working day: <strong>${safeDate}</strong>.`),
+      ...(safeReason ? [p(`Reason: ${safeReason}`)] : []),
+      p(`${days} calendar day(s) from the request date to the last working day.`),
+    ].join(""), "en", "Offboarding update"),
+  }));
+}
+
 export async function sendPasswordResetEmail({ to, resetLink, lang = "en" }) {
   const transporter = requireTransport();
 

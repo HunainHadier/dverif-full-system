@@ -75,6 +75,7 @@ export type Candidate = {
   email: string | null;
   phone: string | null;
   cnic: string | null;
+  cover_letter?: string | null;
   stage: CandidateStage;
   rating: number | null;
   /** Staff-facing. Never sent to the public careers form. */
@@ -85,11 +86,13 @@ export type Candidate = {
   converted_employee_uuid: string | null;
   offer_letter_uuid: string | null;
   hired_at: string | null;
-  offer_status?: "draft" | "pending_approval" | "approved" | "sent" | "accepted" | "declined" | "rejected" | null;
+  offer_status?: "ready" | "sent" | "hired" | "draft" | "pending_approval" | "approved" | "accepted" | null;
   offer_sent_at?: string | null;
   offer_response_at?: string | null;
   offer_response_notes?: string | null;
   completed_interviews?: number;
+  valid_interviews?: number;
+  feedback_recorded_interviews?: number;
   created_at: string;
 };
 
@@ -134,25 +137,12 @@ export type Interview = {
   created_at: string;
 };
 
-/**
- * An offer as the pipeline sees it: a HIRED candidate, plus the DRAFT appointment
- * letter their hire created and the approval state of that letter.
- *
- * `stage` is always `hired` in practice — the backend lists only `hired`, because the
- * letter is minted by the hire. A pre-hire candidate has no letter to approve or
- * send, so listing them would produce rows whose only possible outcome was an error.
- * The field is typed as the full `CandidateStage` rather than the literal `"hired"`
- * because it comes straight from the `candidates` row and narrowing it here would be
- * a claim about the database this type does not enforce.
- *
- * The sequence is: hire (employee record + draft letter) -> submit for approval ->
- * approve -> send. Issuing mints `reference_no` and the QR token, so it is the send
- * that turns a draft into a real document, not the approval.
- */
+/** Offer lifecycle data shown on the recruitment offers screen. */
 export type Offer = {
   candidate_uuid: UUID;
   full_name: string;
   email: string | null;
+  cnic?: string | null;
   stage: CandidateStage;
   opening_title: string | null;
   reference_no: string | null;
@@ -161,7 +151,7 @@ export type Offer = {
   offer_letter_uuid: string | null;
   converted_employee_uuid: string | null;
   hired_at: string | null;
-  offer_status?: "draft" | "pending_approval" | "approved" | "sent" | "accepted" | "declined" | "rejected" | null;
+  offer_status?: "ready" | "sent" | "hired" | "draft" | "pending_approval" | "approved" | "accepted" | null;
   offer_sent_at?: string | null;
   offer_response_at?: string | null;
   issued_at: string | null;
@@ -171,38 +161,7 @@ export type Offer = {
   offer_values?: Record<string, string> | string | null;
   offer_body_snapshot?: string | null;
   offer_snapshot_hash?: string | null;
-};
-
-/**
- * ApprovalTimeline's props, verbatim.
- *
- * Not a re-typed copy. The backend returns the shared workflow engine's append-only
- * step history under these exact names, and ApprovalTimeline consumes them directly —
- * so the shape here is the contract, and drifting from it would break the component
- * rather than merely tidy a type.
- */
-export type OfferApprovalStep = {
-  uuid?: string;
-  step_order: number;
-  step_name: string;
-  approver_name?: string | null;
-  approver_uuid?: string | null;
-  decision: "pending" | "approved" | "rejected" | "skipped" | "cancelled" | "forwarded";
-  comments?: string | null;
-  acted_at?: string;
-};
-
-export type OfferApproval = {
-  uuid: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
-  title: string | null;
-  requested_at: string;
-  resolved_at: string | null;
-  resolved_by_uuid: string | null;
-  outcome_notes: string | null;
-  steps: OfferApprovalStep[];
-  currentStepOrder: number | null;
-  current_step_name: string | null;
+  feedback_recorded_interviews?: number;
 };
 
 export type PipelineBoard = {
@@ -246,6 +205,8 @@ export type JobOpeningInput = {
   title: string;
   department_id?: number | null;
   designation_id?: number | null;
+  department_name?: string;
+  designation_name?: string;
   location?: string;
   employment_type?: EmploymentType;
   description?: string;
@@ -342,6 +303,15 @@ export const candidatesService = {
     notes?: string;
   }) => api.post<{ candidate: Candidate }>("/org/applications", data).then((r) => r.data.candidate),
 
+  update: (uuid: UUID, data: {
+    full_name: string;
+    email: string;
+    phone?: string;
+    cnic?: string;
+    cover_letter?: string;
+    notes?: string;
+  }) => api.put<{ candidate: Candidate }>(`/org/candidates/${uuid}`, data).then((r) => r.data.candidate),
+
   /**
    * Move along the pipeline.
    *
@@ -364,13 +334,13 @@ export const candidatesService = {
       .then((r) => r.data.candidate),
 
   /**
-   * Prepare an offer and submit its saved terms for shared approval.
+   * Prepare and save an offer that is immediately ready to send.
    */
   prepareOffer: (uuid: UUID, data: { offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
-    api.post<{ candidate: Candidate; approval: OfferApproval }>(`/org/applications/${uuid}/start-offer`, data)
+    api.post<{ candidate: Candidate }>(`/org/applications/${uuid}/start-offer`, data)
       .then((r) => r.data),
   prepareOfferWithInterviewOverride: (uuid: UUID, data: { reason: string; offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
-    api.post<{ candidate: Candidate; approval: OfferApproval }>(`/org/applications/${uuid}/start-offer/override`, {
+    api.post<{ candidate: Candidate }>(`/org/applications/${uuid}/start-offer/override`, {
       override_failed_interview_reason: data.reason,
       offer_template_uuid: data.offer_template_uuid,
       offer_values: data.offer_values,
@@ -526,70 +496,21 @@ export const offersService = {
   list: (params: { page?: number; limit?: number; opening_uuid?: UUID } = {}) =>
     api.get<Paginated<Offer>>("/org/offers", { params }).then((r) => r.data),
 
-  /**
-   * The approval trail, straight from the SHARED workflow engine.
-   *
-   * There is no separate approve/reject call in this module's vocabulary - approval
-   * goes through the engine so the timeline is the engine's append-only history
-   * rather than a status column invented here.
-   */
-  getApproval: (candidateUuid: UUID) =>
-    api
-      .get<{ approval: OfferApproval | null }>(`/org/offers/${candidateUuid}/approval`)
-      .then((r) => r.data.approval),
-
-  /**
-   * Submit the DRAFT appointment letter for approval.
-   *
-   * Refused by the server unless the candidate is already `hired`, because the letter
-   * does not exist before then. Deliberately reachable only from the offers page and
-   * not from a pre-hire pipeline card: there is nothing there to approve.
-   */
+  /** Prepare and preview the candidate's offer letter. */
   prepare: (candidateUuid: UUID) => api.get<OfferPreparation>(`/org/offers/${candidateUuid}/prepare`).then((r) => r.data),
   preview: (candidateUuid: UUID, data: { template_uuid: UUID; values: Record<string, string> }) =>
     api.post<OfferPreview>(`/org/offers/${candidateUuid}/preview`, data).then((r) => r.data),
-  requestApproval: (candidateUuid: UUID, comments?: string) =>
-    api
-      .post<{ approval: OfferApproval }>(`/org/offers/${candidateUuid}/approval`, { comments })
-      .then((r) => r.data.approval),
 
-  decide: (candidateUuid: UUID, data: { decision: "approve" | "reject"; comments?: string }) =>
-    api
-      .post<{ approval: OfferApproval }>(`/org/offers/${candidateUuid}/approval/decide`, data)
-      .then((r) => r.data.approval),
-
-  /**
-   * Issue the letter. Refused by the server unless it was APPROVED, so a recruiter
-   * cannot skip the conversation by going straight to Send. This is the step that mints
-   * `reference_no` and the QR token — approval alone does not.
-   *
-   * `values` ARE ALWAYS SENT, and the default is NOT an empty object.
-   *
-   * An earlier version sent `{ values: {} }` when the caller had nothing to add, and
-   * that empty payload merged over the values the hire already stored on the draft
-   * letter — so the issued PDF rendered `{{salary}}` as a literal placeholder because
-   * the send blanked what the hire had filled in. The default here is `undefined`, which
-   * axios omits from the body entirely, so the server keeps its own merge fields.
-   *
-   * `undefined` entries are also stripped: the template's merge tags resolve against
-   * this object, and one `undefined` value renders as the text "undefined" in the PDF,
-   * which is worse than a blank.
-   */
+  /** Send the prepared offer directly to the candidate's email address. */
   send: (candidateUuid: UUID) =>
     api.post<{ candidate_uuid: UUID; status: "sent" }>("/org/offers/" + candidateUuid + "/send", {}).then((r) => r.data),
-  /**
-   * Record the candidate's answer.
-   *
-   * `portal_access` IS GONE from the payload on purpose, not swept up with the
-   * cnic/joining_date fields beside it: accepting an offer creates the employee
-   * and stops there. The portal invitation is a separate act on the employee
-   * row (orgService.resendInvite), where the mailbox, the timing and the reason
-   * are chosen. See the hint OfferSheet renders for what the recruiter is told.
-   */
-  respond: (candidateUuid: UUID, response: "accepted" | "declined", data: { cnic?: string | null; joining_date?: string; comments?: string } = {}) =>
+  downloadPdf: (candidateUuid: UUID) =>
+    api.get(`/org/offers/${candidateUuid}/pdf`, { responseType: "blob" }).then((r) => r.data as Blob),
+  /** Mark the candidate as hired and create their employee record. */
+  hire: (candidateUuid: UUID, data: { cnic?: string | null; joining_date?: string; comments?: string } = {}) =>
     api.post<{ candidate: Candidate; employee_uuid: UUID | null }>(
-      "/org/offers/" + candidateUuid + "/respond",
-      { response, ...data },
+      "/org/offers/" + candidateUuid + "/hire",
+      data,
     ).then((r) => r.data),
 };
 
