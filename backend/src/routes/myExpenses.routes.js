@@ -6,6 +6,7 @@ import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
 import { hasPermission } from "../utils/permissions.js";
 import {
+  myExpenseCategories,
   myExpenseClaims,
   submitMyExpenseClaim,
   myExpenseClaimDetail,
@@ -59,6 +60,18 @@ const resolveExpenseApprovalAuthority = (req, _res, next) => {
   next();
 };
 
+/**
+ * Read-only, so an employee can see what they are allowed to claim without being
+ * able to manage the categories themselves — creating, deactivating and editing
+ * them stay with staff behind requirePermission("approve_expenses").
+ *
+ * BEFORE `/:uuid`, deliberately, and for the same reason org.routes.js registers
+ * `/bulk-pay` first: Express matches in registration order, so a literal segment
+ * sitting behind a parameter is one refactor away from being swallowed by it.
+ * Registered second, "categories" reaches myExpenseClaimDetail and 404s as a
+ * missing claim.
+ */
+router.get("/categories", selfService, asyncHandler(myExpenseCategories));
 router.get("/", selfService, asyncHandler(myExpenseClaims));
 router.get("/:uuid", selfService, asyncHandler(myExpenseClaimDetail));
 router.post("/", selfService, resolveExpenseApprovalAuthority, asyncHandler(submitMyExpenseClaim));

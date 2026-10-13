@@ -150,6 +150,143 @@ export async function createCategory({
   return rows[0];
 }
 
+/**
+ * Edit a category.
+ *
+ * PARTIAL, and deliberately: every field is optional and only the ones present are
+ * written. That is what makes a checkbox toggle safe — sending `requires_receipt:
+ * false` must not blank a name that was not part of the request. `buildUpdateStrict`
+ * enforces both halves: it drops keys the caller may not set (so a request cannot
+ * reach `organization_id` or `created_by`), and it refuses an empty update rather
+ * than issuing a statement that changes nothing.
+ *
+ * LOWERING `max_limit_per_claim` HAS A CONSEQUENCE THE EDITOR MUST SURFACE. The limit
+ * is re-checked at APPROVAL as well as at submission, so dropping it below a claim
+ * that is already filed leaves that claim permanently unapprovable — it fails the
+ * same check the reviewer sees. Weakening `requires_receipt` has the mirror effect
+ * and is the safe direction. Neither is refused here; both are the admin's call,
+ * and a silent block would be worse than a reversible mistake.
+ */
+export async function updateCategory({
+  orgId,
+  actorUuid,
+  categoryUuid,
+  name,
+  description,
+  maxLimitPerClaim,
+  requiresReceipt,
+  isActive,
+  conn = pool,
+}) {
+  assertUuid(categoryUuid, "Category UUID");
+
+  // requireActive=false so an INACTIVE category can be edited and restored. Gating
+  // this on is_active=1 would make "delete" irreversible from the UI, since the
+  // row that could be brought back is exactly the one that could not be found.
+  await loadCategory({ orgId, categoryUuid, conn, requireActive: false });
+
+  const sets = [];
+  const params = [];
+
+  if (name !== undefined) {
+    const trimmed = String(name).trim();
+    if (!trimmed) throw new ApiError(400, "name cannot be empty");
+    sets.push("name=?");
+    params.push(trimmed);
+  }
+  if (description !== undefined) {
+    sets.push("description=?");
+    params.push(description ? String(description).trim() : null);
+  }
+  if (maxLimitPerClaim !== undefined) {
+    if (maxLimitPerClaim === null || maxLimitPerClaim === "") {
+      sets.push("max_limit_per_claim=?");
+      params.push(null);
+    } else {
+      const limit = money(maxLimitPerClaim);
+      // Same rule as create: 0 is refused, NULL is how you say "no limit". A zero
+      // ceiling reads as "nothing may be claimed", which is what DELETING the
+      // category means, and is better expressed by is_active.
+      if (!Number.isFinite(limit) || limit <= 0) {
+        throw new ApiError(
+          400,
+          "max_limit_per_claim must be a positive amount, or omitted for no limit",
+        );
+      }
+      sets.push("max_limit_per_claim=?");
+      params.push(limit);
+    }
+  }
+  if (requiresReceipt !== undefined) {
+    sets.push("requires_receipt=?");
+    params.push(requiresReceipt ? 1 : 0);
+  }
+  if (isActive !== undefined) {
+    sets.push("is_active=?");
+    params.push(isActive ? 1 : 0);
+  }
+
+  if (!sets.length) throw new ApiError(400, "No fields to update");
+
+  try {
+    await conn.query(
+      `UPDATE expense_categories SET ${sets.join(", ")}, updated_at=NOW()
+        WHERE uuid=? AND organization_id=?`,
+      [...params, categoryUuid, orgId],
+    );
+  } catch (e) {
+    if (e.code === "ER_DUP_ENTRY") {
+      throw new ApiError(
+        409,
+        "An expense category with this name already exists for the organization",
+      );
+    }
+    throw e;
+  }
+
+  const [rows] = await conn.query(
+    "SELECT * FROM expense_categories WHERE uuid=? AND organization_id=?",
+    [categoryUuid, orgId],
+  );
+  return rows[0];
+}
+
+/**
+ * Retire a category. IT DEACTIVATES; IT DOES NOT ERASE.
+ *
+ * `expense_claims.category_uuid` is a FK with ON DELETE RESTRICT, so a hard DELETE
+ * the moment anyone has ever claimed against the category is refused by MySQL — and
+ * if it were not, the claim list would lose the category name on every claim the
+ * company has already reimbursed. These are financial records: they feed payslips
+ * months later, and the category name is part of what the employee was told they
+ * were owed.
+ *
+ * Deactivating takes it out of the dropdown (`listCategories` and
+ * `loadCategory` both filter is_active=1) while leaving every existing claim, and
+ * every payslip already generated, resolving exactly as before. It is reversible
+ * through updateCategory's `is_active`, which is the whole point: a mis-click on
+ * "Delete" should cost one click to undo, not a migration.
+ *
+ * The claim count is returned so the caller can say what was preserved rather than
+ * implying an empty category was thrown away.
+ */
+export async function deleteCategory({ orgId, actorUuid, categoryUuid, conn = pool }) {
+  assertUuid(categoryUuid, "Category UUID");
+  await loadCategory({ orgId, categoryUuid, conn, requireActive: false });
+
+  const [[{ n }]] = await conn.query(
+    "SELECT COUNT(*) AS n FROM expense_claims WHERE category_uuid=? AND organization_id=?",
+    [categoryUuid, orgId],
+  );
+
+  await conn.query(
+    "UPDATE expense_categories SET is_active=0, updated_at=NOW() WHERE uuid=? AND organization_id=?",
+    [categoryUuid, orgId],
+  );
+
+  return { retired: true, claimsPreserved: Number(n ?? 0) };
+}
+
 /** Load a category, proving it belongs to THIS organization. */
 export async function loadCategory({ orgId, categoryUuid, conn = pool, requireActive = true }) {
   assertUuid(categoryUuid, "Category UUID");

@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Check, Eye, FolderTree, Plus, Receipt, Upload, Wallet, X } from "lucide-react";
+import { Check, Eye, FolderTree, Pencil, Plus, Receipt, Trash2, Undo2, Upload, Wallet, X } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -23,10 +23,17 @@ import {
 } from "@/components/ui/sheet";
 import { PageHeader } from "@/components/common/PageHeader";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   CLAIM_STATUS_VARIANT,
   expenseCategoriesService,
   expenseClaimsService,
-  orgService,
   type ClaimStatus,
   type ExpenseAttachment,
   type ExpenseCategory,
@@ -79,6 +86,14 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
  * (markClaimPaid refuses a payroll-mode claim). The Mark paid action is therefore
  * hidden on every row the payroll owns: a menu item whose only possible outcome
  * is a 409 teaches people the page is broken.
+ *
+ * THERE IS NO "NEW CLAIM" BUTTON, AND THAT IS THE POLICY. An org_admin reaches
+ * this page through a gate that makes them unconditionally `approve_expenses`, so
+ * a create control here would hand the one account that can rubber-stamp every
+ * reimbursement the power to originate one - approving its own. Staff shape the
+ * policy (categories) and adjudicate it (review); they do not spend the company's
+ * money by filing against an employee of their choosing. Employees file from
+ * /my-expenses, where the server derives the claimant from the session.
  */
 function ExpenseClaimsPage() {
   const { t } = useTranslation();
@@ -90,7 +105,7 @@ function ExpenseClaimsPage() {
   const [reviewing, setReviewing] = useState<ExpenseClaim | null>(null);
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
   const [categoryOpen, setCategoryOpen] = useState(false);
-  const [claimOpen, setClaimOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const list = useQuery({
     queryKey: ["expense-claims", page, status, category],
@@ -160,14 +175,20 @@ function ExpenseClaimsPage() {
     {
       key: "expense_date",
       header: t("expenses.expenseDate"),
+      // JUST THE DATE. This column used to carry the description underneath it,
+      // which is where it went wrong: `truncate` needs a bounded parent to clip
+      // against, and a table cell is sized by its content, so a long description
+      // widened the column instead of being cut off. A reviewer scanning the queue
+      // for "the taxi claims from last week" got a wall of prose where a date
+      // should be, and the queue's own sort order was unreadable at a glance.
+      //
+      // The description is not lost — it is the first thing the detail sheet shows,
+      // which is where it is actually read rather than skimmed.
       render: (r) => (
-        <div className="min-w-0">
-          {/* The day the money was spent, which is what the payroll period is
-              bucketed by. It is deliberately NOT the created_at date, because a
-              claim filed in March for a February taxi belongs in February. */}
-          <p className="text-sm">{formatDate(r.expense_date)}</p>
-          <p className="truncate text-xs text-muted-foreground">{r.description ?? "—"}</p>
-        </div>
+        // The day the money was spent, which is what the payroll period is
+        // bucketed by. It is deliberately NOT the created_at date, because a claim
+        // filed in March for a February taxi belongs in February.
+        <span className="whitespace-nowrap text-sm">{formatDate(r.expense_date)}</span>
       ),
     },
     {
@@ -310,9 +331,9 @@ function ExpenseClaimsPage() {
           description={t("expenses.description")}
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={() => setClaimOpen(true)}>
-                <Receipt className="mr-2 h-4 w-4" />
-                {t("expenses.newClaim")}
+              <Button variant="outline" onClick={() => setManageOpen(true)}>
+                <FolderTree className="mr-2 h-4 w-4" />
+                {t("expenses.manageCategories")}
               </Button>
               <Button onClick={() => setCategoryOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -399,16 +420,7 @@ function ExpenseClaimsPage() {
       />
 
         <CategoryDialog open={categoryOpen} onOpenChange={setCategoryOpen} />
-        <NewClaimDialog
-          open={claimOpen}
-          onOpenChange={setClaimOpen}
-          categories={categories.data ?? []}
-          onCreated={() => {
-            setClaimOpen(false);
-            setPage(1);
-            invalidate();
-          }}
-        />
+        <CategoryManagerDialog open={manageOpen} onOpenChange={setManageOpen} />
     </ModuleGate>
   );
 }
@@ -754,35 +766,73 @@ type CategoryForm = {
 function CategoryDialog({
   open,
   onOpenChange,
+  category,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  /** Present = edit this one. Absent = create a new one. */
+  category?: ExpenseCategory | null;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const editing = category ?? null;
   const form = useForm<CategoryForm>({
     defaultValues: { name: "", description: "", max_limit_per_claim: "", requires_receipt: true },
   });
   const { reset } = form;
 
-  const create = useMutation({
-    mutationFn: (values: CategoryForm) =>
-      expenseCategoriesService.create({
+  /**
+   * Prefill on the closed -> open transition.
+   *
+   * Keyed on the category uuid as well as the flag, so going from editing A to
+   * editing B — which leaves the dialog mounted the whole time — cannot keep A's
+   * values. Saving a limit of 50,000 onto the wrong category because the form was
+   * never re-read is the kind of mistake a reviewer approves for months.
+   */
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      reset({
+        name: editing?.name ?? "",
+        description: editing?.description ?? "",
+        // The column is DECIMAL and arrives as a string; Number('') is 0, which the
+        // form would then render as a real zero limit rather than "no limit".
+        max_limit_per_claim:
+          editing?.max_limit_per_claim === null || editing?.max_limit_per_claim === undefined
+            ? ""
+            : String(editing.max_limit_per_claim),
+        requires_receipt: editing ? Boolean(editing.requires_receipt) : true,
+      });
+    }
+    wasOpen.current = open;
+  }, [open, editing, reset]);
+
+  const save = useMutation({
+    mutationFn: (values: CategoryForm) => {
+      // Empty string means NO limit, which the server stores as NULL. Sending 0
+      // instead would be refused — and rightly, because a zero ceiling reads as
+      // "nothing may be claimed" when it almost certainly means "no cap".
+      const payload = {
         name: values.name.trim(),
-        description: values.description.trim() || undefined,
-        // Empty string means NO limit, which the server stores as NULL. Sending
-        // 0 instead would be refused — and rightly, because a zero ceiling reads
-        // as "nothing may be claimed" when it almost certainly means "no cap".
+        description: values.description.trim() || null,
         max_limit_per_claim: values.max_limit_per_claim ? Number(values.max_limit_per_claim) : null,
         requires_receipt: values.requires_receipt,
-      }),
+      };
+      return editing
+        ? expenseCategoriesService.update(editing.uuid, payload)
+        : expenseCategoriesService.create(payload);
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["expense-categories"] });
+      void qc.invalidateQueries({ queryKey: ["my-expense-categories"] });
       reset();
       onOpenChange(false);
-      toast.success(t("expenses.categoryCreated"));
+      toast.success(t(editing ? "expenses.categoryUpdated" : "expenses.categoryCreated"));
     },
-    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryCreateFailed"))),
+    onError: (e) =>
+      toast.error(
+        apiErrorMessage(e, t(editing ? "expenses.categoryUpdateFailed" : "expenses.categoryCreateFailed")),
+      ),
   });
 
   return (
@@ -792,11 +842,13 @@ function CategoryDialog({
         onOpenChange(v);
         if (!v) reset();
       }}
-      title={t("expenses.newCategory")}
-      description={t("expenses.newCategoryDescription")}
+      title={t(editing ? "expenses.editCategory" : "expenses.newCategory")}
+      description={
+        t(editing ? "expenses.editCategoryDescription" : "expenses.newCategoryDescription")
+      }
       submitLabel={t("common.save")}
       cancelLabel={t("common.cancel")}
-      onSubmit={(values) => create.mutateAsync(values)}
+      onSubmit={(values) => save.mutateAsync(values)}
       form={form}
     >
       <label className="block space-y-1 text-sm">
@@ -826,6 +878,15 @@ function CategoryDialog({
         <span className="block text-xs text-muted-foreground">
           {t("expenses.categoryLimitHint")}
         </span>
+        {/* Stated here because the consequence is not visible from the field: the
+            limit is re-checked at APPROVAL, so lowering it below a claim that is
+            already filed leaves that claim unapprovable and failing the same check
+            the reviewer sees. Better said before the save than discovered after. */}
+        {editing ? (
+          <span className="block text-xs text-amber-700 dark:text-amber-500">
+            {t("expenses.categoryLimitEditWarning")}
+          </span>
+        ) : null}
       </label>
 
       <label className="flex items-center gap-2 text-sm">
@@ -841,197 +902,213 @@ function CategoryDialog({
   );
 }
 
+
 /**
- * Staff-submitted expense claim.
+ * Manage the categories this org's expenses are filed against.
  *
- * The review/pay side of this module was already complete, but nothing could
- * ever reach it: there was no way to file the claim in the first place, so the
- * queue could only ever fill up out-of-band. This dialog writes through the
- * same `expenseClaimsService.create` the server already implements.
+ * SEPARATE FROM THE FILTER DROPDOWN ON PURPOSE. That control answers "show me this
+ * category's claims"; this one answers "change what may be claimed". Putting Edit
+ * and Delete inside a <select> means the row you are about to destroy is the one
+ * you just filtered to, which is how a category with a year of claims behind it
+ * gets deleted while you were looking for last month's taxi.
  *
- * The employee is chosen explicitly rather than assumed to be the signed-in
- * user, because this is the STAFF page -- finance routinely types up a claim
- * for a colleague. The date and amount rules the server enforces are shown
- * inline so they are not discovered only after a failed round trip.
+ * DELETED CATEGORIES STAY VISIBLE, behind a toggle, and can be restored. The server
+ * deactivates rather than erases (see expenseCategoriesService.remove), so a
+ * mis-click costs one click to undo. Hiding removed rows outright would make that
+ * irreversible in practice, because the only way back would be the API.
  */
-function NewClaimDialog({
+function CategoryManagerDialog({
   open,
   onOpenChange,
-  categories,
-  onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  categories: ExpenseCategory[];
-  onCreated: () => void;
 }) {
   const { t } = useTranslation();
-  const [employeeUuid, setEmployeeUuid] = useState("");
-  const [categoryUuid, setCategoryUuid] = useState("");
-  const [amount, setAmount] = useState("");
-  const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [description, setDescription] = useState("");
-  const [paymentMode, setPaymentMode] = useState<PaymentMode>("payroll");
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const qc = useQueryClient();
+  const [showInactive, setShowInactive] = useState(false);
+  const [editing, setEditing] = useState<ExpenseCategory | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<ExpenseCategory | null>(null);
 
-  const employees = useQuery({
-    queryKey: ["expense-claim-employees"],
-    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+  const list = useQuery({
+    queryKey: ["expense-categories", showInactive],
+    queryFn: () => expenseCategoriesService.list(showInactive),
     enabled: open,
   });
 
-  const selected = useMemo(
-    () => (categories ?? []).find((c) => c.uuid === categoryUuid) ?? null,
-    [categories, categoryUuid],
-  );
-
-  const submit = useMutation({
-    mutationFn: () =>
-      expenseClaimsService.create({
-        employee_uuid: employeeUuid,
-        category_uuid: categoryUuid,
-        amount: Number(amount),
-        expense_date: expenseDate,
-        description: description.trim() || undefined,
-        payment_mode: paymentMode,
-      }),
-    onSuccess: () => {
-      toast.success(t("expenses.claimSubmitted"));
-      setEmployeeUuid("");
-      setCategoryUuid("");
-      setAmount("");
-      setDescription("");
-      setPaymentMode("payroll");
-      setErrors({});
-      setExpenseDate(new Date().toISOString().slice(0, 10));
-      onCreated();
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.claimSubmitFailed"))),
-  });
-
-  const handleSubmit = () => {
-    const next: Record<string, string> = {};
-    if (!employeeUuid) next.employeeUuid = "Choose the employee this claim is for";
-    if (!categoryUuid) next.categoryUuid = t("expenses.categoryRequired");
-    const value = Number(amount);
-    if (!amount.trim()) next.amount = t("expenses.amountRequired");
-    else if (!Number.isFinite(value) || value <= 0) next.amount = t("expenses.amountInvalid");
-    else if (selected?.max_limit_per_claim !== null && selected && value > Number(selected.max_limit_per_claim))
-      next.amount = `Exceeds the ${selected.name} limit of ${formatCurrency(Number(selected.max_limit_per_claim))}`;
-    if (!expenseDate) next.expenseDate = t("expenses.dateRequired");
-    else if (expenseDate > new Date().toISOString().slice(0, 10))
-      next.expenseDate = t("expenses.dateNotFuture");
-    setErrors(next);
-    if (Object.keys(next).length === 0) submit.mutate();
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["expense-categories"] });
+    void qc.invalidateQueries({ queryKey: ["my-expense-categories"] });
   };
 
+  const remove = useMutation({
+    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.remove(row.uuid),
+    onSuccess: (res) => {
+      invalidate();
+      setDeleting(null);
+      // Says what was KEPT, not what was destroyed. The category is retired; every
+      // claim already filed under it still resolves, and saying otherwise would
+      // make a reversible action feel like data loss.
+      toast.success(
+        res.claims_preserved > 0
+          ? t("expenses.categoryRemovedWithClaims", { count: res.claims_preserved })
+          : t("expenses.categoryRemoved"),
+      );
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryDeleteFailed"))),
+  });
+
+  const restore = useMutation({
+    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.restore(row.uuid),
+    onSuccess: () => {
+      invalidate();
+      toast.success(t("expenses.categoryRestored"));
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryUpdateFailed"))),
+  });
+
+  const rows = list.data ?? [];
+
   return (
-    <FormDialog
-      open={open}
-      onOpenChange={(v) => {
-        onOpenChange(v);
-        if (!v) setErrors({});
-      }}
-      title={t("expenses.newClaim")}
-      description={t("expenses.newClaimDescription")}
-      submitLabel={t("expenses.submitClaim")}
-      cancelLabel={t("common.cancel")}
-      onSubmit={(values) => {
-        void values;
-        handleSubmit();
-        return Promise.resolve();
-      }}
-    >
-      <div className="space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.employee")} *</span>
-        <select
-          value={employeeUuid}
-          onChange={(e) => setEmployeeUuid(e.target.value)}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
-          aria-label={t("expenses.employee")}
-        >
-          <option value="">{t("expenses.selectEmployee")}</option>
-          {(employees.data?.items ?? []).map((e) => (
-            <option key={e.uuid} value={e.uuid}>
-              {e.full_name}
-              {e.employee_code ? ` (${e.employee_code})` : ""}
-            </option>
-          ))}
-        </select>
-        {errors.employeeUuid ? (
-          <span className="block text-xs text-destructive">{errors.employeeUuid}</span>
-        ) : null}
-      </div>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("expenses.manageCategories")}</DialogTitle>
+            <DialogDescription>{t("expenses.manageCategoriesDescription")}</DialogDescription>
+          </DialogHeader>
 
-      <div className="space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.category")} *</span>
-        <select
-          value={categoryUuid}
-          onChange={(e) => setCategoryUuid(e.target.value)}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
-          aria-label={t("expenses.category")}
-        >
-          <option value="">{t("expenses.selectCategory")}</option>
-          {(categories ?? []).map((c) => (
-            <option key={c.uuid} value={c.uuid}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        {errors.categoryUuid ? (
-          <span className="block text-xs text-destructive">{errors.categoryUuid}</span>
-        ) : null}
-        {selected?.max_limit_per_claim != null ? (
-          <span className="block text-xs text-muted-foreground">
-            {t("expenses.categoryLimitHint", {
-              amount: formatCurrency(Number(selected.max_limit_per_claim)),
-            })}
-          </span>
-        ) : null}
-      </div>
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showInactive}
+                onChange={(e) => setShowInactive(e.target.checked)}
+                className="h-4 w-4"
+              />
+              {t("expenses.showRemovedCategories")}
+            </label>
+            <Button size="sm" onClick={() => setCreating(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t("expenses.newCategory")}
+            </Button>
+          </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("expenses.amount")} *</span>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.00"
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-          {errors.amount ? (
-            <span className="block text-xs text-destructive">{errors.amount}</span>
-          ) : null}
-        </label>
+          {list.isLoading ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">{t("common.loading")}</p>
+          ) : (
+            <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+              {rows.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  {t("expenses.noCategories")}
+                </p>
+              ) : (
+                rows.map((c) => {
+                  const active = Boolean(Number(c.is_active));
+                  return (
+                    <div
+                      key={c.uuid}
+                      className="flex items-start justify-between gap-3 rounded-md border p-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">
+                          {c.name}
+                          {active ? null : (
+                            <Badge variant="secondary" className="ml-2">
+                              {t("expenses.categoryRemovedBadge")}
+                            </Badge>
+                          )}
+                        </p>
+                        {c.description ? (
+                          <p className="truncate text-xs text-muted-foreground">{c.description}</p>
+                        ) : null}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {c.max_limit_per_claim === null
+                            ? t("expenses.noLimit")
+                            : t("expenses.categoryLimitOf", {
+                                amount: formatCurrency(Number(c.max_limit_per_claim)),
+                              })}
+                          {" · "}
+                          {c.requires_receipt
+                            ? t("expenses.requiresReceipt")
+                            : t("expenses.receiptNotRequired")}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditing(c)}
+                          aria-label={t("expenses.editCategory")}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {active ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setDeleting(c)}
+                            aria-label={t("expenses.deleteCategory")}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={restore.isPending}
+                            onClick={() => restore.mutate(c)}
+                            aria-label={t("expenses.restoreCategory")}
+                          >
+                            <Undo2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
 
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("expenses.expenseDate")} *</span>
-          <input
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={expenseDate}
-            onChange={(e) => setExpenseDate(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-          {errors.expenseDate ? (
-            <span className="block text-xs text-destructive">{errors.expenseDate}</span>
-          ) : null}
-        </label>
-      </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {t("common.close")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.description")}</span>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          placeholder={t("expenses.descriptionPlaceholder")}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-        />
-      </label>
-    </FormDialog>
+      {/* TWO dialogs, not one with a mode flag, so "editing" is a real category
+          and null can never be confused for a create target. Keyed so switching
+          between two categories cannot leave the first one's values behind. */}
+      <CategoryDialog
+        key={creating ? "create" : (editing?.uuid ?? "idle")}
+        open={creating || Boolean(editing)}
+        onOpenChange={(v) => {
+          if (!v) {
+            setCreating(false);
+            setEditing(null);
+          }
+        }}
+        category={editing}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        title={t("expenses.deleteCategory")}
+        description={
+          deleting
+            ? t("expenses.deleteCategoryWarning", { name: deleting.name })
+            : ""
+        }
+        confirmLabel={t("expenses.deleteCategory")}
+        loading={remove.isPending}
+        error={remove.isError ? apiErrorMessage(remove.error, t("expenses.categoryDeleteFailed")) : null}
+        onConfirm={() => remove.mutateAsync(deleting!)}
+        onOpenChange={(v) => !v && setDeleting(null)}
+      />
+    </>
   );
 }

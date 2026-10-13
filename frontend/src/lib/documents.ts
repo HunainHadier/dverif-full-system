@@ -197,8 +197,18 @@ export async function openStoredDocument(path?: string | null): Promise<OpenOutc
   return "viewed";
 }
 
-/** Open a blank tab up-front so the later async work is not popup-blocked. */
-function openViewerWindow(): Window | null {
+/**
+ * Open a blank tab up-front so the later async work is not popup-blocked.
+ *
+ * EXPORTED rather than duplicated. `window.open` only counts as a user gesture
+ * while it is on the stack of the click handler — the moment an `await` sits
+ * between the click and the open, browsers treat it as unsolicited and block it.
+ * So the tab is opened synchronously and filled in once the bytes arrive, and
+ * that dance now happens in two places (stored documents and attachment
+ * receipts). One implementation, because a second copy is how one of them ends up
+ * opening a tab that is never populated.
+ */
+export function openViewerWindow(): Window | null {
   const win = window.open("", "_blank");
   if (win) {
     win.document.title = "Loading…";

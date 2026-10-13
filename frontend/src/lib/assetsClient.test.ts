@@ -52,12 +52,20 @@ function member(objSrc: string, name: string): string {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
-/** The body of a `export const <name> = { ... };` declaration, up to the next one. */
+/**
+ * The body of a `export const <name> = { ... };` declaration, up to the next one.
+ *
+ * `\r?\n`, not `\n`: with core.autocrlf=true a Windows checkout ends the block
+ * `};\r\n`, so a `\n};\n` search matches nothing, search() returns -1, and the
+ * fallback returns the REST OF THE FILE. Every assertion then reads the following
+ * services too and either fails on their members or, worse, passes because the
+ * block it meant to check was never isolated in the first place.
+ */
 function serviceBlock(src: string, name: string): string {
   const at = src.indexOf(`export const ${name} = {`);
   if (at === -1) return "";
   const rest = src.slice(at);
-  const next = rest.search(/\n};\n/);
+  const next = rest.search(/\r?\n};\r?\n/);
   return next === -1 ? rest : rest.slice(0, next);
 }
 

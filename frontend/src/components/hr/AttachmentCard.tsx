@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatFileSize } from "@/lib/utils";
 import { saveBlob, useAttachmentUrl } from "@/lib/useAttachmentUrl";
+import { openViewerWindow } from "@/lib/documents";
 import { assetsService, type AssetAttachment } from "@/services";
 
 /**
@@ -39,6 +40,29 @@ function isPdf(mime: string | null): boolean {
   return mime === "application/pdf";
 }
 
+/*
+ * WHAT "VIEW" DOES, WHICH IS NOT THE SAME ACTION FOR EVERY FILE.
+ *
+ * A plain block comment, not a JSDoc: it documents the card's behaviour, not the
+ * symbol below it. Two adjacent JSDoc blocks read as one, and a reader looking
+ * for the handlers type would find prose about PDFs instead.
+ *
+ *  - IMAGE  → a modal. A till slip is small, the point of looking at it is to
+ *             check one number, and a modal keeps the review queue behind it. A
+ *             new tab for a 200px thumbnail is a worse version of the same thing.
+ *  - PDF    → a NEW TAB. In a modal the PDF viewer gets a box the size of a dialog
+ *             inside a drawer, with its own scrollbar inside the page's — and a
+ *             receipt is usually two pages, so it is read, not glanced at.
+ *  - ANYTHING ELSE (docx, xlsx, zip) → DOWNLOAD. There is nothing to display, so
+ *             a View button would either do nothing or open a blank tab; both read
+ *             as a broken app. Downloading is the only outcome that gives the user
+ *             the file.
+ *
+ * Consequence worth stating: the filename is ALWAYS clickable now. It used to be
+ * disabled for anything that was not an image or a PDF, which left a docx receipt
+ * looking like a dead label — the one attachment type a finance team is most
+ * likely to be sent.
+ */
 /**
  * The two network operations a card needs, injectable.
  *
@@ -78,6 +102,9 @@ export function AttachmentCard({
 }) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
+  // Images only, now. A PDF is opened in a new tab and anything else downloads, so
+  // this dialog is unreachable for those — leaving an <iframe> branch here would be
+  // dead code describing a path nothing takes.
   const [previewOpen, setPreviewOpen] = useState(false);
   // Deletion is confirmed, not immediate. The button only OPENS the dialog; the
   // API call lives in handleDelete below, which the dialog's onConfirm invokes.
@@ -86,10 +113,13 @@ export function AttachmentCard({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "view" | "download" | "delete">(null);
 
   const image = isImage(attachment.mime_type);
   const pdf = isPdf(attachment.mime_type);
+  /** True when clicking the filename will DISPLAY the file rather than save it. */
+  const viewable = image || pdf;
 
   // Load the bytes on hover OR once a preview is open. Never on mount: a drawer
   // of twenty receipts would otherwise fire twenty authenticated requests the
@@ -99,6 +129,48 @@ export function AttachmentCard({
     blob: loadedBlob,
     isLoading,
   } = useAttachmentUrl(hovered || previewOpen, () => handlers.download(attachment.uuid));
+
+  /**
+   * Open a PDF in a new tab.
+   *
+   * The tab is opened SYNCHRONOUSLY, before the await. `window.open` only counts
+   * as a user gesture while it is still on the click handler's stack; put an
+   * await in front of it and the browser blocks it as unsolicited. So the tab is
+   * claimed first and navigated once the bytes arrive — which is why this opens a
+   * blank "Loading…" tab rather than just calling window.open at the end.
+   */
+  const handleViewPdf = async () => {
+    setBusy("view");
+    setViewError(null);
+    const win = openViewerWindow();
+    try {
+      const blob = loadedBlob ?? (await handlers.download(attachment.uuid));
+      if (!win) {
+        // Blocked. The user still wants the file, so hand it over instead of
+        // failing silently — a View button that does nothing reads as a broken app,
+        // and the popup-blocker notice that caused it is invisible to the user.
+        saveBlob(blob, attachment.file_name);
+        setViewError(t("assets.attachmentPopupBlocked"));
+        return;
+      }
+      // A blob URL, never the endpoint itself: the endpoint is authenticated and
+      // serves `Content-Disposition: attachment`, so navigating a tab straight to
+      // it would download the PDF rather than display it.
+      const url = URL.createObjectURL(blob);
+      win.location.replace(url);
+      // Revoked on a DELAY, unlike saveBlob. The new tab is still loading from
+      // this URL; revoking it the moment click() returns strands the tab on an
+      // empty document.
+      window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+    } catch {
+      // Close the blank tab rather than leaving "Loading…" on screen forever — a
+      // tab that never resolves looks like the app hung.
+      win?.close();
+      setViewError(t("assets.attachmentViewFailed"));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const handleDownload = async () => {
     setBusy("download");
@@ -119,6 +191,15 @@ export function AttachmentCard({
     } finally {
       setBusy(null);
     }
+  };
+
+  /** The filename: display what can be displayed, hand over what cannot. */
+  const handleOpen = () => {
+    setDownloadError(null);
+    setViewError(null);
+    if (image) setPreviewOpen(true);
+    else if (pdf) void handleViewPdf();
+    else void handleDownload();
   };
 
   const handleDelete = async () => {
@@ -174,12 +255,25 @@ export function AttachmentCard({
       </div>
 
       <div className="min-w-0 flex-1">
+        {/*
+            ALWAYS clickable, and the title says which of the three things it will
+            do. It used to be `disabled` for anything that was not an image or a
+            PDF, which rendered a docx receipt as a dead label sitting next to two
+            working buttons — indistinguishable from a broken card. Now it displays
+            what can be displayed and hands over what cannot, and never pretends.
+        */}
         <button
           type="button"
-          onClick={() => setPreviewOpen(true)}
-          disabled={!image && !pdf}
+          onClick={handleOpen}
+          disabled={busy !== null}
           className="block max-w-full truncate text-left text-sm font-medium underline-offset-2 hover:underline disabled:cursor-default disabled:no-underline"
-          title={image || pdf ? t("assets.attachmentView") : t("assets.attachmentNoPreview")}
+          title={
+            image
+              ? t("assets.attachmentView")
+              : pdf
+                ? t("assets.attachmentOpenPdf")
+                : t("assets.attachmentViewDownloads")
+          }
         >
           {attachment.file_name}
         </button>
@@ -190,14 +284,25 @@ export function AttachmentCard({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        {image || pdf ? (
+        {/*
+            Only for what VIEW actually displays. A PDF opens a new tab and an
+            unviewable type downloads, so an eye icon beside those would be a
+            button whose outcome differs from its label — the same reason the
+            "Mark paid" action is hidden on payroll-mode claims upstream.
+        */}
+        {viewable ? (
           <Button
             variant="ghost"
             size="icon"
-            title={t("assets.attachmentView")}
-            onClick={() => setPreviewOpen(true)}
+            disabled={busy !== null}
+            title={image ? t("assets.attachmentView") : t("assets.attachmentOpenPdf")}
+            onClick={handleOpen}
           >
-            <Eye className="h-4 w-4" />
+            {busy === "view" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
           </Button>
         ) : null}
         <Button
@@ -236,6 +341,24 @@ export function AttachmentCard({
         </p>
       ) : null}
 
+      {/*
+          Separate from downloadError: a PDF that failed to open, or a popup
+          blocker that was worked around. Folding these into the download error
+          would report "download failed" for an action the user never asked for,
+          which sends them looking at the wrong button.
+      */}
+      {viewError ? (
+        <p role="alert" className="mt-1 text-xs text-destructive">
+          {viewError}
+        </p>
+      ) : null}
+
+      {/*
+          IMAGES ONLY. A PDF goes to a new tab and anything else downloads, so
+          this dialog has one job. The <iframe> branch that used to live here is
+          gone rather than kept as a fallback: it was reachable only when the
+          filename button opened this dialog for a PDF, which no longer happens.
+      */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -251,10 +374,6 @@ export function AttachmentCard({
               </p>
             ) : image && url ? (
               <img src={url} alt={attachment.file_name} className="mx-auto max-w-full" />
-            ) : pdf && url ? (
-              // A blob URL in an iframe renders the PDF in the browser's own
-              // viewer with no plugin and no third-party script.
-              <iframe src={url} title={attachment.file_name} className="h-[70vh] w-full" />
             ) : (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {t("assets.attachmentNoPreview")}

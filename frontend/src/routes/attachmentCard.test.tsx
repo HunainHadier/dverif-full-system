@@ -135,27 +135,59 @@ describe("attachment card", () => {
     expect(downloadAttachment).toHaveBeenCalledWith("att-img");
   });
 
-  it("previews a PDF in an iframe rather than downloading it", async () => {
+  it("opens a PDF in a NEW TAB, not in the modal", async () => {
+    // UPDATED. This used to assert an <iframe> inside the modal. A receipt is
+    // usually two pages and is read rather than glanced at, so it gets the whole
+    // tab — a PDF viewer inside a dialog inside a drawer has a scrollbar inside a
+    // scrollbar and about half the screen.
     downloadAttachment.mockResolvedValue(new Blob(["pdf"], { type: "application/pdf" }));
+    const win = {
+      document: { title: "", body: { appendChild: vi.fn() }, createTextNode: vi.fn() },
+      location: { replace: vi.fn() },
+      close: vi.fn(),
+    };
+    const open = vi.fn(() => win);
+    vi.stubGlobal("open", open);
+
     renderCard(pdf);
     const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /open pdf in a new tab/i }));
 
-    await user.click(screen.getByRole("button", { name: /view/i }));
-
-    await waitFor(() => {
-      const frame = document.querySelector("iframe");
-      expect(frame).toBeTruthy();
-      expect(frame).toHaveAttribute("title", "invoice.pdf");
-    });
+    await waitFor(() => expect(win.location.replace).toHaveBeenCalled());
+    // Blank tab claimed first, so the async fetch cannot be popup-blocked.
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    // And the modal iframe path is gone entirely.
+    expect(document.querySelector("iframe")).toBeNull();
   });
 
-  it("says a file type cannot be previewed instead of offering a dead View", async () => {
+  it("falls back to a DOWNLOAD when the new tab is blocked, and says so", async () => {
+    // A blocked popup that silently does nothing is indistinguishable from a
+    // broken page, so the user still gets the file AND an explanation.
+    downloadAttachment.mockResolvedValue(new Blob(["pdf"], { type: "application/pdf" }));
+    vi.stubGlobal("open", vi.fn(() => null));
+
+    renderCard(pdf);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /open pdf in a new tab/i }));
+
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalled());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/blocked/i);
+  });
+
+  it("offers no View button for an unviewable type, but the filename still works", async () => {
+    // UPDATED. The filename used to be a dead label for a docx, which reads as a
+    // broken card next to two working buttons. It now downloads — the only outcome
+    // that actually hands the user the file.
     renderCard(doc);
-    // No View button at all: offering one that opens an empty modal teaches the
-    // user the page is broken.
-    expect(screen.queryByRole("button", { name: /view/i })).not.toBeInTheDocument();
-    // The filename is still shown, and is not a button pretending to be one.
-    expect(screen.getByText("notes.docx")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /open pdf in a new tab/i }),
+    ).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /notes\.docx/ }));
+
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+    expect(downloadAttachment).toHaveBeenCalledWith("att-doc");
   });
 
   it("downloads via a blob and revokes the temporary URL", async () => {

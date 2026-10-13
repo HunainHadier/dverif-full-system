@@ -135,12 +135,63 @@ export const expenseCategoriesService = {
 
   create: (data: {
     name: string;
-    description?: string;
+    // null clears it, same as update. The two payloads are built from the same
+    // form value, and `null` is what the form produces for a field the user
+    // emptied — typing it as `string | undefined` here made one shared payload
+    // unassignable to create while assignable to update.
+    description?: string | null;
     max_limit_per_claim?: number | null;
     requires_receipt?: boolean;
   }) =>
     api
       .post<{ category: ExpenseCategory }>("/org/expense-categories", data)
+      .then((r) => r.data.category),
+
+  /**
+   * Edit a category. PARTIAL on purpose — only the keys passed are sent, so a
+   * single field can be changed without restating the rest.
+   *
+   * The checkbox case is why this matters: sending `requires_receipt: false` must
+   * not arrive alongside a blank name, which is what a whole-object payload built
+   * from a partially-filled form would produce. Keys whose value is `undefined`
+   * are dropped by axios, so they simply never reach the server.
+   */
+  update: (
+    uuid: UUID,
+    data: {
+      name?: string;
+      description?: string | null;
+      max_limit_per_claim?: number | null;
+      requires_receipt?: boolean;
+      is_active?: boolean;
+    },
+  ) =>
+    api
+      .put<{ category: ExpenseCategory }>(`/org/expense-categories/${uuid}`, data)
+      .then((r) => r.data.category),
+
+  /**
+   * Remove a category.
+   *
+   * NAMED `remove` rather than `delete`, and it is NOT a hard delete. The server
+   * deactivates: the category leaves the dropdown, while every claim already filed
+   * against it — and every payslip already generated from it — keeps resolving to
+   * the same name. `claims_preserved` comes back so the UI can say what was kept
+   * rather than implying the category and its history were thrown away.
+   */
+  remove: (uuid: UUID) =>
+    api
+      .delete<{ retired: boolean; claims_preserved: number }>(
+        `/org/expense-categories/${uuid}`,
+      )
+      .then((r) => r.data),
+
+  /** Bring a removed category back. Reversible is the point of deactivating. */
+  restore: (uuid: UUID) =>
+    api
+      .put<{ category: ExpenseCategory }>(`/org/expense-categories/${uuid}`, {
+        is_active: true,
+      })
       .then((r) => r.data.category),
 };
 
@@ -171,21 +222,19 @@ export const expenseClaimsService = {
     api.get<{ claim: ExpenseClaimDetail }>(`/org/expense-claims/${uuid}`).then((r) => r.data.claim),
 
   /**
-   * File a claim on someone's behalf.
+   * There is deliberately NO `create` on this object.
    *
-   * Takes an explicit employee_uuid because this is the STAFF page — someone in
-   * finance entering a claim typed over the phone for a colleague. The ESS page
-   * has its own method that cannot send one at all, which is the whole reason it
-   * exists separately.
+   * Every method here sits behind the same server gate, which makes an org_admin
+   * unconditionally `approve_expenses`. A method that filed a claim for a named
+   * employee would therefore give the one account that can approve any
+   * reimbursement the power to originate one and approve it in the same breath.
+   * Staff shape the policy and adjudicate it; employees originate it, through
+   * myExpensesService.create below, which cannot name an employee at all.
+   *
+   * POST /org/expense-claims is not registered server-side either. If you are
+   * reading this after adding a "New claim" button to the review queue, the
+   * endpoint you are calling returns 404 - by design.
    */
-  create: (data: {
-    employee_uuid: UUID;
-    category_uuid: UUID;
-    amount: number;
-    expense_date: string;
-    description?: string;
-    payment_mode?: PaymentMode;
-  }) => api.post<{ claim: ExpenseClaim }>("/org/expense-claims", data).then((r) => r.data.claim),
 
   /**
    * Approve or reject.
@@ -280,6 +329,24 @@ export const myExpensesService = {
         params: { status: params.status || undefined },
       })
       .then((r) => r.data),
+
+  /**
+   * The categories I may file against, through MY OWN route.
+   *
+   * NOT `expenseCategoriesService.list`. That one calls /org/expense-categories,
+   * which is gated on org_admin/sub_admin PLUS approve_expenses, so an employee
+   * got a 403 — and because a rejected query leaves `data` undefined, the claim
+   * form fell through to its empty state and told the employee "No categories
+   * found. Create a new category first." A message that is both false (categories
+   * exist) and unactionable (they cannot create one).
+   *
+   * Read-only by design: an employee sees what they may claim and cannot manage
+   * the category list itself.
+   */
+  categories: () =>
+    api
+      .get<{ items?: ExpenseCategory[] }>("/my/expenses/categories")
+      .then((r) => (Array.isArray(r.data.items) ? r.data.items : [])),
 
   get: (uuid: UUID) =>
     api.get<{ claim: ExpenseClaimDetail }>(`/my/expenses/${uuid}`).then((r) => r.data.claim),

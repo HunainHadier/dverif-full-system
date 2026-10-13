@@ -40,9 +40,10 @@ import {
 import {
   listExpenseCategories,
   createExpenseCategory,
+  updateExpenseCategory,
+  deleteExpenseCategory,
   listExpenseClaims,
   getExpenseClaim,
-  submitExpenseClaim,
   reviewExpenseClaim,
   payExpenseClaim,
   bulkPayExpenseClaims,
@@ -528,11 +529,30 @@ router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandle
 // ---- Expense claims (staff) ----
 // Reuses the same attachments middleware and the shared `attachments` table via
 // entity_type='expense_claim'; no file column lives on expense_claims itself.
+//
+// NO POST /expense-claims. There is deliberately no route here that creates a
+// claim, because an org admin filing their own claim is a claim that approves
+// itself: this same gate is what lets them approve one (requirePermission
+// "approve_expenses" is always true for org_admin), so a creation route would
+// hand the one person who can rubber-stamp a reimbursement the power to originate
+// it. Staff manage categories and review what employees file; employees file
+// through POST /api/v1/my/expenses, which derives the claimant from the session
+// and therefore cannot be pointed at anybody else.
+//
+// The route is GONE rather than gated to a role, so it 404s. A permanently-403
+// route is a disabled feature with a working URL, and the next person to add a
+// create button finds it answers instead of finding it refused. See
+// tests/expenseClaimCreationRestricted.test.js, which fails if this comes back.
 router.get("/expense-categories", expenseCategoryMgmt, asyncHandler(listExpenseCategories));
 router.post("/expense-categories", expenseCategoryMgmt, asyncHandler(createExpenseCategory));
+// Same gate as create: defining what may be claimed is the org admin's job, and it
+// is a decision about POLICY. Withholding it from someone granted
+// approve_expenses would leave them able to approve claims against limits and
+// receipt rules they cannot see or change.
+router.put("/expense-categories/:uuid", expenseCategoryMgmt, asyncHandler(updateExpenseCategory));
+router.delete("/expense-categories/:uuid", expenseCategoryMgmt, asyncHandler(deleteExpenseCategory));
 router.get("/expense-claims", expenseCategoryMgmt, asyncHandler(listExpenseClaims));
 router.get("/expense-claims/:uuid", expenseCategoryMgmt, asyncHandler(getExpenseClaim));
-router.post("/expense-claims", expenseCategoryMgmt, asyncHandler(submitExpenseClaim));
 // Registered BEFORE the /:uuid routes deliberately. Express matches in
 // registration order, so a literal segment sitting behind a parameter is one
 // refactor away from being swallowed by it. `/bulk-pay` as a uuid string would

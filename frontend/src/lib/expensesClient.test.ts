@@ -31,12 +31,21 @@ function code(src: string): string {
  * overlapping member names — all three have a `create`, and two have a
  * `removeAttachment`. An unscoped search finds the first one and every assertion
  * quietly validates the wrong service, which is worse than no test at all.
+ *
+ * `\r?\n`, not `\n`. This repo is checked out with core.autocrlf=true, so on a
+ * Windows working tree the terminator is `};\r\n` and a `\n};\n` search matches
+ * NOTHING — search() returns -1, the fallback returns the REST OF THE FILE, and
+ * every assertion below silently starts reading the other two services too. That
+ * is not a theoretical failure: it made this suite report a phantom `create` in
+ * expenseClaimsService, i.e. it would have failed a correct restriction as though
+ * the removal had been reverted. A helper that silently degrades on a line ending
+ * is worse than no helper.
  */
 function serviceBlock(src: string, name: string): string {
   const at = src.indexOf(`export const ${name} = {`);
   if (at === -1) return "";
   const rest = src.slice(at);
-  const next = rest.search(/\n};\n/);
+  const next = rest.search(/\r?\n};\r?\n/);
   return next === -1 ? rest : rest.slice(0, next);
 }
 
@@ -75,17 +84,169 @@ describe("an employee can only ever file a claim for themselves", () => {
     expect(ESS_PAGE).not.toMatch(/<Select[\s\S]{0,200}employee/i);
   });
 
-  it("the STAFF service does take one, which is why they are separate objects", () => {
-    // Not a bug to assert away. Filing a claim on someone's behalf is a real task
-    // for someone in finance entering it over the phone; the two clients differ
-    // precisely on this field.
+  it("the STAFF service cannot name an employee, because it cannot file at all", () => {
+    // UPDATED. This used to assert the opposite — that the staff client took an
+    // employee_uuid, because finance used to type claims up for colleagues. That
+    // capability is now the bug: the staff server gate makes an org_admin
+    // unconditionally `approve_expenses`, so a staff create route let the single
+    // account that can approve any reimbursement also originate one. POST
+    // /org/expense-claims is unregistered, so the client that called it is gone
+    // rather than merely unused — a method that 404s is a trap for whoever wires
+    // up a button next.
     const STAFF = serviceBlock(code(SERVICE), "expenseClaimsService");
-    expect(STAFF).toContain("employee_uuid: UUID");
+    expect(STAFF).not.toMatch(/\bcreate\b/);
+    // The bare path survives as the LIST (a GET), which is how finance pulls up
+    // one employee's queue. What must not exist is a POST to it — that is the
+    // creation call, and the one the server no longer routes.
+    expect(STAFF).toMatch(/get<Paginated<ExpenseClaim>>\("\/org\/expense-claims"/);
+    expect(STAFF).not.toMatch(/\.post(?:<[^>]*>)?\([^)]*"\/org\/expense-claims"/);
+
+    // employee_uuid SURVIVES, and deliberately: it is the list filter, so finance
+    // can pull up one employee's queue. Reading a roster is not filing against it.
+    // What must not exist is a second occurrence — a parameter that names WHO to
+    // pay, rather than whose rows to show.
+    const mentions = [...STAFF.matchAll(/employee_uuid/g)];
+    expect(mentions.length, "employee_uuid appears somewhere other than the list filter").toBe(1);
+    expect(STAFF).toContain("employee_uuid?: UUID");
+  });
+
+  it("the staff page has no create affordance to wire up", () => {
+    // Defense in depth on the same property, one layer up: no button, no dialog,
+    // no employee picker. Otherwise the 404 above is discovered by a user.
+    expect(code(ORG_PAGE)).not.toMatch(/expenseClaimsService\.create/);
+    expect(ORG_PAGE).not.toMatch(/function NewClaimDialog/);
+    expect(ORG_PAGE).not.toContain("expenses.newClaim");
+    // Category management is untouched — that IS an org admin's job.
+    expect(ORG_PAGE).toContain("expenses.newCategory");
   });
 });
 
 // ---------------------------------------------------------------------------
 // 2. The ESS portal can actually upload a receipt
+// ---------------------------------------------------------------------------
+
+/**
+ * Categories are editable and removable, and the removal is reversible.
+ *
+ * Only `create` shipped, which left a wrong limit or a typo permanent. The part
+ * worth pinning is the SHAPE of the removal: `expense_claims.category_uuid` is
+ * ON DELETE RESTRICT, and these are claims the company has already reimbursed and
+ * paid out on a payslip. So remove deactivates, keeps every claim resolvable, and
+ * can be undone.
+ */
+describe("expense categories can be edited and retired", () => {
+  const CATS = serviceBlock(code(SERVICE), "expenseCategoriesService");
+
+  it("the category service was found", () => {
+    // Guards the guard: a failed lookup makes every assertion below vacuous.
+    expect(CATS.length).toBeGreaterThan(200);
+  });
+
+  it("update PUTs to the category, and create still POSTs to the collection", () => {
+    // Tolerating the newline before the chained call: prettier wraps these, and an
+    // assertion that breaks when someone reformats a file trains people to stop
+    // reading the failures.
+    expect(CATS).toMatch(/api\s*\n?\s*\.put<\{ category: ExpenseCategory \}>\(`\/org\/expense-categories\/\$\{uuid\}`/);
+    expect(CATS).toMatch(/api\s*\n?\s*\.post<\{ category: ExpenseCategory \}>\("\/org\/expense-categories"/);
+  });
+
+  it("update is PARTIAL, so a checkbox cannot blank the rest", () => {
+    // Every key optional. Sending a whole object built from a half-filled form is
+    // how `requires_receipt: false` arrives alongside an empty name.
+    expect(CATS).toMatch(/name\?: string/);
+    expect(CATS).toMatch(/is_active\?: boolean/);
+  });
+
+  it("remove DELETEs, but the server retires rather than erases", () => {
+    expect(CATS).toMatch(/api\s*\n?\s*\.delete<\{ retired: boolean; claims_preserved: number \}>/);
+    // The response contract is what lets the toast say what was KEPT rather than
+    // implying a year of claims was thrown away.
+    expect(CATS).toContain("claims_preserved: number");
+  });
+
+  it("and it can be undone", () => {
+    // A soft delete with no way back is just a slower hard delete. Pinned because
+    // `restore` is trivially droppable and the UI has a button wired to it.
+    expect(CATS).toMatch(/restore: \(uuid: UUID\) =>/);
+    expect(CATS).toMatch(/is_active: true/);
+  });
+
+  it("the page manages categories, not just creates them", () => {
+    expect(ORG_PAGE).toContain("function CategoryManagerDialog");
+    expect(ORG_PAGE).toContain("expenseCategoriesService.update(");
+    expect(ORG_PAGE).toContain("expenseCategoriesService.remove(");
+    expect(ORG_PAGE).toContain("expenseCategoriesService.restore(");
+  });
+
+  it("removed categories stay visible and restorable", () => {
+    // Otherwise "Delete" is irreversible in practice — the only way back would
+    // be the API, and a mis-click on a category with claims behind it costs a
+    // migration.
+    expect(ORG_PAGE).toContain("showInactive");
+    expect(ORG_PAGE).toContain("expenses.showRemovedCategories");
+  });
+
+  it("it warns that lowering a limit strands claims already filed", () => {
+    // The limit is re-checked at APPROVAL, so lowering it below a filed claim
+    // leaves that claim unapprovable. Not visible from the field itself.
+    expect(ORG_PAGE).toContain("expenses.categoryLimitEditWarning");
+  });
+
+  it("the manager is not the claims filter dropdown", () => {
+    // The row you are about to retire must not be the row you just filtered to.
+    // Asserted structurally: the manager is its own dialog with its own heading.
+    expect(ORG_PAGE).toMatch(/function CategoryManagerDialog[\s\S]{0,4000}expenses\.manageCategories/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The same bug a second time, in the dropdown that gates the whole form.
+ *
+ * The claim form's category list called expenseCategoriesService.list(), i.e.
+ * GET /org/expense-categories — gated on org_admin/sub_admin PLUS
+ * approve_expenses. An employee is neither, so it 403'd, and because a rejected
+ * query leaves `data` undefined the form rendered its EMPTY state: "No categories
+ * found. Create a new category first." Both halves of that sentence were wrong.
+ * The categories existed, and the page it told them to visit is one an employee
+ * cannot open.
+ *
+ * Worth its own section rather than a line in the receipt one above, because the
+ * receipt case shows a 403 and this one HID it: the empty state is a designed,
+ * reassuring message. The user's report was that saving an expense "didn't work",
+ * and the cause was four layers away from anything that looks like a permission.
+ */
+describe("the employee portal reads categories through its OWN route", () => {
+  const ESS = serviceBlock(code(SERVICE), "myExpensesService");
+
+  it("gets them from /my/expenses/categories", () => {
+    expect(ESS).toContain("/my/expenses/categories");
+  });
+
+  it("does NOT call the staff category list", () => {
+    expect(ESS).not.toContain("/org/expense-categories");
+  });
+
+  it("the ESS page reads categories through the self-service client", () => {
+    expect(ESS_PAGE).toMatch(/queryFn: \(\) => myExpensesService\.categories\(\)/);
+    // Not expenseCategoriesService, and not even the same query KEY: a shared key
+    // would let one tab's cached staff answer render on the employee portal.
+    expect(code(ESS_PAGE)).not.toMatch(/expenseCategoriesService/);
+    expect(ESS_PAGE).toContain('queryKey: ["my-expense-categories"]');
+  });
+
+  it("a FAILED load is not reported as an empty list", () => {
+    // The reason this bug survived: an error and an empty list render the same
+    // dropdown, and the empty state told the person filing to fix a permissions
+    // fault by creating data. `categoriesEmpty` must exclude the error case.
+    expect(ESS_PAGE).toContain("const categoriesFailed = categories.isError;");
+    expect(ESS_PAGE).toContain("!categoriesFailed");
+    expect(ESS_PAGE).toContain("expenses.categoriesLoadFailed");
+    expect(ESS_PAGE).toContain("categories.refetch()");
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe("the employee portal uploads receipts through its OWN route", () => {
@@ -225,12 +386,15 @@ describe("the page does not let anyone read Approved as Paid", () => {
 // ---------------------------------------------------------------------------
 
 describe("the expenses client never sends status", () => {
+  // The self-service object is the only one with a `create` left: the staff
+  // client's was removed with POST /org/expense-claims.
   const STAFF = serviceBlock(code(SERVICE), "expenseClaimsService");
+  const ESS = serviceBlock(code(SERVICE), "myExpensesService");
 
   it("create takes no status", () => {
-    const at = STAFF.indexOf("create:");
-    const body = STAFF.slice(at, at + 400);
-    expect(body.length, "expenseClaimsService.create not found").toBeGreaterThan(50);
+    const at = ESS.indexOf("create:");
+    const body = ESS.slice(at, at + 400);
+    expect(body.length, "myExpensesService.create not found").toBeGreaterThan(50);
     expect(body).not.toMatch(/\bstatus\b/);
   });
 
@@ -283,6 +447,30 @@ describe("filter changes cannot strand the table on a page past its end", () => 
 
   it("the category filter resets to page 1", () => {
     expect(ORG_PAGE).toMatch(/setCategory\(v\);\s*setPage\(1\);/);
+  });
+
+  it("the date column carries the date and nothing else", () => {
+    // The description used to sit under the date in the same cell. It had
+    // `truncate` on it, which does nothing here: truncate clips against a BOUNDED
+    // parent, and a table cell is sized by its content, so a long description
+    // widened the column instead of being cut. The queue became a wall of prose
+    // where a scannable date column should be.
+    const col = ORG_PAGE.slice(
+      ORG_PAGE.indexOf('key: "expense_date"'),
+      ORG_PAGE.indexOf('key: "amount"'),
+    );
+    expect(col.length, "the expense_date column was not found").toBeGreaterThan(50);
+    expect(col).toContain("formatDate(r.expense_date)");
+    expect(col).not.toMatch(/r\.description/);
+    // ...and the row no longer wraps it in a block at all.
+    expect(col).not.toMatch(/<div/);
+  });
+
+  it("the description is still readable — in the detail sheet, where it is read", () => {
+    // Removing it from the TABLE is not removing it from the product. A reviewer
+    // decides on the detail, and that is where the prose belongs.
+    expect(ORG_PAGE).toMatch(/claim\.description/);
+    expect(ORG_PAGE).toContain("expenses.descriptionLabel");
   });
 });
 

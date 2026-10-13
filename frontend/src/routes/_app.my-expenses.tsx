@@ -24,7 +24,6 @@ import { PageHeader } from "@/components/common/PageHeader";
 import {
   CLAIM_STATUS_VARIANT,
   MAX_BACKDATE_DAYS,
-  expenseCategoriesService,
   myExpensesService,
   type ClaimStatus,
   type ExpenseAttachment,
@@ -248,9 +247,23 @@ function NewClaimDialog({
    */
   const [autoApprove, setAutoApprove] = useState(false);
 
+  /*
+   * MY categories, through MY route.
+   *
+   * This used to call `expenseCategoriesService.list(false)` — i.e.
+   * GET /org/expense-categories — which is gated on org_admin/sub_admin plus
+   * approve_expenses. A person on the roster is neither, so it 403'd, `data` stayed
+   * undefined, and the dropdown rendered the empty state: "No categories found.
+   * Create a new category first." Both halves were wrong. The categories existed,
+   * and the page it pointed at is one they cannot open.
+   *
+   * The key is deliberately its own. Sharing ["expense-categories"] with the staff
+   * page would let one tab's cache answer the other's query — and the two routes
+   * have different permissions, so a cached staff answer could render here.
+   */
   const categories = useQuery({
-    queryKey: ["expense-categories", false],
-    queryFn: () => expenseCategoriesService.list(false),
+    queryKey: ["my-expense-categories"],
+    queryFn: () => myExpensesService.categories(),
     enabled: open,
   });
 
@@ -290,7 +303,22 @@ function NewClaimDialog({
    * employee a "create a category" link would hand them a 403 and imply they had
    * lost some privilege, when in fact they were never going to be allowed it.
    */
-  const categoriesEmpty = !categories.isLoading && (categories.data ?? []).length === 0;
+  /*
+   * A FAILED request is not an empty list, and must not be reported as one.
+   *
+   * `categoriesEmpty` deliberately excludes the error case. A dropdown with nothing
+   * in it looks identical either way, so conflating them is how a permissions
+   * fault presents itself as a data problem: a 403 left `data` undefined, the
+   * control looked empty, and the page told the person filing that their company
+   * had no categories and to go create one. Telling someone to fix a permissions
+   * fault by editing data is worse than showing nothing, because they will do it
+   * and it will not help. Retry is the only action that can, so it is the only one
+   * offered here.
+   */
+  const categoriesFailed = categories.isError;
+  const categoriesEmpty =
+    !categories.isLoading && !categoriesFailed && (categories.data ?? []).length === 0;
+
   const canManageCategories = perms.isOrgAdmin || perms.approve_expenses === true;
 
   // Advisory only. The server re-checks both of these, and it is the server's
@@ -407,6 +435,21 @@ function NewClaimDialog({
        * backend would actually let create one, because offering a control that
        * answers 403 is worse than not offering it.
        */}
+      {categoriesFailed ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+          <p className="text-xs text-destructive">
+            {t("expenses.categoriesLoadFailed")}
+          </p>
+          <button
+            type="button"
+            onClick={() => void categories.refetch()}
+            className="mt-1 text-xs font-medium text-primary underline underline-offset-2"
+          >
+            {t("expenses.retryLoadCategories")}
+          </button>
+        </div>
+      ) : null}
+
       {categoriesEmpty ? (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
           <p className="text-xs text-amber-700 dark:text-amber-500">
