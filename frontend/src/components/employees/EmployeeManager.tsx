@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { ProtectedDocumentLink } from "@/components/common/ProtectedDocumentLink";
 import { EmployeeDocPicker, type StagedDoc } from "@/components/employees/EmployeeDocPicker";
+import { ManageOptionsDialog } from "@/components/employees/ManageOptionsDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +46,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TableSkeleton } from "@/routes/_app.requests";
 import { adminService, isCurrentEmployee, orgService, type EmployeeDocument, type EmployeeRecord, type ManagedOption, type Organization, type UUID } from "@/services";
 import { CONTACT_VALIDATION_LABEL, cnicError, formatCNIC, normalizeCNIC, phoneError } from "@/lib/contactFormat";
-import { formatDate, formatFileSize } from "@/lib/utils";
+import { formatDate, formatFileSize, normalizeDateInputValue } from "@/lib/utils";
 
 type EmployeeApi = {
   list: (params: { page?: number; limit?: number; search?: string; reference?: boolean }) => Promise<{
@@ -509,7 +510,7 @@ function EmployeeFormDialog({
     // payload's own fallback. Defaulting to 'active' would create an employee
     // that reads as deactivated.
     status: (editing?.status ?? "current_employee") as EmployeeRecord["status"],
-    joining_date: editing?.joining_date ?? "",
+    joining_date: normalizeDateInputValue(editing?.joining_date),
     emergency_contact: editing?.emergency_contact ?? "",
     current_salary: editing ? String(editing?.current_salary ?? "") : "",
     send_invite: false,
@@ -529,7 +530,7 @@ function EmployeeFormDialog({
       work_location: editing?.work_location ?? "",
       reporting_manager_uuid: editing?.reporting_manager_uuid ?? "",
       status: (editing?.status ?? "current_employee") as EmployeeRecord["status"],
-      joining_date: editing?.joining_date ?? "",
+      joining_date: normalizeDateInputValue(editing?.joining_date),
       emergency_contact: editing?.emergency_contact ?? "",
       current_salary: editing ? String(editing.current_salary ?? "") : "",
       send_invite: false,
@@ -1041,97 +1042,6 @@ function EmployeeFormDialog({
         onOpenChange={(o) => !o && setManageType(null)}
         type={manageType}
       />
-    </Dialog>
-  );
-}
-
-function ManageOptionsDialog({
-  open,
-  onOpenChange,
-  type,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  type: "department" | "designation" | null;
-}) {
-  const qc = useQueryClient();
-  const isDept = type === "department";
-  const title = isDept ? "Manage Departments" : "Manage Designations";
-  const { user } = useAuth();
-  const canDelete = user?.org_role === "org_admin";
-  const listQ = useQuery({
-    queryKey: [isDept ? "org-departments" : "org-designations"],
-    queryFn: () => (isDept ? orgService.departments.list() : orgService.designations.list()),
-    enabled: open,
-  });
-
-  const [name, setName] = useState("");
-  const createMut = useMutation({
-    mutationFn: (n: string) => (isDept ? orgService.departments.create(n) : orgService.designations.create(n)),
-    onSuccess: () => {
-      setName("");
-      qc.invalidateQueries({ queryKey: [isDept ? "org-departments" : "org-designations"] });
-      toast.success(`${isDept ? "Department" : "Designation"} added`);
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, "Add failed")),
-  });
-  const removeMut = useMutation({
-    mutationFn: (uuid: UUID) => (isDept ? orgService.departments.remove(uuid) : orgService.designations.remove(uuid)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [isDept ? "org-departments" : "org-designations"] });
-      toast.success("Removed");
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, "Remove failed")),
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="flex gap-2">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={`New ${isDept ? "department" : "designation"} name`}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && name.trim()) createMut.mutate(name.trim());
-              }}
-            />
-            <Button onClick={() => name.trim() && createMut.mutate(name.trim())} loading={createMut.isPending}>
-              <Plus className="mr-1.5 h-4 w-4" /> Add
-            </Button>
-          </div>
-          <div className="max-h-60 space-y-1.5 overflow-y-auto">
-            {(listQ.data ?? []).map((opt: ManagedOption) => (
-              <div key={opt.uuid} className="flex items-center justify-between rounded-md border border-border px-2 py-1.5 text-sm">
-                <span className="truncate">{opt.name}</span>
-                {canDelete ? (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeMut.mutate(opt.uuid)}
-                    loading={removeMut.isPending && removeMut.variables === opt.uuid}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                ) : null}
-              </div>
-            ))}
-            {(listQ.data ?? []).length === 0 && (
-              <p className="text-xs text-muted-foreground">No items yet.</p>
-            )}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
     </Dialog>
   );
 }

@@ -65,6 +65,16 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+/**
+ * Convert a stored API date value to the YYYY-MM-DD format expected by a date input.
+ * The API may return ISO strings such as `2025-06-01T00:00:00.000Z`.
+ */
+export function normalizeDateInputValue(value?: string | null): string {
+  if (!value) return "";
+  const match = value.trim().match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : "";
+}
+
 /** Inclusive calendar-day count between two date values (YYYY-MM-DD or ISO). */
 export function countDays(startDate: string, endDate: string): number {
   const s = startDate ? new Date(startDate.replace(" ", "T")) : new Date(NaN);

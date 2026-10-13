@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, Calculator, Download, Eye, FileUp, Lock, Mail, Phone, Pencil, Plus, Save, Trash2, Upload, UserRound, X, BriefcaseBusiness, Building2, CalendarDays } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { EmployeeDocPicker, type StagedDoc } from "@/components/employees/EmployeeDocPicker";
+import { ManageOptionsDialog } from "@/components/employees/ManageOptionsDialog";
 
 import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -45,7 +46,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { isCurrentEmployee, orgService, orgEmployeeSalaryService, salaryComponentService, type EmployeeDocument, type EmployeeRecord, type EmployeeSalaryComponent, type SalaryComponent, type SalaryHistoryEntry, type UUID } from "@/services";
-import { digitsOnly, formatCNIC, formatDate, formatDateTime, formatFileSize, resolveAssetUrl } from "@/lib/utils";
+import {
+  digitsOnly,
+  formatCNIC,
+  formatDate,
+  formatDateTime,
+  formatFileSize,
+  normalizeDateInputValue,
+  resolveAssetUrl,
+} from "@/lib/utils";
 import { DverifLoader } from "@/components/common/DvarifLoader";
 
 export const Route = createFileRoute("/_app/org/team/$uuid")({
@@ -141,12 +150,22 @@ function EmployeeDetailPage() {
     department: emp?.department ?? "",
     reporting_manager_uuid: emp?.reporting_manager_uuid ?? "",
     status: (emp?.status ?? "active") as EmployeeRecord["status"],
-    joining_date: emp?.joining_date ?? "",
+    joining_date: normalizeDateInputValue(emp?.joining_date),
     emergency_contact: emp?.emergency_contact ?? "",
   };
 
   const [form, setForm] = useState(original);
   const [stagedDocs, setStagedDocs] = useState<StagedDoc[]>([]);
+  /**
+   * Which managed-options dialog is open, if any.
+   *
+   * Added because the picker could only ever offer what already existed. With no
+   * way to create from here, correcting a wrong department meant leaving the form
+   * to go somewhere else and come back, and on this page there was no link at all,
+   * so the only remaining option was to pick from a list that may not contain the
+   * right answer.
+   */
+  const [manageType, setManageType] = useState<"department" | "designation" | null>(null);
 
   // Reset form once employee data loads (initially original has empty defaults).
   useEffect(() => {
@@ -204,8 +223,13 @@ function EmployeeDetailPage() {
       full_name: form.full_name.trim(),
       email: form.email.trim() || undefined,
       phone: form.phone.trim() || undefined,
-      designation: form.designation.trim() || undefined,
-      department: form.department.trim() || undefined,
+      // null, NOT undefined. The server guards these two with
+      // `if (designation !== undefined)`, so `undefined` drops the key from the
+      // JSON entirely and the update is skipped, which reads as "this field
+      // cannot be cleared". null reaches resolveMetaId, which resolves it to NULL
+      // and clears the column. Same shape as reporting_manager_uuid below.
+      designation: form.designation.trim() || null,
+      department: form.department.trim() || null,
       reporting_manager_uuid: form.reporting_manager_uuid || null,
       status: form.status,
       joining_date: form.joining_date || undefined,
@@ -273,6 +297,7 @@ function EmployeeDetailPage() {
           designationsQ={designationsQ}
           departmentsQ={departmentsQ}
           managersQ={managersQ}
+          onManageOptions={setManageType}
         />
       )}
 
@@ -302,7 +327,38 @@ function EmployeeDetailPage() {
           </>
         )
       )}
+
+      {/* One dialog for both lists, mounted once for the page rather than per row,
+          so opening Manage from Designation and then Department cannot leave two
+          copies stacked. It invalidates the shared ["org-designations"] and
+          ["org-departments"] queries itself, so anything added inside it is in the
+          picker the moment the dialog closes. */}
+      <ManageOptionsDialog
+        open={manageType !== null}
+        onOpenChange={(o) => !o && setManageType(null)}
+        type={manageType}
+      />
       </div>
+  );
+}
+
+function ManageOptionButton({
+  type,
+  onClick,
+}: {
+  type: "department" | "designation";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`Manage ${type}`}
+      title={`Manage ${type}`}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-primary/30 bg-primary/5 text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      onClick={onClick}
+    >
+      <Plus className="h-3.5 w-3.5" />
+    </button>
   );
 }
 
@@ -311,16 +367,25 @@ function DetailRow({
   value,
   editing,
   input,
+  labelAction,
 }: {
   label: string;
   value: ReactNode;
   editing?: boolean;
   input?: ReactNode;
+  /**
+   * Optional control beside the label: the add button on the rows whose value is
+   * picked from a list the org admin also maintains.
+   *
+   * Rendered only while editing, because that is when the choice is being made.
+   */
+  labelAction?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-1.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-      <span className="text-xs font-medium text-muted-foreground sm:w-40 sm:shrink-0">
+      <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground sm:w-44 sm:shrink-0">
         {label}
+        {editing && labelAction ? labelAction : null}
       </span>
       <div className="min-w-0 flex-1 text-right text-sm text-foreground sm:text-left">
         {editing ? input : value}
@@ -353,8 +418,8 @@ function statusDotClass(status: EmployeeRecord["status"]) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: any; setForm: (f: any) => void; original: any; designationsQ: any; departmentsQ: any; managersQ: any }) {
-  const { emp, editing, form, setForm, designationsQ, departmentsQ, managersQ } = props;
+function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: any; setForm: (f: any) => void; original: any; designationsQ: any; departmentsQ: any; managersQ: any; onManageOptions: (t: "department" | "designation") => void }) {
+  const { emp, editing, form, setForm, designationsQ, departmentsQ, managersQ, onManageOptions } = props;
 
   const initials = emp.full_name
     ?.split(" ")
@@ -505,12 +570,32 @@ function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: an
                 label="Designation"
                 value={emp.designation ?? "—"}
                 editing={editing}
+                labelAction={
+                  <ManageOptionButton
+                    type="designation"
+                    onClick={() => onManageOptions("designation")}
+                  />
+                }
                 input={
                   <Select value={form.designation} onValueChange={(v) => setForm({ ...form, designation: v })}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select designation" />
                     </SelectTrigger>
                     <SelectContent>
+                      {/*
+                          The employee's CURRENT value is offered even when it is not
+                          in the catalogue. A designation is stored as a name and can
+                          predate the list, or have been typed directly; drop it and
+                          the Select shows its placeholder while `value` holds a
+                          string no item matches, so saving the row untouched would
+                          silently clear the designation.
+                      */}
+                      {form.designation &&
+                      !(designationsQ.data ?? []).some(
+                        (d: { uuid: string; name: string }) => d.name === form.designation,
+                      ) ? (
+                        <SelectItem value={form.designation}>{form.designation}</SelectItem>
+                      ) : null}
                       {(designationsQ.data ?? []).map((d: { uuid: string; name: string }) => (
                         <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>
                       ))}
@@ -522,12 +607,24 @@ function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: an
                 label="Department"
                 value={emp.department ?? "—"}
                 editing={editing}
+                labelAction={
+                  <ManageOptionButton
+                    type="department"
+                    onClick={() => onManageOptions("department")}
+                  />
+                }
                 input={
                   <Select value={form.department} onValueChange={(v) => setForm({ ...form, department: v })}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select department" />
                     </SelectTrigger>
                     <SelectContent>
+                      {form.department &&
+                      !(departmentsQ.data ?? []).some(
+                        (d: { uuid: string; name: string }) => d.name === form.department,
+                      ) ? (
+                        <SelectItem value={form.department}>{form.department}</SelectItem>
+                      ) : null}
                       {(departmentsQ.data ?? []).map((d: { uuid: string; name: string }) => (
                         <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>
                       ))}
