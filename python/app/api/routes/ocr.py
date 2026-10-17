@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from app.schemas.ocr import OcrResponse
+from app.services.laya_engine import score_document
 from app.services.ocr_service import extractFields, extractText
 from app.utils.file_handling import _persist_upload
 
@@ -35,6 +36,12 @@ def run_ocr_extract(
     ``{"success", "data": {document_type, fields}}`` where every field carries
     {value, confidence} and unextracted required fields are marked
     "not_visible".
+
+    ``data.laya`` additionally carries the Laya decision-engine block for the
+    same text. It is advisory: only its ``document_type`` answer is calibrated
+    for HR documents, every other answer is flagged ``advisory_only``, and the
+    engine fails open (``available: false`` with a ``reason``) rather than
+    failing the extraction. See app/services/laya_engine.py.
     """
 
     if not file.filename:
@@ -45,6 +52,7 @@ def run_ocr_extract(
         tmp_path = _persist_upload(file)
         text = extractText(tmp_path)
         result = extractFields(text, document_type)
+        result["laya"] = score_document(text)
         # Observability metadata only — never the extracted values.
         request.state.document_type = result["document_type"]
         request.state.outcome = "ok"
