@@ -573,72 +573,91 @@ function AssetDetailDrawer({
         side="right"
         className="w-full max-w-2xl gap-0 overflow-y-auto p-0 sm:max-w-2xl"
       >
-        <SheetHeader className="border-b px-5 py-4 text-left">
-          <SheetTitle>{asset ? `${asset.asset_tag} — ${asset.name}` : t("loading")}</SheetTitle>
-          <SheetDescription>
+        <SheetHeader className="border-b px-6 py-5 text-left bg-card/40">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">{asset?.asset_tag}</span>
+            {asset ? (
+              <Badge variant={ASSET_STATUS_VARIANT[asset.status]} className="text-xs">
+                {t(`assets.status.${asset.status}`)}
+              </Badge>
+            ) : null}
+          </div>
+          <SheetTitle className="text-xl font-semibold mt-1">
+            {asset ? asset.name : t("loading")}
+          </SheetTitle>
+          <SheetDescription className="text-xs text-muted-foreground">
             {asset ? t("assets.detailDescription", { category: asset.category_name ?? "—" }) : ""}
           </SheetDescription>
         </SheetHeader>
 
         {detail.isLoading ? (
-          <p className="p-5 text-sm text-muted-foreground">{t("loading")}</p>
+          <p className="p-6 text-sm text-muted-foreground">{t("loading")}</p>
         ) : !asset ? (
-          <p className="p-5 text-sm text-destructive">{t("assets.notFound")}</p>
+          <p className="p-6 text-sm text-destructive">{t("assets.notFound")}</p>
         ) : (
-          <div className="space-y-6 px-5 pb-8">
-            <dl className="grid grid-cols-2 gap-2 text-sm">
-              <Detail label={t("common.status")}>
-                <Badge variant={ASSET_STATUS_VARIANT[asset.status]}>
-                  {t(`assets.status.${asset.status}`)}
-                </Badge>
-              </Detail>
-              <Detail label={t("assets.serialNumber")}>{asset.serial_number ?? "—"}</Detail>
-              <Detail label={t("assets.purchaseDate")}>
-                {asset.purchase_date ? formatDate(asset.purchase_date) : "—"}
-              </Detail>
-              <Detail label={t("assets.cost")}>{formatCurrency(asset.purchase_cost)}</Detail>
-              <Detail label={t("assets.vendor")}>{asset.vendor ?? "—"}</Detail>
-              <Detail label={t("assets.warranty")}>
-                {asset.warranty_expires_at ? formatDate(asset.warranty_expires_at) : "—"}
-              </Detail>
-            </dl>
+          <div className="space-y-6 p-6">
+            {/* Key Information Card */}
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Asset Information
+              </h3>
+              <dl className="grid grid-cols-2 gap-4 text-sm">
+                <Detail label={t("assets.serialNumber")}>{asset.serial_number ?? "—"}</Detail>
+                <Detail label={t("assets.purchaseDate")}>
+                  {asset.purchase_date ? formatDate(asset.purchase_date) : "—"}
+                </Detail>
+                <Detail label={t("assets.cost")}>{formatCurrency(asset.purchase_cost)}</Detail>
+                <Detail label={t("assets.vendor")}>{asset.vendor ?? "—"}</Detail>
+                <Detail label={t("assets.warranty")}>
+                  {asset.warranty_expires_at ? formatDate(asset.warranty_expires_at) : "—"}
+                </Detail>
+                {asset.model_details ? (
+                  <Detail label={t("assets.modelDetails") || "Model Details"}>
+                    {asset.model_details}
+                  </Detail>
+                ) : null}
+              </dl>
+            </div>
 
-            {/* ---- notes ----
-                Notes are not decoration here. retireAsset APPENDS "Retired: <reason>"
-                to this column, so on a scrapped asset this is the only place the
-                reason is readable — and the edit menu item is hidden for retired
-                rows, so the drawer is the only place it could ever appear. */}
+            {/* Notes */}
             {asset.notes ? (
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">{t("assets.notes")}</h3>
-                <p className="whitespace-pre-wrap rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <section className="rounded-xl border bg-card p-4 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {t("assets.notes")}
+                </h3>
+                <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm text-foreground">
                   {asset.notes}
                 </p>
               </section>
             ) : null}
 
-            {/* ---- custody history ---- */}
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">{t("assets.custodyHistory")}</h3>
+            {/* Custody history */}
+            <section className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-sm font-semibold">{t("assets.custodyHistory")}</h3>
               {asset.assignments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t("assets.neverAssigned")}</p>
+                <p className="text-sm text-muted-foreground italic">{t("assets.neverAssigned")}</p>
               ) : (
-                <ul className="space-y-1 text-sm">
+                <ul className="space-y-2">
                   {asset.assignments.map((a) => (
-                    <li key={a.uuid} className="flex items-start justify-between gap-2">
-                      <span>
-                        {a.employee_name}
-                        <span className="block text-xs text-muted-foreground">
+                    <li
+                      key={a.uuid}
+                      className="flex items-start justify-between gap-3 rounded-lg border bg-muted/20 p-2.5 text-sm"
+                    >
+                      <div>
+                        <span className="font-medium text-foreground">{a.employee_name}</span>
+                        <span className="block text-xs text-muted-foreground mt-0.5">
                           {formatDateTime(a.assigned_at)}
                           {a.returned_at
                             ? ` — ${t("assets.returned")} ${formatDateTime(a.returned_at)}`
                             : ""}
                         </span>
-                      </span>
+                      </div>
                       {!a.returned_at ? (
-                        <Badge variant="secondary">{t("assets.currentHolder")}</Badge>
+                        <Badge variant="secondary" className="shrink-0 text-xs">
+                          {t("assets.currentHolder")}
+                        </Badge>
                       ) : a.return_condition && a.return_condition !== "good" ? (
-                        <Badge variant="outline">
+                        <Badge variant="outline" className="shrink-0 text-xs">
                           {t(`assets.condition.${a.return_condition}`)}
                         </Badge>
                       ) : null}
@@ -648,29 +667,29 @@ function AssetDetailDrawer({
               )}
             </section>
 
-            {/* ---- maintenance ---- */}
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">{t("assets.maintenance")}</h3>
+            {/* Maintenance */}
+            <section className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-sm font-semibold">{t("assets.maintenance")}</h3>
               {asset.maintenance.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t("assets.noMaintenance")}</p>
+                <p className="text-sm text-muted-foreground italic">{t("assets.noMaintenance")}</p>
               ) : (
                 <ul className="space-y-3">
                   {asset.maintenance.map((job) => (
-                    <li key={job.uuid} className="rounded-md border p-3 text-sm">
+                    <li key={job.uuid} className="rounded-xl border bg-muted/20 p-3.5 text-sm space-y-2">
                       <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium">{job.title}</span>
-                        <Badge variant={job.status === "open" ? "outline" : "secondary"}>
+                        <span className="font-medium text-foreground">{job.title}</span>
+                        <Badge variant={job.status === "open" ? "outline" : "secondary"} className="shrink-0 text-xs">
                           {t(`assets.jobStatus.${job.status}`)}
                         </Badge>
                       </div>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {job.vendor ?? "—"}
                         {job.cost != null ? ` · ${formatCurrency(job.cost)}` : ""} ·{" "}
                         {formatDateTime(job.reported_at)}
                       </p>
 
                       {job.completion_notes ? (
-                        <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                        <p className="whitespace-pre-wrap rounded-md bg-background/80 p-2 text-xs text-muted-foreground border">
                           {job.completion_notes}
                         </p>
                       ) : null}
@@ -680,7 +699,7 @@ function AssetDetailDrawer({
                       ))}
 
                       {activeJob === job.uuid ? (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-3 pt-2 border-t space-y-2">
                           <FileDropzone
                             value={jobFiles}
                             onChange={setJobFiles}
@@ -697,12 +716,13 @@ function AssetDetailDrawer({
                           </Button>
                         </div>
                       ) : (
-                        <div className="mt-2 flex flex-wrap gap-2">
+                        <div className="mt-3 flex flex-wrap gap-2 pt-1 border-t border-border/50">
                           {job.status === "open" ? (
                             <>
                               <Button
                                 size="sm"
                                 variant="outline"
+                                className="h-8 text-xs"
                                 onClick={() =>
                                   closeJob.mutate({ jobUuid: job.uuid, status: "completed" })
                                 }
@@ -710,16 +730,10 @@ function AssetDetailDrawer({
                               >
                                 {t("assets.markRepaired")}
                               </Button>
-                              {/* Cancel is not the same as complete, and offering only
-                                  "complete" made a false record: a job raised in error,
-                                  or one the asset turned out not to need, could only be
-                                  closed as a repair that happened. It also matters to
-                                  maintenance_spend, which counts COMPLETED jobs - so a
-                                  wrongly completed job permanently inflates the money
-                                  the dashboard reports as spent. */}
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                className="h-8 text-xs text-muted-foreground"
                                 onClick={() =>
                                   closeJob.mutate({ jobUuid: job.uuid, status: "cancelled" })
                                 }
@@ -730,6 +744,7 @@ function AssetDetailDrawer({
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                className="h-8 text-xs"
                                 onClick={() => setActiveJob(job.uuid)}
                               >
                                 {t("assets.addInvoice")}
@@ -749,33 +764,36 @@ function AssetDetailDrawer({
               ) : null}
             </section>
 
-            {/* ---- receipts ---- */}
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">{t("assets.receipts")}</h3>
+            {/* Receipts */}
+            <section className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-sm font-semibold">{t("assets.receipts")}</h3>
               {asset.receipts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t("assets.noReceipts")}</p>
+                <p className="text-sm text-muted-foreground italic">{t("assets.noReceipts")}</p>
               ) : (
-                asset.receipts.map((r) => (
-                  <AttachmentRow key={r.uuid} file={r} refresh={refreshDetail} />
-                ))
+                <div className="space-y-2">
+                  {asset.receipts.map((r) => (
+                    <AttachmentRow key={r.uuid} file={r} refresh={refreshDetail} />
+                  ))}
+                </div>
               )}
 
-              <FileDropzone
-                value={receiptFiles}
-                onChange={setReceiptFiles}
-                label={t("assets.purchaseReceipt")}
-                accept=".pdf,.jpg,.jpeg,.png"
-                maxFiles={3}
-              />
-              <Button
-                size="sm"
-                className="mt-2"
-                disabled={receiptFiles.length === 0 || uploadReceipt.isPending}
-                onClick={() => uploadReceipt.mutate()}
-              >
-                <Download className="mr-2 h-4 w-4" />
-                {t("assets.upload")}
-              </Button>
+              <div className="pt-2 border-t space-y-2">
+                <FileDropzone
+                  value={receiptFiles}
+                  onChange={setReceiptFiles}
+                  label={t("assets.purchaseReceipt")}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  maxFiles={3}
+                />
+                <Button
+                  size="sm"
+                  disabled={receiptFiles.length === 0 || uploadReceipt.isPending}
+                  onClick={() => uploadReceipt.mutate()}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  {t("assets.upload")}
+                </Button>
+              </div>
               {uploadReceipt.isError ? (
                 <p className="mt-2 text-sm text-destructive">
                   {apiErrorMessage(uploadReceipt.error, t("assets.uploadFailed"))}

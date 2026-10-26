@@ -36,6 +36,7 @@ import myResignationRoutes from "./myResignation.routes.js";
 import attendanceRoutes from "./attendance.routes.js";
 import salarySelfRoutes from "./salary.routes.js";
 import supportRoutes from "./support.routes.js";
+import unifiedSupportRoutes from "./support.unified.routes.js";
 import adminSupport from "./admin/support.routes.js";
 import orgSubscriptionRoutes from "./orgSubscription.routes.js";
 import paymentWebhookRoutes from "./paymentWebhook.routes.js";
@@ -71,6 +72,7 @@ router.use("/webhooks/payment-gateway", paymentWebhookRoutes);
 
 router.use("/org", orgRoutes);
 router.use("/org/support", supportRoutes);
+router.use("/support", unifiedSupportRoutes);
 router.use("/org/subscription", orgSubscriptionRoutes);
 
 // Unified login (determines admin vs user automatically)

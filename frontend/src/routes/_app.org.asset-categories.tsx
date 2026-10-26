@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Pencil, Plus, Trash2, FolderTree } from "lucide-react";
+import { Eye, FolderTree, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -11,6 +11,14 @@ import { FormDialog } from "@/components/hr/FormDialog";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
 import { assetCategoriesService, type AssetCategory } from "@/services";
@@ -42,6 +50,7 @@ type CategoryForm = {
 function AssetCategoriesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const [viewing, setViewing] = useState<AssetCategory | null>(null);
   const [editing, setEditing] = useState<AssetCategory | null>(null);
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState<AssetCategory | null>(null);
@@ -81,9 +90,6 @@ function AssetCategoriesPage() {
       render: (r) => (
         <div className="min-w-0">
           <p className="truncate font-medium">{r.name}</p>
-          {r.description ? (
-            <p className="truncate text-xs text-muted-foreground">{r.description}</p>
-          ) : null}
         </div>
       ),
     },
@@ -116,6 +122,14 @@ function AssetCategoriesPage() {
       header: "",
       render: (r) => (
         <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            title={t("common.view")}
+            onClick={() => setViewing(r)}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -189,6 +203,11 @@ function AssetCategoriesPage() {
         />
       </div>
 
+      <ViewCategoryDialog
+        category={viewing}
+        onOpenChange={(v) => !v && setViewing(null)}
+      />
+
       <CategoryDialog
         open={open}
         onOpenChange={(v) => {
@@ -215,6 +234,74 @@ function AssetCategoriesPage() {
         onOpenChange={(v) => !v && setDeleting(null)}
       />
     </ModuleGate>
+  );
+}
+
+function ViewCategoryDialog({
+  category,
+  onOpenChange,
+}: {
+  category: AssetCategory | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  if (!category) return null;
+
+  return (
+    <Dialog open={Boolean(category)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <div className="flex items-center justify-between pr-4">
+            <DialogTitle className="text-lg font-semibold">{category.name}</DialogTitle>
+            <Badge variant={category.is_active ? "default" : "secondary"}>
+              {category.is_active ? t("common.active") : t("common.inactive")}
+            </Badge>
+          </div>
+          <DialogDescription>
+            {t("assets.categoriesDescription")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="rounded-lg border bg-muted/30 p-3.5">
+            <p className="text-xs font-medium text-muted-foreground mb-1">
+              {t("common.description")}
+            </p>
+            <p className="text-sm whitespace-pre-wrap text-foreground">
+              {category.description || (
+                <span className="text-muted-foreground italic">No description provided</span>
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-lg border p-3">
+              <span className="text-xs text-muted-foreground block mb-0.5">
+                {t("assets.assetsInCategory")}
+              </span>
+              <span className="font-semibold text-base">{category.asset_count ?? 0}</span>
+            </div>
+
+            <div className="rounded-lg border p-3">
+              <span className="text-xs text-muted-foreground block mb-0.5">
+                {t("assets.defaultLifespan")}
+              </span>
+              <span className="font-semibold text-base">
+                {category.default_lifespan_months
+                  ? t("assets.months", { count: category.default_lifespan_months })
+                  : "—"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t("common.close")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

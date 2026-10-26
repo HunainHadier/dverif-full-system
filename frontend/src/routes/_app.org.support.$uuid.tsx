@@ -9,13 +9,20 @@ import { useAuth } from "@/lib/auth";
 import { authStore } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { PriorityBadge } from "./_app.org.support";
+import { AssignmentBadge, CategoryBadge, PriorityBadge } from "./_app.org.support";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/utils";
-import { orgSupportService, type SupportReply } from "@/services";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { apiErrorMessage, cn, formatDateTime } from "@/lib/utils";
+import { orgSupportService, type SupportReply, type SupportTicket } from "@/services";
 
 export const Route = createFileRoute("/_app/org/support/$uuid")({
   beforeLoad: () => {
@@ -50,7 +57,17 @@ function OrgSupportDetailPage() {
       setMessage("");
       qc.invalidateQueries({ queryKey: ["orgSupport", uuid] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? t("common.failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, t("common.failed"))),
+  });
+
+  const updateStatus = useMutation({
+    mutationFn: (status: SupportTicket["status"]) => orgSupportService.updateStatus(uuid, status),
+    onSuccess: () => {
+      toast.success(t("supportTickets.statusUpdated"));
+      qc.invalidateQueries({ queryKey: ["orgSupport", uuid] });
+      qc.invalidateQueries({ queryKey: ["orgSupport"] });
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("common.failed"))),
   });
 
   if (detail.isLoading) {
@@ -64,6 +81,9 @@ function OrgSupportDetailPage() {
   const { ticket, replies } = detail.data;
   const isClosed = ticket.status === "closed";
   const currentUserUuid = user?.uuid;
+  const canResolve =
+    user?.org_role === "org_admin" &&
+    (ticket.assigned_to_role === "org_admin" || ticket.raised_by_uuid === user.uuid);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -82,6 +102,8 @@ function OrgSupportDetailPage() {
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <StatusBadge status={ticket.status} />
                 <PriorityBadge priority={ticket.priority} />
+                <CategoryBadge category={ticket.category} />
+                <AssignmentBadge role={ticket.assigned_to_role} />
                 <span>
                   {t("supportTickets.createdAt")}: {formatDateTime(ticket.created_at)}
                 </span>
@@ -94,6 +116,29 @@ function OrgSupportDetailPage() {
           <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
             {ticket.description}
           </p>
+
+          {canResolve ? (
+            <div className="mt-5 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center">
+              <Label className="text-sm text-muted-foreground">
+                {t("supportTickets.statusColumn")}
+              </Label>
+              <Select
+                value={ticket.status}
+                onValueChange={(v) => updateStatus.mutate(v as SupportTicket["status"])}
+                disabled={updateStatus.isPending}
+              >
+                <SelectTrigger className="w-full sm:w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">{t("status.open")}</SelectItem>
+                  <SelectItem value="in_progress">{t("status.in_progress")}</SelectItem>
+                  <SelectItem value="resolved">{t("status.resolved")}</SelectItem>
+                  <SelectItem value="closed">{t("status.closed")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -108,7 +153,11 @@ function OrgSupportDetailPage() {
           ) : (
             <div className="space-y-4">
               {replies.map((r: SupportReply) => (
-                <ReplyBubble key={r.uuid} reply={r} isCurrentUser={currentUserUuid === r.replied_by_uuid} />
+                <ReplyBubble
+                  key={r.uuid}
+                  reply={r}
+                  isCurrentUser={currentUserUuid === r.replied_by_uuid}
+                />
               ))}
             </div>
           )}
@@ -145,20 +194,14 @@ function OrgSupportDetailPage() {
   );
 }
 
-function ReplyBubble({
-  reply,
-  isCurrentUser,
-}: {
-  reply: SupportReply;
-  isCurrentUser: boolean;
-}) {
+function ReplyBubble({ reply, isCurrentUser }: { reply: SupportReply; isCurrentUser: boolean }) {
   const { t } = useTranslation();
   const fromSupport = reply.replied_by_type === "admin";
   const name = fromSupport
     ? t("supportTickets.supportTeam")
     : isCurrentUser
       ? t("supportTickets.you")
-      : reply.replied_by_name ?? reply.replied_by_email ?? "User";
+      : (reply.replied_by_name ?? reply.replied_by_email ?? "User");
   const initials = (name || "?").slice(0, 1).toUpperCase();
 
   return (
@@ -166,9 +209,7 @@ function ReplyBubble({
       <div
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-          fromSupport
-            ? "bg-primary/10 text-primary"
-            : "bg-muted text-muted-foreground",
+          fromSupport ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
         )}
       >
         {initials}
@@ -181,9 +222,13 @@ function ReplyBubble({
       >
         <div className="mb-1 flex items-baseline gap-2">
           <span className="text-xs font-semibold text-foreground">{name}</span>
-          <span className="text-[10px] text-muted-foreground">{formatDateTime(reply.created_at)}</span>
+          <span className="text-[10px] text-muted-foreground">
+            {formatDateTime(reply.created_at)}
+          </span>
         </div>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{reply.message}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+          {reply.message}
+        </p>
       </div>
     </div>
   );

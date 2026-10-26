@@ -140,7 +140,7 @@ beforeEach(() => {
 const toastSpy = vi.spyOn(toast, "warning");
 
 describe("Add Candidate - resume upload", () => {
-  it("reads a dropped CV and fills only the fields the extractor can produce", async () => {
+  it("reads a dropped CV and fills the fields the extractor can produce", async () => {
     vi_mock.resumeParse.mockResolvedValue({
       name: "Ayesha Siddiqui",
       name_confidence: "high",
@@ -148,6 +148,10 @@ describe("Add Candidate - resume upload", () => {
       cnic_confidence: "high",
       designation: "Senior Accountant",
       designation_confidence: "low",
+      email: "ayesha@example.com",
+      email_confidence: "high",
+      phone: "+92 322 1315218",
+      phone_confidence: "high",
     });
 
     const user = userEvent.setup();
@@ -168,9 +172,13 @@ describe("Add Candidate - resume upload", () => {
       "4210123456789",
     );
 
-    // Nothing invented. There is no extractor for either of these in this system.
-    expect((within(dialog).getByLabelText("Email") as HTMLInputElement).value).toBe("");
-    expect((within(dialog).getByLabelText("Phone") as HTMLInputElement).value).toBe("");
+    // The header parser reads these alongside the name.
+    expect((within(dialog).getByLabelText(/^Email/) as HTMLInputElement).value).toBe(
+      "ayesha@example.com",
+    );
+    expect((within(dialog).getByLabelText(/^Phone/) as HTMLInputElement).value).toBe(
+      "+92 322 1315218",
+    );
   });
 
   it("attaches the CV to the candidate it created, in that order", async () => {
@@ -181,6 +189,10 @@ describe("Add Candidate - resume upload", () => {
       cnic_confidence: null,
       designation: null,
       designation_confidence: null,
+      email: "ayesha@example.com",
+      email_confidence: "high",
+      phone: null,
+      phone_confidence: null,
     });
 
     const user = userEvent.setup();
@@ -208,6 +220,7 @@ describe("Add Candidate - resume upload", () => {
     const dialog = await openAddDialog(user);
 
     await user.type(within(dialog).getByLabelText(/full name/i), "Bilal Ahmed");
+    await user.type(within(dialog).getByLabelText(/^Email/), "bilal@example.com");
     await user.upload(fileInput(dialog), cvFile());
 
     // Failure stated next to the control that failed, not as a toast alone.
@@ -266,6 +279,7 @@ describe("Add Candidate - resume upload", () => {
     expect(within(dialog).getByText(/no cv attached/i)).toBeInTheDocument();
 
     await user.type(within(dialog).getByLabelText(/full name/i), "Hassan Raza");
+    await user.type(within(dialog).getByLabelText(/^Email/), "hassan@example.com");
     await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(vi_mock.candidateCreate).toHaveBeenCalledTimes(1));
@@ -282,6 +296,10 @@ describe("Add Candidate - resume upload", () => {
       cnic_confidence: null,
       designation: null,
       designation_confidence: null,
+      email: "ayesha@example.com",
+      email_confidence: "high",
+      phone: null,
+      phone_confidence: null,
     });
     vi_mock.resumeUpload.mockRejectedValue(new Error("upload failed"));
 

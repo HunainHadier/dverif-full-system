@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,7 +35,7 @@ import { cnicError, formatCNIC, normalizeCNIC, phoneError } from "@/lib/contactF
 import { apiErrorMessage, formatDate } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/recruitment/candidates")({
-  head: () => ({ meta: [{ title: "Candidates — Dverif" }] }),
+  head: () => ({ meta: [{ title: "Candidates â€” Dverif" }] }),
   component: CandidatesPage,
 });
 
@@ -45,7 +45,7 @@ const PAGE_SIZE = 20;
  * Stage -> label key as an explicit lookup, not a template.
  *
  * `t(`recruitment.stageLabel.${c.stage}`)` would be shorter, but the i18n audit
- * script cannot see a computed key and would report all six as unreferenced — so a
+ * script cannot see a computed key and would report all six as unreferenced â€” so a
  * stage dropped from en.json would go unnoticed. Naming them keeps them auditable,
  * the same reason expenses.status.* is spelled out on the claims page.
  */
@@ -71,7 +71,7 @@ const STAGE_LABEL: Record<CandidateStage, string> = {
  * /org/recruitment/pipeline rather than given a shortcut.
  *
  * Filtering by stage happens server-side via the list params, not by filtering the
- * returned page in the browser — otherwise selecting `rejected` on page 3 would show
+ * returned page in the browser â€” otherwise selecting `rejected` on page 3 would show
  * nothing while rejected candidates existed, which reads as data loss.
  */
 export function CandidatesPage() {
@@ -114,7 +114,7 @@ export function CandidatesPage() {
     void qc.invalidateQueries({ queryKey: ["recruitment-openings"] });
   };
 
-  /** Every filter change returns to page 1 — see the same reasoning on claims. */
+  /** Every filter change returns to page 1 â€” see the same reasoning on claims. */
   const resetPage =
     <T,>(setter: (v: T) => void) =>
     (v: T) => {
@@ -129,14 +129,14 @@ export function CandidatesPage() {
       render: (c) => (
         <div>
           <p className="font-medium">{c.full_name}</p>
-          <p className="text-xs text-muted-foreground">{c.email ?? "—"}</p>
+          <p className="text-xs text-muted-foreground">{c.email ?? "â€”"}</p>
         </div>
       ),
     },
     {
       key: "opening",
       header: t("recruitment.opening"),
-      render: (c) => <span className="text-sm">{c.opening_title ?? "—"}</span>,
+      render: (c) => <span className="text-sm">{c.opening_title ?? "â€”"}</span>,
     },
     {
       key: "stage",
@@ -148,7 +148,7 @@ export function CandidatesPage() {
     {
       key: "rating",
       header: t("recruitment.rating"),
-      render: (c) => <span className="font-mono text-xs">{c.rating ?? "—"}</span>,
+      render: (c) => <span className="font-mono text-xs">{c.rating ?? "â€”"}</span>,
     },
     {
       key: "interviews",
@@ -238,9 +238,9 @@ export function CandidatesPage() {
           /*
            * HIDDEN WHEN THERE IS ONLY ONE PAGE.
 
-           "Page 1 of 1 · 3 results" with a greyed Previous and Next is noise that
+           "Page 1 of 1 Â· 3 results" with a greyed Previous and Next is noise that
            states nothing: both buttons are already disabled at the boundary, so the
-           control communicates only that there is nothing to page through — which the
+           control communicates only that there is nothing to page through â€” which the
            absence of a scrollbar already said.
 
            Done HERE rather than in the shared `Pagination`, because no other module in
@@ -299,11 +299,11 @@ type AddForm = {
 /**
  * What the CV read gave us, per field.
  *
- * SHAPED BY WHAT THE EXTRACTOR CAN ACTUALLY DO, not by what the candidate form
- * collects. The document service reads name / cnic / designation and nothing
- * else — no parser in this system reads a phone number or an email out of a CV,
- * so `parsed` has no `phone` key and the form does not pretend to have one. An
- * object with a `phone: null` here would be a promise the service never keeps.
+ * SHAPED BY WHAT THE EXTRACTOR CAN ACTUALLY DO. The document service reads the
+ * header of a CV as well as labelled fields: name, email, phone and CNIC are
+ * available, and designation is kept for the "read as" hint even though the
+ * candidate form has no separate designation input. Cover letter and notes are
+ * not extractable and are never invented here.
  */
 type ParsedResume = {
   name?: string | null;
@@ -312,6 +312,10 @@ type ParsedResume = {
   cnic_confidence?: "high" | "low" | "not_visible" | null;
   designation?: string | null;
   designation_confidence?: "high" | "low" | "not_visible" | null;
+  email?: string | null;
+  email_confidence?: "high" | "low" | "not_visible" | null;
+  phone?: string | null;
+  phone_confidence?: "high" | "low" | "not_visible" | null;
 };
 
 /**
@@ -374,7 +378,7 @@ function AddCandidateDialog({
    * The candidate form used to have no CNIC or phone validation at all, while the
    * employee form validated the same two fields and the sub-admin form validated
    * them a third way. Three forms, three rule sets, one database column that
-   * eventually receives all of them — so a CNIC that was refused on one screen
+   * eventually receives all of them â€” so a CNIC that was refused on one screen
    * was stored from another. The shared module supplies one rule; this is the
    * candidate screen's use of it.
    *
@@ -400,7 +404,7 @@ function AddCandidateDialog({
 
   /*
    * THE CV IS HELD OUTSIDE react-hook-form, because it is not one of the form's
-   * fields — react-hook-form registers inputs by name and watches their value,
+   * fields â€” react-hook-form registers inputs by name and watches their value,
    * and a File has neither. Its lifecycle is also separate from the form's: the
    * dialog resets the inputs on open, and the CV has to be resettable
    * independently, or a recruiter who dropped the wrong file would have it
@@ -439,7 +443,7 @@ function AddCandidateDialog({
    * That ordering is the whole point of the feature: the recruiter sees what the
    * extractor found, corrects it, and saves once. If the read happened at submit
    * time the values would either be applied without review or the form would
-   * have to be re-rendered with fields the recruiter had not seen — both of
+   * have to be re-rendered with fields the recruiter had not seen â€” both of
    * which lose the review step the requirement asks for.
    *
    * The parsed values are FILLED INTO THE FORM rather than kept beside it, so
@@ -454,12 +458,17 @@ function AddCandidateDialog({
       /*
        * Only overwrite what is still empty. A recruiter who already typed a name
        * and then drops the CV should not have their typing silently replaced by
-       * an OCR reading of the same thing — that is a surprise the resume feature
+       * an OCR reading of the same thing - that is a surprise the resume feature
        * was specifically asked to avoid. `cnic` is degraphed before it is set
        * because the extractor returns the dashes, and a CNIC input holding them
        * would then submit them and fail the digits-only check.
        */
       if (fields.name && !form.getValues("full_name")) form.setValue("full_name", fields.name);
+      if (fields.email && !form.getValues("email")) form.setValue("email", fields.email);
+      if (fields.phone && !form.getValues("phone")) {
+        form.setValue("phone", fields.phone);
+        setIdentityErrors((prev) => ({ ...prev, phone: undefined }));
+      }
       if (fields.cnic && !form.getValues("cnic")) {
         // Degraphed before it enters the input. The extractor returns the dashed
         // form because that is how a CNIC is printed and read; storing that
@@ -483,7 +492,7 @@ function AddCandidateDialog({
    * Save the candidate, then attach the CV.
    *
    * TWO STEPS because the CV attaches to a candidate row that has to exist
-   * first — the endpoint is `POST /org/candidates/:uuid/resume`. Chaining them
+   * first â€” the endpoint is `POST /org/candidates/:uuid/resume`. Chaining them
    * here rather than adding a multipart create endpoint keeps the candidate
    * create as pure JSON (and therefore unchanged for every other caller), and
    * reuses the existing upload route with its audit trail.
@@ -601,7 +610,7 @@ function AddCandidateDialog({
          having the form read the document for them; the reverse order means they
          fill four fields by hand and then notice the feature that would have
          filled them. Placed here it is the first thing seen, which is where
-         "optional" earns its keep — it is skipped as fast as it is used.
+         "optional" earns its keep â€” it is skipped as fast as it is used.
          */}
         <div className="space-y-2">
           <FileDropzone
@@ -631,7 +640,7 @@ function AddCandidateDialog({
 
           {/*
            * THE FAILURE LINE CARRIES THE RETRY, so the two things the recruiter
-           * needs — what happened, and what to do — are one object rather than a
+           * needs â€” what happened, and what to do â€” are one object rather than a
            * toast that vanishes and a control that only exists somewhere else.
            */}
           {parseFailed && !parse.isPending ? (
@@ -677,54 +686,61 @@ function AddCandidateDialog({
           <ParsedFieldHint value={parsed?.cnic} confidence={parsed?.cnic_confidence} />
         </div>
 
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidateName")} *</span>
-          <input
-            {...form.register("full_name", { required: true })}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidateEmail")} *</span>
-          <input
-            type="email"
-            {...form.register("email", { required: true })}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidatePhone")}</span>
-          <input
-            {...form.register("phone")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            aria-invalid={Boolean(identityErrors.phone)}
-          />
-          {identityErrors.phone ? (
-            <span className="text-xs text-destructive">{identityErrors.phone}</span>
-          ) : null}
-        </label>
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("recruitment.candidateCnic")}</span>
-          <input
-            {...form.register("cnic")}
-            /* The mask is applied on CHANGE so the value the recruiter sees is
-               always the dashed form; `normalizeCNIC` removes it on the way out.
-               `parseCNIC` is only the mask, so pasting 13 digits formats itself
-               rather than being truncated. */
-            inputMode="numeric"
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            aria-invalid={Boolean(identityErrors.cnic)}
-            onChange={(e) => {
-              form.setValue("cnic", formatCNIC(e.target.value));
-              setIdentityErrors((prev) => ({ ...prev, cnic: cnicError(e.target.value) ?? undefined }));
-            }}
-          />
-          {identityErrors.cnic ? (
-            <span className="text-xs text-destructive">{identityErrors.cnic}</span>
-          ) : (
-            <ParsedFieldHint value={parsed?.cnic} confidence={parsed?.cnic_confidence} />
-          )}
-        </label>
+        {/* Row: Full Name + Email */}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">{t("recruitment.candidateName")} *</span>
+            <input
+              {...form.register("full_name", { required: true })}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">{t("recruitment.candidateEmail")} *</span>
+            <input
+              type="email"
+              {...form.register("email", { required: true })}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            />
+            <ParsedFieldHint value={parsed?.email} confidence={parsed?.email_confidence} />
+          </label>
+        </div>
+
+        {/* Row: Phone + CNIC */}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">{t("recruitment.candidatePhone")}</span>
+            <input
+              {...form.register("phone")}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+              aria-invalid={Boolean(identityErrors.phone)}
+            />
+            {identityErrors.phone ? (
+              <span className="text-xs text-destructive">{identityErrors.phone}</span>
+            ) : (
+              <ParsedFieldHint value={parsed?.phone} confidence={parsed?.phone_confidence} />
+            )}
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">{t("recruitment.candidateCnic")}</span>
+            <input
+              {...form.register("cnic")}
+              inputMode="numeric"
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+              aria-invalid={Boolean(identityErrors.cnic)}
+              onChange={(e) => {
+                form.setValue("cnic", formatCNIC(e.target.value));
+                setIdentityErrors((prev) => ({ ...prev, cnic: cnicError(e.target.value) ?? undefined }));
+              }}
+            />
+            {identityErrors.cnic ? (
+              <span className="text-xs text-destructive">{identityErrors.cnic}</span>
+            ) : (
+              <ParsedFieldHint value={parsed?.cnic} confidence={parsed?.cnic_confidence} />
+            )}
+          </label>
+        </div>
+
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.coverLetter")}</span>
           <textarea
@@ -752,7 +768,7 @@ function AddCandidateDialog({
  * The candidate's record: how they applied, what they wrote, and who they met.
  *
  * Read-only, like the list. The stage change lives on the board, and resumes are
- * shown rather than uploaded here — attaching a file to someone's application is a
+ * shown rather than uploaded here â€” attaching a file to someone's application is a
  * deliberate act that belongs on the row where the name is visible, not in a sheet
  * that slid over it.
  */
@@ -806,11 +822,11 @@ function CandidateSheet({
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.candidateEmail")}</dt>
-                <dd>{c.email ?? "—"}</dd>
+                <dd>{c.email ?? "â€”"}</dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.candidatePhone")}</dt>
-                <dd>{c.phone ?? "—"}</dd>
+                <dd>{c.phone ?? "â€”"}</dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.candidateCnic")}</dt>
@@ -818,7 +834,7 @@ function CandidateSheet({
                     digits, but a CNIC is read by its grouping and the recruiter
                     comparing this against a CV is comparing against the dashed
                     version they see on the paper. */}
-                <dd>{c.cnic ? formatCNIC(c.cnic) : "—"}</dd>
+                <dd>{c.cnic ? formatCNIC(c.cnic) : "â€”"}</dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-muted-foreground">{t("recruitment.appliedOn")}</dt>
@@ -868,8 +884,8 @@ function CandidateSheet({
                 </ul>
               ) : (
                 /*
-                 * NOT `noCandidates`. That key is the list's empty state — "no
-                 * candidates yet" — and reusing it inside the resume section said the
+                 * NOT `noCandidates`. That key is the list's empty state â€” "no
+                 * candidates yet" â€” and reusing it inside the resume section said the
                  * opposite of what was true: the candidate IS on the page, and it is
                  * their RESUME that is missing. A recruiter reading "No candidates yet"
                  * under a candidate's name has no way to tell a copy-paste slip from a

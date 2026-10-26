@@ -22,14 +22,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { PageHeader } from "@/components/common/PageHeader";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   CLAIM_STATUS_VARIANT,
   expenseCategoriesService,
@@ -98,14 +91,17 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
 function ExpenseClaimsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const [tab, setTab] = useState("claims");
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<ClaimStatus | "">("");
   const [category, setCategory] = useState("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ExpenseClaim | null>(null);
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
-  const [categoryOpen, setCategoryOpen] = useState(false);
-  const [manageOpen, setManageOpen] = useState(false);
+  const [showInactiveCategories, setShowInactiveCategories] = useState(false);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<ExpenseCategory | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState<ExpenseCategory | null>(null);
 
   const list = useQuery({
     queryKey: ["expense-claims", page, status, category],
@@ -119,14 +115,38 @@ function ExpenseClaimsPage() {
   });
 
   const categories = useQuery({
-    queryKey: ["expense-categories", false],
-    queryFn: () => expenseCategoriesService.list(false),
+    queryKey: ["expense-categories", showInactiveCategories],
+    queryFn: () => expenseCategoriesService.list(showInactiveCategories),
   });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["expense-claims"] });
-    void qc.invalidateQueries({ queryKey: ["expense-category"] });
+    void qc.invalidateQueries({ queryKey: ["expense-categories"] });
+    void qc.invalidateQueries({ queryKey: ["my-expense-categories"] });
   };
+
+  const removeCategory = useMutation({
+    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.remove(row.uuid),
+    onSuccess: (res) => {
+      invalidate();
+      setDeletingCategory(null);
+      toast.success(
+        res.claims_preserved > 0
+          ? t("expenses.categoryRemovedWithClaims", { count: res.claims_preserved })
+          : t("expenses.categoryRemoved"),
+      );
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryDeleteFailed"))),
+  });
+
+  const restoreCategory = useMutation({
+    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.restore(row.uuid),
+    onSuccess: () => {
+      invalidate();
+      toast.success(t("expenses.categoryRestored"));
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryUpdateFailed"))),
+  });
 
   /**
    * Settle a direct claim by hand.
@@ -323,6 +343,105 @@ function ExpenseClaimsPage() {
     [list.data],
   );
 
+  const categoryColumns: DataTableColumn<ExpenseCategory>[] = [
+    {
+      key: "name",
+      header: t("expenses.categoryName"),
+      render: (r) => {
+        const active = Boolean(Number(r.is_active));
+        return (
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-foreground">{r.name}</span>
+              {!active ? (
+                <Badge variant="secondary" className="text-xs">
+                  {t("expenses.categoryRemovedBadge")}
+                </Badge>
+              ) : null}
+            </div>
+            {r.description ? (
+              <p className="text-xs text-muted-foreground truncate max-w-md">{r.description}</p>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "max_limit_per_claim",
+      header: t("expenses.categoryLimitLabel"),
+      render: (r) => (
+        <span className="font-mono text-xs">
+          {r.max_limit_per_claim === null
+            ? t("expenses.noLimit")
+            : formatCurrency(Number(r.max_limit_per_claim))}
+        </span>
+      ),
+    },
+    {
+      key: "requires_receipt",
+      header: t("expenses.requiresReceipt"),
+      render: (r) => (
+        <Badge variant={r.requires_receipt ? "outline" : "secondary"} className="text-xs">
+          {r.requires_receipt ? t("expenses.requiresReceipt") : t("expenses.receiptNotRequired")}
+        </Badge>
+      ),
+    },
+    {
+      key: "is_active",
+      header: t("common.status"),
+      render: (r) => {
+        const active = Boolean(Number(r.is_active));
+        return (
+          <Badge variant={active ? "default" : "secondary"} className="text-xs">
+            {active ? t("common.active") : t("expenses.categoryRemovedBadge")}
+          </Badge>
+        );
+      },
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (r) => {
+        const active = Boolean(Number(r.is_active));
+        return (
+          <div className="flex items-center justify-end gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => {
+                setEditingCategory(r);
+                setCategoryDialogOpen(true);
+              }}
+              title={t("expenses.editCategory")}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            {active ? (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setDeletingCategory(r)}
+                title={t("expenses.deleteCategory")}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={restoreCategory.isPending}
+                onClick={() => restoreCategory.mutate(r)}
+                title={t("expenses.restoreCategory")}
+              >
+                <Undo2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <ModuleGate module="expense_management">
       <div className="space-y-4">
@@ -330,63 +449,114 @@ function ExpenseClaimsPage() {
           title={t("expenses.title")}
           description={t("expenses.description")}
           actions={
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={() => setManageOpen(true)}>
-                <FolderTree className="mr-2 h-4 w-4" />
-                {t("expenses.manageCategories")}
-              </Button>
-              <Button onClick={() => setCategoryOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                {t("expenses.newCategory")}
-              </Button>
-            </div>
+            <Button
+              onClick={() => {
+                setEditingCategory(null);
+                setCategoryDialogOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              {t("expenses.newCategory")}
+            </Button>
           }
         />
 
-        <div className="flex flex-wrap items-center gap-2">
-          {CLAIM_STATUS_KEYS.map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={status === s ? "default" : "outline"}
-              onClick={() => setStatusFilter(status === s ? "" : s)}
-            >
-              {t(STATUS_LABEL[s])}
-            </Button>
-          ))}
-          <select
-            value={category}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
-            aria-label={t("expenses.category")}
-          >
-            <option value="">{t("expenses.allCategories")}</option>
-            {(categories.data ?? []).map((c) => (
-              <option key={c.uuid} value={c.uuid}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          {/* Counts only the page on screen, so it says so. Claiming a queue
-              depth it cannot see would be worse than showing none. */}
-          {pendingCount > 0 ? (
-            <span className="text-xs text-muted-foreground">
-              {t("expenses.pendingOnPage", { count: pendingCount })}
-            </span>
-          ) : null}
-        </div>
+        <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="claims">
+              <Receipt className="mr-2 h-4 w-4" />
+              {t("expenses.title")}
+              {pendingCount > 0 ? (
+                <Badge variant="outline" className="ml-2 text-xs">
+                  {pendingCount}
+                </Badge>
+              ) : null}
+            </TabsTrigger>
+            <TabsTrigger value="categories">
+              <FolderTree className="mr-2 h-4 w-4" />
+              {t("expenses.manageCategories")}
+            </TabsTrigger>
+          </TabsList>
 
-        <DataTable
-          columns={columns}
-          rows={rows}
-          loading={list.isLoading}
-          total={list.data?.total}
-          page={list.data?.page}
-          onPageChange={setPage}
-          emptyIcon={Receipt}
-          emptyTitle={t("expenses.empty")}
-          emptyDescription={t("expenses.emptyDescription")}
-        />
+          <TabsContent value="claims" className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {CLAIM_STATUS_KEYS.map((s) => (
+                <Button
+                  key={s}
+                  size="sm"
+                  variant={status === s ? "default" : "outline"}
+                  onClick={() => setStatusFilter(status === s ? "" : s)}
+                >
+                  {t(STATUS_LABEL[s])}
+                </Button>
+              ))}
+              <select
+                value={category}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+                aria-label={t("expenses.category")}
+              >
+                <option value="">{t("expenses.allCategories")}</option>
+                {(categories.data ?? []).map((c) => (
+                  <option key={c.uuid} value={c.uuid}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {pendingCount > 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  {t("expenses.pendingOnPage", { count: pendingCount })}
+                </span>
+              ) : null}
+            </div>
+
+            <DataTable
+              columns={columns}
+              rows={rows}
+              loading={list.isLoading}
+              total={list.data?.total}
+              page={list.data?.page}
+              onPageChange={setPage}
+              emptyIcon={Receipt}
+              emptyTitle={t("expenses.empty")}
+              emptyDescription={t("expenses.emptyDescription")}
+            />
+          </TabsContent>
+
+          <TabsContent value="categories" className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showInactiveCategories}
+                  onChange={(e) => setShowInactiveCategories(e.target.checked)}
+                  className="h-4 w-4 rounded border-border"
+                />
+                <span>{t("expenses.showRemovedCategories")}</span>
+              </label>
+
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingCategory(null);
+                  setCategoryDialogOpen(true);
+                }}
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                {t("expenses.newCategory")}
+              </Button>
+            </div>
+
+            <DataTable
+              columns={categoryColumns}
+              rows={categories.data ?? []}
+              loading={categories.isLoading}
+              emptyIcon={FolderTree}
+              emptyTitle={t("expenses.noCategories")}
+              emptyDescription={t("expenses.manageCategoriesDescription")}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
 
       <ClaimDetailSheet
@@ -419,8 +589,30 @@ function ExpenseClaimsPage() {
         onOpenChange={(v) => !v && setPaying(null)}
       />
 
-        <CategoryDialog open={categoryOpen} onOpenChange={setCategoryOpen} />
-        <CategoryManagerDialog open={manageOpen} onOpenChange={setManageOpen} />
+      <CategoryDialog
+        key={categoryDialogOpen ? (editingCategory?.uuid ?? "new") : "closed"}
+        open={categoryDialogOpen}
+        onOpenChange={(v) => {
+          setCategoryDialogOpen(v);
+          if (!v) setEditingCategory(null);
+        }}
+        category={editingCategory}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deletingCategory)}
+        title={t("expenses.deleteCategory")}
+        description={
+          deletingCategory
+            ? t("expenses.deleteCategoryWarning", { name: deletingCategory.name })
+            : ""
+        }
+        confirmLabel={t("expenses.deleteCategory")}
+        loading={removeCategory.isPending}
+        error={removeCategory.isError ? apiErrorMessage(removeCategory.error, t("expenses.categoryDeleteFailed")) : null}
+        onConfirm={() => deletingCategory && removeCategory.mutateAsync(deletingCategory)}
+        onOpenChange={(v) => !v && setDeletingCategory(null)}
+      />
     </ModuleGate>
   );
 }
@@ -899,216 +1091,5 @@ function CategoryDialog({
         </span>
       </label>
     </FormDialog>
-  );
-}
-
-
-/**
- * Manage the categories this org's expenses are filed against.
- *
- * SEPARATE FROM THE FILTER DROPDOWN ON PURPOSE. That control answers "show me this
- * category's claims"; this one answers "change what may be claimed". Putting Edit
- * and Delete inside a <select> means the row you are about to destroy is the one
- * you just filtered to, which is how a category with a year of claims behind it
- * gets deleted while you were looking for last month's taxi.
- *
- * DELETED CATEGORIES STAY VISIBLE, behind a toggle, and can be restored. The server
- * deactivates rather than erases (see expenseCategoriesService.remove), so a
- * mis-click costs one click to undo. Hiding removed rows outright would make that
- * irreversible in practice, because the only way back would be the API.
- */
-function CategoryManagerDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-}) {
-  const { t } = useTranslation();
-  const qc = useQueryClient();
-  const [showInactive, setShowInactive] = useState(false);
-  const [editing, setEditing] = useState<ExpenseCategory | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<ExpenseCategory | null>(null);
-
-  const list = useQuery({
-    queryKey: ["expense-categories", showInactive],
-    queryFn: () => expenseCategoriesService.list(showInactive),
-    enabled: open,
-  });
-
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ["expense-categories"] });
-    void qc.invalidateQueries({ queryKey: ["my-expense-categories"] });
-  };
-
-  const remove = useMutation({
-    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.remove(row.uuid),
-    onSuccess: (res) => {
-      invalidate();
-      setDeleting(null);
-      // Says what was KEPT, not what was destroyed. The category is retired; every
-      // claim already filed under it still resolves, and saying otherwise would
-      // make a reversible action feel like data loss.
-      toast.success(
-        res.claims_preserved > 0
-          ? t("expenses.categoryRemovedWithClaims", { count: res.claims_preserved })
-          : t("expenses.categoryRemoved"),
-      );
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryDeleteFailed"))),
-  });
-
-  const restore = useMutation({
-    mutationFn: (row: ExpenseCategory) => expenseCategoriesService.restore(row.uuid),
-    onSuccess: () => {
-      invalidate();
-      toast.success(t("expenses.categoryRestored"));
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.categoryUpdateFailed"))),
-  });
-
-  const rows = list.data ?? [];
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("expenses.manageCategories")}</DialogTitle>
-            <DialogDescription>{t("expenses.manageCategoriesDescription")}</DialogDescription>
-          </DialogHeader>
-
-          <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={(e) => setShowInactive(e.target.checked)}
-                className="h-4 w-4"
-              />
-              {t("expenses.showRemovedCategories")}
-            </label>
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              {t("expenses.newCategory")}
-            </Button>
-          </div>
-
-          {list.isLoading ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">{t("common.loading")}</p>
-          ) : (
-            <div className="max-h-[50vh] space-y-2 overflow-y-auto">
-              {rows.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  {t("expenses.noCategories")}
-                </p>
-              ) : (
-                rows.map((c) => {
-                  const active = Boolean(Number(c.is_active));
-                  return (
-                    <div
-                      key={c.uuid}
-                      className="flex items-start justify-between gap-3 rounded-md border p-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">
-                          {c.name}
-                          {active ? null : (
-                            <Badge variant="secondary" className="ml-2">
-                              {t("expenses.categoryRemovedBadge")}
-                            </Badge>
-                          )}
-                        </p>
-                        {c.description ? (
-                          <p className="truncate text-xs text-muted-foreground">{c.description}</p>
-                        ) : null}
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {c.max_limit_per_claim === null
-                            ? t("expenses.noLimit")
-                            : t("expenses.categoryLimitOf", {
-                                amount: formatCurrency(Number(c.max_limit_per_claim)),
-                              })}
-                          {" · "}
-                          {c.requires_receipt
-                            ? t("expenses.requiresReceipt")
-                            : t("expenses.receiptNotRequired")}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setEditing(c)}
-                          aria-label={t("expenses.editCategory")}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {active ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setDeleting(c)}
-                            aria-label={t("expenses.deleteCategory")}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={restore.isPending}
-                            onClick={() => restore.mutate(c)}
-                            aria-label={t("expenses.restoreCategory")}
-                          >
-                            <Undo2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {t("common.close")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* TWO dialogs, not one with a mode flag, so "editing" is a real category
-          and null can never be confused for a create target. Keyed so switching
-          between two categories cannot leave the first one's values behind. */}
-      <CategoryDialog
-        key={creating ? "create" : (editing?.uuid ?? "idle")}
-        open={creating || Boolean(editing)}
-        onOpenChange={(v) => {
-          if (!v) {
-            setCreating(false);
-            setEditing(null);
-          }
-        }}
-        category={editing}
-      />
-
-      <ConfirmDialog
-        open={Boolean(deleting)}
-        title={t("expenses.deleteCategory")}
-        description={
-          deleting
-            ? t("expenses.deleteCategoryWarning", { name: deleting.name })
-            : ""
-        }
-        confirmLabel={t("expenses.deleteCategory")}
-        loading={remove.isPending}
-        error={remove.isError ? apiErrorMessage(remove.error, t("expenses.categoryDeleteFailed")) : null}
-        onConfirm={() => remove.mutateAsync(deleting!)}
-        onOpenChange={(v) => !v && setDeleting(null)}
-      />
-    </>
   );
 }

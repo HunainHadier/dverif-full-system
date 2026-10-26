@@ -513,7 +513,7 @@ function CreateLetterFields({
         <span className="font-medium">{employeeLabel}</span>
         <select
           {...form.register("employee_uuid", { required: selectEmployee })}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
         >
           <option value="" disabled>
             {selectEmployee}
@@ -530,7 +530,7 @@ function CreateLetterFields({
         <span className="font-medium">{templateLabel}</span>
         <select
           {...form.register("template_uuid")}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
         >
           <option value="">{noTemplate}</option>
           {templates.map((tpl) => (
@@ -545,7 +545,7 @@ function CreateLetterFields({
         <span className="font-medium">{typeLabel}</span>
         <select
           {...form.register("letter_type")}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
         >
           {HR_LETTER_TYPES.map((lt) => (
             <option key={lt.key} value={lt.key}>

@@ -9,7 +9,12 @@ import { SearchInput } from "@/components/common/SearchInput";
 import { Pagination } from "@/components/common/Pagination";
 import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { PriorityBadge } from "./_app.org.support";
+import {
+  CategoryBadge,
+  PriorityBadge,
+  SUPPORT_CATEGORIES,
+  SupportStatusTabs,
+} from "./_app.org.support";
 import { TableSkeleton } from "./_app.requests";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -27,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { adminSupportService, type SupportTicket } from "@/services";
+import { adminSupportService, type SupportCategory, type SupportTicket } from "@/services";
 import { formatDateTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/admin/support/")({
@@ -38,6 +43,7 @@ const PAGE_SIZE = 10;
 
 type SupportStatus = SupportTicket["status"] | "all";
 type SupportPriority = SupportTicket["priority"] | "all";
+type SupportCategoryFilter = SupportCategory | "all";
 
 function AdminSupportPage() {
   const { t } = useTranslation();
@@ -46,9 +52,10 @@ function AdminSupportPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<SupportStatus>("all");
   const [priority, setPriority] = useState<SupportPriority>("all");
+  const [category, setCategory] = useState<SupportCategoryFilter>("all");
 
   const list = useQuery({
-    queryKey: ["adminSupport", page, search, status, priority],
+    queryKey: ["adminSupport", page, search, status, priority, category],
     queryFn: () =>
       adminSupportService.list({
         page,
@@ -56,6 +63,7 @@ function AdminSupportPage() {
         search,
         status: status === "all" ? undefined : status,
         priority: priority === "all" ? undefined : priority,
+        category: category === "all" ? undefined : category,
       }),
   });
 
@@ -63,13 +71,17 @@ function AdminSupportPage() {
 
   return (
     <div>
-      <PageHeader
-        title={t("supportTickets.title")}
-        description={t("supportTickets.description")}
-      />
+      <PageHeader title={t("supportTickets.title")} description={t("supportTickets.description")} />
 
       <Card className="border-border/70 shadow-none">
         <CardContent className="p-0">
+          <SupportStatusTabs
+            value={status}
+            onChange={(v) => {
+              setStatus(v as SupportStatus);
+              setPage(1);
+            }}
+          />
           <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
             <SearchInput
               value={search}
@@ -81,9 +93,9 @@ function AdminSupportPage() {
             />
             <div className="flex flex-1 flex-col gap-3 sm:flex-row lg:justify-end">
               <Select
-                value={status}
+                value={category}
                 onValueChange={(v) => {
-                  setStatus(v as SupportStatus);
+                  setCategory(v as SupportCategoryFilter);
                   setPage(1);
                 }}
               >
@@ -91,11 +103,12 @@ function AdminSupportPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t("supportTickets.statusColumn")}</SelectItem>
-                  <SelectItem value="open">{t("status.open")}</SelectItem>
-                  <SelectItem value="in_progress">{t("status.in_progress")}</SelectItem>
-                  <SelectItem value="resolved">{t("status.resolved")}</SelectItem>
-                  <SelectItem value="closed">{t("status.closed")}</SelectItem>
+                  <SelectItem value="all">{t("supportTickets.allCategories")}</SelectItem>
+                  {SUPPORT_CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {t(`supportTickets.categoryValues.${c}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select
@@ -109,7 +122,7 @@ function AdminSupportPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t("supportTickets.priorityColumn")}</SelectItem>
+                  <SelectItem value="all">{t("supportTickets.allPriorities")}</SelectItem>
                   <SelectItem value="low">{t("supportTickets.low")}</SelectItem>
                   <SelectItem value="medium">{t("supportTickets.medium")}</SelectItem>
                   <SelectItem value="high">{t("supportTickets.high")}</SelectItem>
@@ -141,6 +154,9 @@ function AdminSupportPage() {
                       </TableHead>
                       <TableHead>{t("supportTickets.subject")}</TableHead>
                       <TableHead className="whitespace-nowrap">
+                        {t("supportTickets.category")}
+                      </TableHead>
+                      <TableHead className="whitespace-nowrap">
                         {t("supportTickets.priorityColumn")}
                       </TableHead>
                       <TableHead className="whitespace-nowrap">
@@ -163,7 +179,10 @@ function AdminSupportPage() {
                         <TableCell data-label="S.No" className="w-10 text-muted-foreground">
                           {(page - 1) * PAGE_SIZE + i + 1}
                         </TableCell>
-                        <TableCell data-label="Organization" className="whitespace-nowrap text-sm text-foreground">
+                        <TableCell
+                          data-label="Organization"
+                          className="whitespace-nowrap text-sm text-foreground"
+                        >
                           {tk.organization_name ?? "—"}
                         </TableCell>
                         <TableCell data-label="Raised by" className="whitespace-nowrap">
@@ -185,13 +204,19 @@ function AdminSupportPage() {
                             {tk.subject}
                           </button>
                         </TableCell>
+                        <TableCell data-label="Category" className="whitespace-nowrap">
+                          <CategoryBadge category={tk.category} />
+                        </TableCell>
                         <TableCell data-label="Priority" className="whitespace-nowrap">
                           <PriorityBadge priority={tk.priority} />
                         </TableCell>
                         <TableCell data-label="Status" className="whitespace-nowrap">
                           <StatusBadge status={tk.status} />
                         </TableCell>
-                        <TableCell data-label="Updated at" className="whitespace-nowrap text-sm text-muted-foreground">
+                        <TableCell
+                          data-label="Updated at"
+                          className="whitespace-nowrap text-sm text-muted-foreground"
+                        >
                           {formatDateTime(tk.updated_at)}
                         </TableCell>
                       </TableRow>

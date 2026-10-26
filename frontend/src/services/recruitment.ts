@@ -370,9 +370,8 @@ export const candidatesService = {
    * Confidence comes back per field and drives the UI's "check this" indicator:
    * the extraction is a machine reading a document a human wrote for a human, so
    * "Muhammad" arriving from a font that rendered double-l is ordinary, not an
-   * edge case. Only fields that were actually found are returned — the absence of
-   * `phone` here is the honest state, not an oversight, because no parser in
-   * this system reads phone numbers or emails out of a CV.
+   * edge case. Only fields that were actually found are returned; a null is the
+   * honest state for a CV that does not print that value.
    */
   parseResume: (file: File) => {
     const form = new FormData();
@@ -386,6 +385,10 @@ export const candidatesService = {
           cnic_confidence: "high" | "low" | "not_visible" | null;
           designation: string | null;
           designation_confidence: "high" | "low" | "not_visible" | null;
+          email: string | null;
+          email_confidence: "high" | "low" | "not_visible" | null;
+          phone: string | null;
+          phone_confidence: "high" | "low" | "not_visible" | null;
         };
       }>("/org/resume/parse", form, {
         headers: { "Content-Type": "multipart/form-data" },

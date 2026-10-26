@@ -116,9 +116,11 @@ export const orgService = {
       api
         .post<{ user: OrgAdminUserRecord; _email_warning?: string }>("/org/admin-users", data)
         .then((r) => r.data),
-    revoke: (uuid: UUID, action: "demote" | "deactivate") =>
+    deactivate: (uuid: UUID) =>
       api
-        .post<{ user: OrgAdminUserRecord }>(`/org/admin-users/${uuid}/revoke`, { action })
+        .post<{ user: OrgAdminUserRecord }>(`/org/admin-users/${uuid}/revoke`, {
+          action: "deactivate",
+        })
         .then((r) => r.data.user),
     update: (
       uuid: UUID,

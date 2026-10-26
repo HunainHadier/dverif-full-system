@@ -208,6 +208,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             moduleOffPaths={moduleOffPaths}
             blanketLockedPaths={blanketLockedPaths}
             pathModule={pathModule}
+            user={user}
           />
         </aside>
 
@@ -229,6 +230,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 moduleOffPaths={moduleOffPaths}
                 blanketLockedPaths={blanketLockedPaths}
                 pathModule={pathModule}
+                user={user}
               />
             </aside>
           </div>
@@ -272,6 +274,7 @@ export function SidebarInner({
   moduleOffPaths,
   blanketLockedPaths,
   pathModule,
+  user: userProp,
 }: {
   items: NavItem[];
   /**
@@ -299,6 +302,8 @@ export function SidebarInner({
   /** Paths locked because the subscription itself is inactive. */
   blanketLockedPaths: Set<string>;
   pathModule: Record<string, keyof ModuleFlags>;
+  /** The current user, for showing avatar in account section. */
+  user?: ReturnType<typeof useAuth>["user"];
 }) {
   const { t } = useTranslation();
   const { openPicker } = usePlanPicker();
@@ -421,7 +426,20 @@ export function SidebarInner({
               aria-controls="sidebar-account"
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
-              <Settings className="h-3.5 w-3.5" />
+              <Avatar className="h-5 w-5 shrink-0">
+                <AvatarImage
+                  src={resolveAssetUrl(userProp?.profile_image) ?? undefined}
+                  alt={userProp?.full_name}
+                />
+                <AvatarFallback className="bg-primary/15 text-[8px] font-semibold text-primary">
+                  {(userProp?.full_name ?? "U")
+                    .split(" ")
+                    .map((p) => p[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
               {t("nav.account")}
               <ChevronDown
                 className={cn(

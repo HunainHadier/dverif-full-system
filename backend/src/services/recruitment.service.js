@@ -1882,10 +1882,10 @@ export function downloadResume({ orgId, attachmentUuid }) {
  * Parse a resume/CV file and extract candidate fields.
  *
  * Calls the shared Python document service (POST /ocr/extract) with the
- * "resume" schema (name, cnic, designation). Returns only fields the OCR
- * service actually extracts — email, phone, cover_letter, and notes are
- * NOT extracted (no parser exists for those). The caller must clean up
- * the temporary file after this function resolves.
+ * "resume" schema (name, cnic, designation, email, phone). The CV parser reads
+ * an unlabelled header for the owner's name, email and phone; cover_letter and
+ * notes are NOT extracted and stay manual. The caller must clean up the
+ * temporary file after this function resolves.
  */
 export async function parseResumeFile({ filePath }) {
   const { data } = await ocrExtract(filePath, "resume");
@@ -1897,6 +1897,10 @@ export async function parseResumeFile({ filePath }) {
     cnic_confidence: fields.cnic?.confidence ?? null,
     designation: fields.designation?.value ?? null,
     designation_confidence: fields.designation?.confidence ?? null,
+    email: fields.email?.value ?? null,
+    email_confidence: fields.email?.confidence ?? null,
+    phone: fields.phone?.value ?? null,
+    phone_confidence: fields.phone?.confidence ?? null,
   };
 }
 

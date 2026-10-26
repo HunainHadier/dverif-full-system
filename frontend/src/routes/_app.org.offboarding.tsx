@@ -460,9 +460,9 @@ function ExitDetailSheet({
         side="right"
         className="w-full max-w-2xl gap-0 overflow-y-auto p-0 sm:max-w-2xl"
       >
-        <SheetHeader className="border-b px-5 py-4 text-left">
-          <SheetTitle>{d ? d.employee_name : t("loading")}</SheetTitle>
-          <SheetDescription>
+        <SheetHeader className="border-b px-6 py-5 text-left bg-card/40">
+          <SheetTitle className="text-xl font-semibold">{d ? d.employee_name : t("loading")}</SheetTitle>
+          <SheetDescription className="text-xs text-muted-foreground mt-1">
             {d
               ? t("offboarding.detailDescription", {
                   type: t(`offboarding.requestType.${d.request_type}`),
@@ -473,74 +473,109 @@ function ExitDetailSheet({
         </SheetHeader>
 
         {detail.isLoading ? (
-          <p className="p-5 text-sm text-muted-foreground">{t("loading")}</p>
+          <p className="p-6 text-sm text-muted-foreground">{t("loading")}</p>
         ) : !d ? (
-          <p className="p-5 text-sm text-destructive">{t("offboarding.notFound")}</p>
+          <p className="p-6 text-sm text-destructive">{t("offboarding.notFound")}</p>
         ) : (
-          <div className="space-y-6 px-5 pb-8">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={STATUS_VARIANT[d.status]}>
-                {t(`offboarding.status.${d.status}`)}
-              </Badge>
-              {d.status === "pending" ? (
-                <Button size="sm" onClick={() => setReviewOpen(true)}>
-                  {t("offboarding.review")}
-                </Button>
-              ) : null}
-              {d.status === "approved" ? (
-                <Button size="sm" variant="outline" onClick={() => onOpenSettlement(d.uuid)}>
-                  <CircleDollarSign className="mr-2 h-4 w-4" />
-                  {t("offboarding.fnf")}
-                </Button>
-              ) : null}
-              {d.status === "approved" ? (
-                <Button size="sm" variant="ghost" onClick={() => onRequestComplete(d.uuid)}>
-                  <LogOut className="mr-2 h-4 w-4" />
-                  {t("offboarding.completeExit")}
-                </Button>
-              ) : null}
+          <div className="space-y-6 p-6">
+            {/* Status and Action Buttons Bar with proper spacing */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border bg-muted/20">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">{t("common.status")}:</span>
+                <Badge variant={STATUS_VARIANT[d.status]} className="px-2.5 py-0.5 text-xs font-medium capitalize">
+                  {t(`offboarding.status.${d.status}`)}
+                </Badge>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {d.status === "pending" ? (
+                  <Button size="sm" onClick={() => setReviewOpen(true)} className="shadow-sm">
+                    {t("offboarding.review")}
+                  </Button>
+                ) : null}
+                {d.status === "approved" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onOpenSettlement(d.uuid)}
+                    className="border-primary/30 text-primary hover:bg-primary/10"
+                  >
+                    <CircleDollarSign className="mr-1.5 h-4 w-4" />
+                    {t("offboarding.fnf")}
+                  </Button>
+                ) : null}
+                {d.status === "approved" ? (
+                  <Button size="sm" variant="secondary" onClick={() => onRequestComplete(d.uuid)}>
+                    <LogOut className="mr-1.5 h-4 w-4" />
+                    {t("offboarding.completeExit")}
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
-            {/* Blocking conditions stated up front, not left for the user to
-                discover by pressing a button and reading a 409. */}
+            {/* Blocking conditions */}
             {assets.data && assets.data.count > 0 ? (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                <ShieldAlert className="mr-1.5 inline h-3.5 w-3.5" />
-                {t("offboarding.assetsBlocking", { count: assets.data.count })}
-              </p>
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-700 dark:text-amber-400">
+                <div className="flex items-center gap-2 font-medium">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>{t("offboarding.assetsBlocking", { count: assets.data.count })}</span>
+                </div>
+              </div>
             ) : null}
 
-            <dl className="grid grid-cols-2 gap-2 text-sm">
-              <Field label={t("offboarding.type")}>
-                {t(`offboarding.requestType.${d.request_type}`)}
-              </Field>
-              <Field label={t("offboarding.lastWorkingDay")}>
-                {formatDate(d.last_working_day)}
-              </Field>
-              <Field label={t("offboarding.daysUntilLastWorkingDay")}>
-                {t("offboarding.days", { count: d.days_until_last_working_day })}
-              </Field>
-              <Field label={t("offboarding.submitted")}>{formatDate(d.created_at)}</Field>
-              {d.reason ? (
-                <div className="col-span-2">
-                  <Field label={t("offboarding.reason")}>{d.reason}</Field>
-                </div>
-              ) : null}
-              {d.decision_notes ? (
-                <div className="col-span-2">
-                  <Field label={t("offboarding.decisionNotes")}>{d.decision_notes}</Field>
-                </div>
-              ) : null}
-            </dl>
+            {/* Details Section */}
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Request Details
+              </h3>
+              <dl className="grid grid-cols-2 gap-4 text-sm">
+                <Field label={t("offboarding.type")}>
+                  <span className="font-medium text-foreground">{t(`offboarding.requestType.${d.request_type}`)}</span>
+                </Field>
+                <Field label={t("offboarding.lastWorkingDay")}>
+                  <span className="font-medium text-foreground">{formatDate(d.last_working_day)}</span>
+                </Field>
+                <Field label={t("offboarding.daysUntilLastWorkingDay")}>
+                  <span className="font-medium text-foreground">{t("offboarding.days", { count: d.days_until_last_working_day })}</span>
+                </Field>
+                <Field label={t("offboarding.submitted")}>
+                  <span className="font-medium text-foreground">{formatDate(d.created_at)}</span>
+                </Field>
+                {d.reason ? (
+                  <div className="col-span-2 pt-2 border-t border-border/50">
+                    <Field label={t("offboarding.reason")}>
+                      <p className="mt-1 text-sm text-foreground">{d.reason}</p>
+                    </Field>
+                  </div>
+                ) : null}
+                {d.decision_notes ? (
+                  <div className="col-span-2 pt-2 border-t border-border/50">
+                    <Field label={t("offboarding.decisionNotes")}>
+                      <p className="mt-1 text-sm text-foreground">{d.decision_notes}</p>
+                    </Field>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
 
-            {/* ---- assets still held ---- */}
+            {/* Assets still held */}
             {assets.data && assets.data.count > 0 ? (
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">{t("offboarding.assetsHeldTitle")}</h3>
-                <ul className="space-y-1 text-sm">
+              <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                    {t("offboarding.assetsHeldTitle")}
+                  </h3>
+                  <Badge variant="destructive" className="text-xs">
+                    {assets.data.count} {assets.data.count === 1 ? "Asset" : "Assets"}
+                  </Badge>
+                </div>
+                <ul className="space-y-2">
                   {assets.data.items.map((a) => (
-                    <li key={a.asset_uuid} className="flex justify-between gap-3">
-                      <span className="font-mono text-xs">
+                    <li
+                      key={a.asset_uuid}
+                      className="flex items-center justify-between gap-3 rounded-lg border bg-background/80 p-2.5 text-sm"
+                    >
+                      <span className="font-mono text-xs font-medium">
                         {a.asset_tag} — {a.name}
                       </span>
                       <span className="font-mono text-xs text-muted-foreground">
@@ -552,38 +587,50 @@ function ExitDetailSheet({
               </section>
             ) : null}
 
-            {/* ---- clearance checklist ---- */}
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">{t("offboarding.clearance")}</h3>
-              {d.checklistSummary ? (
-                <p className="mb-2 text-xs text-muted-foreground">
-                  {t("offboarding.clearedOf", {
-                    cleared: d.checklistSummary.cleared,
-                    total: d.checklistSummary.total,
-                  })}
-                </p>
-              ) : null}
+            {/* Clearance checklist */}
+            <section className="rounded-xl border bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">{t("offboarding.clearance")}</h3>
+                {d.checklistSummary ? (
+                  <Badge variant="outline" className="text-xs">
+                    {t("offboarding.clearedOf", {
+                      cleared: d.checklistSummary.cleared,
+                      total: d.checklistSummary.total,
+                    })}
+                  </Badge>
+                ) : null}
+              </div>
               <ul className="space-y-2">
                 {d.checklist.map((item) => (
-                  <li key={item.uuid} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="min-w-0">
-                      <Badge variant="secondary" className="mr-2">
+                  <li
+                    key={item.uuid}
+                    className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-2.5 text-sm"
+                  >
+                    <span className="min-w-0 flex items-center gap-2">
+                      <Badge variant="secondary" className="shrink-0 text-xs">
                         {item.department}
                       </Badge>
-                      <span className={item.status === "cleared" ? "line-through opacity-60" : ""}>
+                      <span
+                        className={`truncate ${
+                          item.status === "cleared"
+                            ? "line-through opacity-60 text-muted-foreground"
+                            : "font-medium text-foreground"
+                        }`}
+                      >
                         {item.task_name}
                       </span>
                     </span>
                     {item.status === "cleared" ? (
-                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                        <span>Cleared</span>
+                      </div>
                     ) : (
                       <Button
                         size="sm"
                         variant="outline"
+                        className="shrink-0 h-8 text-xs"
                         loading={clearTask.isPending}
-                        // Disabled up front rather than letting the click fail: the
-                        // server refuses clearance on an unapproved exit, and a dead
-                        // button with no reason is worse than one that says so.
                         disabled={d.status !== "approved" && d.status !== "completed"}
                         title={
                           d.status !== "approved" && d.status !== "completed"
@@ -606,9 +653,11 @@ function ExitDetailSheet({
             </section>
 
             {d.hr_notes ? (
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">{t("offboarding.hrNotes")}</h3>
-                <p className="whitespace-pre-wrap rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <section className="rounded-xl border bg-card p-4 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {t("offboarding.hrNotes")}
+                </h3>
+                <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm text-foreground">
                   {d.hr_notes}
                 </p>
               </section>
@@ -828,55 +877,63 @@ function NewExitDialog({
         ) : null}
       </div>
 
-      <div className="space-y-1 text-sm">
-        <span className="font-medium">{t("offboarding.requestTypeLabel")}</span>
-        <div><Badge variant="outline">{t("offboarding.requestType.termination")}</Badge></div>
+      {/* Row: Request Type + Last Working Day */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1 text-sm">
+          <span className="font-medium">{t("offboarding.requestTypeLabel")}</span>
+          <div className="flex h-9 items-center">
+            <Badge variant="outline">{t("offboarding.requestType.termination")}</Badge>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
+            <input
+              type="date"
+              value={lastWorkingDay}
+              onChange={(e) => setLastWorkingDay(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            />
+            {errors.lastWorkingDay ? (
+              <span className="block text-xs text-destructive">{errors.lastWorkingDay}</span>
+            ) : null}
+          </label>
+          {lastWorkingDay ? (
+            <p className="text-xs text-muted-foreground">
+              {t("offboarding.daysUntilLastWorkingDay")}: {t("offboarding.days", { count: calendarDaysUntil(lastWorkingDay) })}
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      <div className="space-y-1">
+      {/* Row: Reason + HR Notes side by side */}
+      <div className="grid grid-cols-2 gap-3">
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
-          <input
-            type="date"
-            value={lastWorkingDay}
-            onChange={(e) => setLastWorkingDay(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          <span className="font-medium">{t("offboarding.reason")} *</span>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder={t("offboarding.reasonPlaceholder")}
+            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm resize-none"
           />
-          {errors.lastWorkingDay ? (
-            <span className="block text-xs text-destructive">{errors.lastWorkingDay}</span>
+          {errors.reason ? (
+            <span className="block text-xs text-destructive">{errors.reason}</span>
           ) : null}
         </label>
-        {lastWorkingDay ? (
-          <p className="text-xs text-muted-foreground">
-            {t("offboarding.daysUntilLastWorkingDay")}: {t("offboarding.days", { count: calendarDaysUntil(lastWorkingDay) })}
-          </p>
-        ) : null}
+
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{t("offboarding.hrNotes")}</span>
+          <textarea
+            value={hrNotes}
+            onChange={(e) => setHrNotes(e.target.value)}
+            rows={3}
+            placeholder={t("offboarding.hrNotesPlaceholder")}
+            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm resize-none"
+          />
+        </label>
       </div>
-
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("offboarding.reason")} *</span>
-        <textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          rows={2}
-          placeholder={t("offboarding.reasonPlaceholder")}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-        />
-        {errors.reason ? (
-          <span className="block text-xs text-destructive">{errors.reason}</span>
-        ) : null}
-      </label>
-
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("offboarding.hrNotes")}</span>
-        <textarea
-          value={hrNotes}
-          onChange={(e) => setHrNotes(e.target.value)}
-          rows={2}
-          placeholder={t("offboarding.hrNotesPlaceholder")}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-        />
-      </label>
     </FormDialog>
   );
 }

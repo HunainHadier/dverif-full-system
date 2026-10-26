@@ -9,7 +9,7 @@ import { sendInviteEmail } from "../../utils/mailer.js";
 import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { getFreePlan } from "../../utils/subscriptionPlans.js";
-import { assertIdentityAvailable, rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
+import { assertIdentityAvailable, rethrowIdentityDuplicate, assertEmailAvailable } from "../../utils/identityUniqueness.js";
 import { cnicError, normalizeCnic } from "../../utils/contactFormat.js";
 
 const USER_SELECT = `SELECT u.id, u.uuid, u.full_name, u.email, u.phone, u.cnic, u.status,
@@ -129,6 +129,12 @@ export async function createUserWithOrganization(req, res) {
     // instead of receiving a driver error naming an internal index.
     await assertIdentityAvailable({ phone: user.phone, cnic: user.cnic, executor: conn });
 
+    // One email, one identity — and that spans `employees` too, which the
+    // database cannot enforce (employees.email is not unique). Creating an
+    // account for an address that already has an employee record leaves one
+    // person as an unlinked employee plus an unrelated login.
+    await assertEmailAvailable({ email: user.email, executor: conn });
+
     const [userRes] = await conn.query(
       `INSERT INTO users
        (full_name, email, phone, password, cnic, status, org_role,
@@ -228,6 +234,14 @@ export async function updateUser(req, res) {
       excludeUserId: userExists[0].id,
       executor: pool,
     });
+  }
+
+  // Same reasoning for email, against BOTH tables. `excludeUserUuid` keeps this
+  // account from reading as a duplicate of itself when its email is unchanged;
+  // the helper reuses that same uuid to skip the employee record this account
+  // is legitimately paired with. Without it, every profile save would 409.
+  if (email !== undefined) {
+    await assertEmailAvailable({ email, executor: pool, excludeUserUuid: uuid });
   }
 
   updateValues.push(uuid);

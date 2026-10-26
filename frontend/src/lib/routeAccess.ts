@@ -173,8 +173,12 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
   // Plan-level access is ModuleGate via module_flags (expense_management).
   "/my-expenses": { roles: ON_ROSTER_ROLES },
 
-  // --- Org operations: staff only ------------------------------------------
-  "/org/support": { roles: STAFF_ROLES },
+  // --- Org operations ------------------------------------------------------
+  // Support is the one org page every role can open: employees raise tier-1
+  // tickets to their Organization Admin, org admins raise tier-2 tickets to the
+  // System Admin, and sub-admins do the employee flow. The API enforces which
+  // rows each role can actually see (own / org inbound / platform inbound).
+  "/org/support": { roles: ALL_ORG_ROLES },
   "/org/team": { roles: STAFF_ROLES, feature: "manage_employees", always: ["org_admin"] },
   "/org/admins": { roles: ["org_admin"] },
   "/org/leaves": { roles: STAFF_ROLES, feature: "leave", always: ["org_admin"] },

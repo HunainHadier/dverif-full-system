@@ -1198,12 +1198,20 @@ export type Notification = {
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ SUPPORT TICKETS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
+export type SupportCategory = "it" | "hr" | "admin" | "payroll";
+export type SupportTicketRole = "org_admin" | "system_admin";
+
 export type SupportTicket = {
   uuid: UUID;
   subject: string;
   description: string;
+  category?: SupportCategory | null;
   priority: "low" | "medium" | "high";
   status: "open" | "in_progress" | "resolved" | "closed";
+  assigned_to_role?: SupportTicketRole | null;
+  assigned_role?: SupportTicketRole | null;
+  assigned_to_uuid?: UUID | null;
+  assigned_to_name?: string | null;
   created_at: string;
   updated_at: string;
   organization_uuid?: UUID | null;
@@ -1211,6 +1219,7 @@ export type SupportTicket = {
   raised_by_uuid?: UUID | null;
   raised_by_name?: string | null;
   raised_by_email?: string | null;
+  raised_by_role?: "org_admin" | "sub_admin" | "employee" | null;
 };
 
 export type SupportReply = {
@@ -1220,6 +1229,7 @@ export type SupportReply = {
   replied_by_uuid: UUID;
   replied_by_name?: string | null;
   replied_by_email?: string | null;
+  replied_by_org_role?: "org_admin" | "sub_admin" | "employee" | null;
   created_at: string;
 };
 

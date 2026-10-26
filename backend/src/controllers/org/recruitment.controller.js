@@ -487,10 +487,9 @@ export async function downloadResume(req, res) {
  * Parse a resume/CV file and extract candidate fields.
  *
  * Uses the shared Python document service (POST /ocr/extract) with the "resume"
- * schema. Returns only fields the OCR service actually extracts — name, cnic,
- * designation — with their confidence levels. Email, phone, cover_letter, and
- * notes are NOT extracted (no parser exists for those); the frontend leaves
- * them empty for manual entry.
+ * schema. Returns the fields the OCR service actually extracts — name, cnic,
+ * designation, email, phone — with their confidence levels. Cover letter and
+ * internal notes are NOT extracted; the frontend leaves those for manual entry.
  *
  * The file is validated by uploadAttachments (isDocumentAllowed allow-list),
  * stored temporarily, sent to the Python service, then deleted. The file is

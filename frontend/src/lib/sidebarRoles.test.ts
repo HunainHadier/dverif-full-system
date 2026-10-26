@@ -308,15 +308,14 @@ describe("the account group holds settings, payments and support", () => {
 
   it("a sub_admin gets Settings and Support but NOT Payments", () => {
     // /payments is org_admin-only in ROUTE_ACCESS, and an offer link a sub_admin
-    // cannot open is a link that bounces. Support is STAFF_ROLES, so it stays.
+    // cannot open is a link that bounces. Support is ALL_ORG_ROLES, so it stays.
     expect(paths(accountItemsFor(staff))).toEqual(["/settings", "/org/support"]);
   });
 
-  it("an employee gets Settings alone, and the other two would bounce", () => {
-    // /payments is org_admin-only and /org/support is staff-only. Offering an employee
-    // either would advertise a page the guard refuses, which is the dead-link failure
-    // this group exists to avoid.
-    expect(paths(accountItemsFor(employee))).toEqual(["/settings"]);
+  it("an employee gets Settings and Support, while /payments would bounce", () => {
+    // /payments is org_admin-only. Support is open to every org role because
+    // employees raise tier-1 tickets to their Organization Admin.
+    expect(paths(accountItemsFor(employee))).toEqual(["/settings", "/org/support"]);
   });
 
   it("a platform admin gets none: the platform area carries its own Settings", () => {

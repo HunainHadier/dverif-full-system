@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { MoreVertical, Lock, Plus, ShieldCheck, ShieldOff, Trash2, Pencil, Ban } from "lucide-react";
+import { MoreVertical, Lock, Plus, ShieldCheck, Trash2, Pencil, Ban, Check } from "lucide-react";
 
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
@@ -15,6 +15,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -152,11 +157,7 @@ function OrgAdminsPage() {
   const [search, setSearch] = useState("");
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState<OrgAdminUserRecord | null>(null);
-  const [revoking, setRevoking] = useState<{
-    uuid: UUID;
-    name: string;
-    action: "demote" | "deactivate";
-  } | null>(null);
+  const [revoking, setRevoking] = useState<{ uuid: UUID; name: string } | null>(null);
   const [cancelling, setCancelling] = useState<{ uuid: UUID; name: string } | null>(null);
   const [removing, setRemoving] = useState<{ uuid: UUID; name: string } | null>(null);
 
@@ -168,15 +169,12 @@ function OrgAdminsPage() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["org-admin-users"] });
 
   const revokeMut = useMutation({
-    mutationFn: ({ uuid, action }: { uuid: UUID; action: "demote" | "deactivate" }) =>
-      orgService.adminUsers.revoke(uuid, action),
-    onSuccess: (_d, variables) => {
-      toast.success(
-        variables.action === "deactivate" ? "Sub-admin deactivated" : "Sub-admin demoted to member",
-      );
+    mutationFn: (uuid: UUID) => orgService.adminUsers.deactivate(uuid),
+    onSuccess: () => {
+      toast.success("Sub-admin deactivated");
       invalidate();
     },
-    onError: (e) => toast.error(apiErrorMessage(e, "Revoke failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, "Deactivate failed")),
   });
 
   const updatePerfMut = useMutation({
@@ -303,17 +301,87 @@ function OrgAdminsPage() {
                         <TableCell data-label="Permissions">
                           {granted.length === 0 ? (
                             <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
+                          ) : granted.length === ELEVATED_PERMISSIONS.length ? (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+                                >
+                                  <ShieldCheck className="h-3 w-3" />
+                                  All Permissions ({granted.length})
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-80 p-3 text-sm shadow-xl" align="start">
+                                <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                                  All Permissions Granted ({granted.length})
+                                </div>
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                  {granted.map((p) => (
+                                    <div key={p.key} className="flex items-start gap-2 text-xs">
+                                      <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                                      <div>
+                                        <span className="font-medium text-foreground">{p.label}</span>
+                                        <p className="text-[11px] text-muted-foreground leading-tight">
+                                          {p.description}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          ) : granted.length <= 2 ? (
+                            <div className="flex flex-wrap gap-1.5 items-center">
                               {granted.map((p) => (
                                 <Badge
                                   key={p.key}
                                   variant="outline"
-                                  className="rounded-full border-primary/30 bg-primary/10 text-primary"
+                                  className="rounded-full border-primary/30 bg-primary/10 text-primary font-normal text-xs py-0.5"
                                 >
                                   {p.label}
                                 </Badge>
                               ))}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 flex-nowrap">
+                              {granted.slice(0, 2).map((p) => (
+                                <Badge
+                                  key={p.key}
+                                  variant="outline"
+                                  className="rounded-full border-primary/30 bg-primary/10 text-primary font-normal text-xs py-0.5 whitespace-nowrap"
+                                >
+                                  {p.label}
+                                </Badge>
+                              ))}
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center rounded-full border border-border bg-muted/60 px-2 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer whitespace-nowrap"
+                                  >
+                                    +{granted.length - 2} more
+                                  </button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-80 p-3 text-sm shadow-xl" align="start">
+                                  <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                                    Granted Permissions ({granted.length})
+                                  </div>
+                                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {granted.map((p) => (
+                                      <div key={p.key} className="flex items-start gap-2 text-xs">
+                                        <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                                        <div>
+                                          <span className="font-medium text-foreground">{p.label}</span>
+                                          <p className="text-[11px] text-muted-foreground leading-tight">
+                                            {p.description}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
                             </div>
                           )}
                         </TableCell>
@@ -339,11 +407,11 @@ function OrgAdminsPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {/* A sub-admin who has not accepted yet is not an
-                                account to demote or deactivate — it is an
-                                invitation, and the two things you can actually do
-                                with an invitation are call it off or delete it.
-                                Once accepted these disappear and the ordinary
-                                revoke actions below take over unchanged. */}
+                                account to deactivate - it is an invitation, and
+                                the two things you can actually do with an
+                                invitation are call it off or delete it. Once
+                                accepted these disappear and deactivation takes
+                                over. */}
                             {u.is_verified === "no" ? (
                               <>
                                 <DropdownMenuItem
@@ -369,28 +437,14 @@ function OrgAdminsPage() {
                                 </DropdownMenuItem>
                               </>
                             ) : (
-                              <>
-                                <DropdownMenuItem
-                                  disabled={isLocked}
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() =>
-                                    setRevoking({ uuid: u.uuid, name: u.full_name, action: "demote" })
-                                  }
-                                >
-                                  {isLocked ? <Lock className="mr-2 h-4 w-4" /> : <ShieldOff className="mr-2 h-4 w-4" />}
-                                  Demote to Member
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={isLocked}
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() =>
-                                    setRevoking({ uuid: u.uuid, name: u.full_name, action: "deactivate" })
-                                  }
-                                >
-                                  {isLocked ? <Lock className="mr-2 h-4 w-4" /> : <Ban className="mr-2 h-4 w-4" />}
-                                  Deactivate Account
-                                </DropdownMenuItem>
-                              </>
+                              <DropdownMenuItem
+                                disabled={isLocked}
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => setRevoking({ uuid: u.uuid, name: u.full_name })}
+                              >
+                                {isLocked ? <Lock className="mr-2 h-4 w-4" /> : <Ban className="mr-2 h-4 w-4" />}
+                                Deactivate Account
+                              </DropdownMenuItem>
                             )}
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -431,15 +485,11 @@ function OrgAdminsPage() {
       <ConfirmDialog
         open={!!revoking}
         onOpenChange={(o) => !o && setRevoking(null)}
-        title={revoking?.action === "deactivate" ? "Deactivate this sub-admin?" : "Demote this sub-admin?"}
-        description={
-          revoking?.action === "deactivate"
-            ? `${revoking?.name} will lose the ability to log in immediately. Their sub-admin permissions remain stored but the account is disabled.`
-            : `${revoking?.name} will become a regular member with default permissions. No elevated permission will survive the demotion.`
-        }
-        confirmLabel={revoking?.action === "deactivate" ? "Deactivate" : "Demote"}
+        title="Deactivate this sub-admin?"
+        description={`${revoking?.name} will lose the ability to log in immediately. Their sub-admin permissions remain stored but the account is disabled.`}
+        confirmLabel="Deactivate"
         onConfirm={() => {
-          if (revoking) revokeMut.mutate(revoking);
+          if (revoking) revokeMut.mutate(revoking.uuid);
           setRevoking(null);
         }}
       />

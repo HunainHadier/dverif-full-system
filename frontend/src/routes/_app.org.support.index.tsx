@@ -11,10 +11,14 @@ import { Pagination } from "@/components/common/Pagination";
 import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TableSkeleton } from "./_app.requests";
-import { PriorityBadge } from "./_app.org.support";
+import {
+  CategoryBadge,
+  PriorityBadge,
+  SUPPORT_CATEGORIES,
+  SupportStatusTabs,
+} from "./_app.org.support";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,11 +45,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  orgSupportService,
-  type SupportTicket,
-} from "@/services";
-import { formatDateTime } from "@/lib/utils";
+import { orgSupportService, type SupportCategory, type SupportTicket } from "@/services";
+import { apiErrorMessage, formatDateTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/support/")({
   component: OrgSupportPage,
@@ -55,6 +56,7 @@ const PAGE_SIZE = 10;
 
 type SupportStatus = SupportTicket["status"] | "all";
 type SupportPriority = SupportTicket["priority"] | "all";
+type SupportCategoryFilter = SupportCategory | "all";
 
 function OrgSupportPage() {
   const { t } = useTranslation();
@@ -64,10 +66,11 @@ function OrgSupportPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<SupportStatus>("all");
   const [priority, setPriority] = useState<SupportPriority>("all");
+  const [category, setCategory] = useState<SupportCategoryFilter>("all");
   const [openForm, setOpenForm] = useState(false);
 
   const list = useQuery({
-    queryKey: ["orgSupport", page, search, status, priority],
+    queryKey: ["orgSupport", page, search, status, priority, category],
     queryFn: () =>
       orgSupportService.list({
         page,
@@ -75,6 +78,7 @@ function OrgSupportPage() {
         search,
         status: status === "all" ? undefined : status,
         priority: priority === "all" ? undefined : priority,
+        category: category === "all" ? undefined : category,
       }),
   });
 
@@ -94,6 +98,13 @@ function OrgSupportPage() {
 
       <Card className="border-border/70 shadow-none">
         <CardContent className="p-0">
+          <SupportStatusTabs
+            value={status}
+            onChange={(v) => {
+              setStatus(v as SupportStatus);
+              setPage(1);
+            }}
+          />
           <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
             <SearchInput
               value={search}
@@ -105,9 +116,9 @@ function OrgSupportPage() {
             />
             <div className="flex flex-1 flex-col gap-3 sm:flex-row lg:justify-end">
               <Select
-                value={status}
+                value={category}
                 onValueChange={(v) => {
-                  setStatus(v as SupportStatus);
+                  setCategory(v as SupportCategoryFilter);
                   setPage(1);
                 }}
               >
@@ -115,11 +126,12 @@ function OrgSupportPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t("common.status")}: {t("supportTickets.emptyTitle")}</SelectItem>
-                  <SelectItem value="open">{t("status.open")}</SelectItem>
-                  <SelectItem value="in_progress">{t("status.in_progress")}</SelectItem>
-                  <SelectItem value="resolved">{t("status.resolved")}</SelectItem>
-                  <SelectItem value="closed">{t("status.closed")}</SelectItem>
+                  <SelectItem value="all">{t("supportTickets.allCategories")}</SelectItem>
+                  {SUPPORT_CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {t(`supportTickets.categoryValues.${c}`)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select
@@ -133,7 +145,7 @@ function OrgSupportPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t("supportTickets.priorityColumn")}</SelectItem>
+                  <SelectItem value="all">{t("supportTickets.allPriorities")}</SelectItem>
                   <SelectItem value="low">{t("supportTickets.low")}</SelectItem>
                   <SelectItem value="medium">{t("supportTickets.medium")}</SelectItem>
                   <SelectItem value="high">{t("supportTickets.high")}</SelectItem>
@@ -159,7 +171,12 @@ function OrgSupportPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">S.No</TableHead>
-                      <TableHead className="whitespace-nowrap">{t("supportTickets.subject")}</TableHead>
+                      <TableHead className="whitespace-nowrap">
+                        {t("supportTickets.subject")}
+                      </TableHead>
+                      <TableHead className="whitespace-nowrap">
+                        {t("supportTickets.category")}
+                      </TableHead>
                       <TableHead className="whitespace-nowrap">
                         {t("supportTickets.priorityColumn")}
                       </TableHead>
@@ -176,7 +193,9 @@ function OrgSupportPage() {
                       <TableRow
                         key={tk.uuid}
                         className="cursor-pointer"
-                        onClick={() => navigate({ to: "/org/support/$uuid", params: { uuid: tk.uuid } })}
+                        onClick={() =>
+                          navigate({ to: "/org/support/$uuid", params: { uuid: tk.uuid } })
+                        }
                       >
                         <TableCell data-label="S.No" className="w-10 text-muted-foreground">
                           {(page - 1) * PAGE_SIZE + i + 1}
@@ -185,7 +204,9 @@ function OrgSupportPage() {
                           <button
                             type="button"
                             className="text-left text-sm font-medium text-foreground hover:underline"
-                            onClick={() => navigate({ to: "/org/support/$uuid", params: { uuid: tk.uuid } })}
+                            onClick={() =>
+                              navigate({ to: "/org/support/$uuid", params: { uuid: tk.uuid } })
+                            }
                           >
                             {tk.subject}
                           </button>
@@ -193,13 +214,19 @@ function OrgSupportPage() {
                             {tk.description}
                           </div>
                         </TableCell>
+                        <TableCell data-label="Category" className="whitespace-nowrap">
+                          <CategoryBadge category={tk.category} />
+                        </TableCell>
                         <TableCell data-label="Priority" className="whitespace-nowrap">
                           <PriorityBadge priority={tk.priority} />
                         </TableCell>
                         <TableCell data-label="Status" className="whitespace-nowrap">
                           <StatusBadge status={tk.status} />
                         </TableCell>
-                        <TableCell data-label="Created" className="whitespace-nowrap text-sm text-muted-foreground">
+                        <TableCell
+                          data-label="Created"
+                          className="whitespace-nowrap text-sm text-muted-foreground"
+                        >
                           {formatDateTime(tk.created_at)}
                         </TableCell>
                       </TableRow>
@@ -236,25 +263,27 @@ function CreateTicketDialog({
   const navigate = useNavigate();
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<SupportCategory>("it");
   const [priority, setPriority] = useState<SupportTicket["priority"]>("medium");
 
   useEffect(() => {
     if (open) {
       setSubject("");
       setDescription("");
+      setCategory("it");
       setPriority("medium");
     }
   }, [open]);
 
   const create = useMutation({
-    mutationFn: () => orgSupportService.create({ subject, description, priority }),
+    mutationFn: () => orgSupportService.create({ subject, description, category, priority }),
     onSuccess: (data) => {
       toast.success(t("supportTickets.ticketCreated"));
       qc.invalidateQueries({ queryKey: ["orgSupport"] });
       onOpenChange(false);
       navigate({ to: "/org/support/$uuid", params: { uuid: data.ticket.uuid } });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? t("common.failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, t("common.failed"))),
   });
 
   const submit = () => {
@@ -280,6 +309,39 @@ function CreateTicketDialog({
               placeholder={t("supportTickets.subjectPlaceholder")}
             />
           </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>{t("supportTickets.category")}</Label>
+              <Select value={category} onValueChange={(v) => setCategory(v as SupportCategory)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SUPPORT_CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {t(`supportTickets.categoryValues.${c}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t("supportTickets.priorityLabel")}</Label>
+              <Select
+                value={priority}
+                onValueChange={(v) => setPriority(v as SupportTicket["priority"])}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">{t("supportTickets.low")}</SelectItem>
+                  <SelectItem value="medium">{t("supportTickets.medium")}</SelectItem>
+                  <SelectItem value="high">{t("supportTickets.high")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="tk-desc">{t("supportTickets.descriptionLabel")}</Label>
             <Textarea
@@ -289,19 +351,6 @@ function CreateTicketDialog({
               placeholder={t("supportTickets.descriptionPlaceholder")}
               rows={5}
             />
-          </div>
-          <div className="space-y-2">
-            <Label>{t("supportTickets.priorityLabel")}</Label>
-            <Select value={priority} onValueChange={(v) => setPriority(v as SupportTicket["priority"])}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">{t("supportTickets.low")}</SelectItem>
-                <SelectItem value="medium">{t("supportTickets.medium")}</SelectItem>
-                <SelectItem value="high">{t("supportTickets.high")}</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
         <DialogFooter>

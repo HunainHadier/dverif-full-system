@@ -238,16 +238,16 @@ describe("the account group renders its own links and collapses like the others"
     expect(screen.queryByTestId("link-/settings")).toBeNull();
   });
 
-  it("renders only Settings for an EMPLOYEE, and never a link that would bounce", async () => {
+  it("renders Settings and Support for an EMPLOYEE, but not /payments", async () => {
     const user_ = userEvent.setup();
     renderSidebarFor(employee);
     await user_.click(screen.getByRole("button", { name: /account/i }));
 
     expect(screen.getByTestId("link-/settings")).toBeInTheDocument();
-    // /payments is org_admin-only and /org/support is staff-only. Showing either would
-    // advertise a page the guard refuses.
+    // Employees raise tier-1 support tickets to their organization admin.
+    expect(screen.getByTestId("link-/org/support")).toBeInTheDocument();
+    // /payments remains org_admin-only; showing it would advertise a bouncing page.
     expect(screen.queryByTestId("link-/payments")).toBeNull();
-    expect(screen.queryByTestId("link-/org/support")).toBeNull();
   });
 
   it("shows no account group at all when the role has nothing in it", () => {

@@ -189,10 +189,11 @@ export const adminNav: NavItem[] = [
  *
  * NOT MODULE LINKS. Nothing in here is a place a person does their job: Settings is
  * their own configuration, Payments is the org's subscription (org_admin only, and
- * only they can act on it), and Support is where a problem gets reported rather than
- * managed. The org_admin's own /org/support QUEUE is a management module and stays in
- * the primary menu — what moves here is the way a person reaches support as a
- * CUSTOMER of the product.
+ * only they can act on it), and Support is where a request gets raised. Employees
+ * and sub-admins send tier-1 tickets to their Organization Admin; an org_admin
+ * sends tier-2 tickets to the platform team and works the organization's inbound
+ * queue from the same page. It belongs here because every role reaches it the same
+ * way, as a customer of the product.
  *
  * Split out for the same reason Personal ESS was: a menu that carries the job and the
  * account settings at the same weight makes both harder to find. And it pairs with
@@ -215,8 +216,8 @@ export const accountNavItems: NavItem[] = [
  * Same contract as `personalEssItemsFor`, and for the same reason: a link in the
  * sidebar that leads to a page the guard refuses is worse than no link, because the
  * failure reads as a broken product rather than as a role boundary. An employee gets
- * Settings alone — /payments is org_admin-only and /org/support is staff-only — and an
- * empty result means NO group is rendered at all.
+ * Settings and Support — /payments is org_admin-only — and an empty result means NO
+ * group is rendered at all.
  *
  * Every path here is already permitted by ROUTE_ACCESS for the roles listed; this
  * grants nothing. It only makes an already-granted page findable.

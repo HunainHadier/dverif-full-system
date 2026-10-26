@@ -674,22 +674,75 @@ function MyClaimDialog({
 
         {claim ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Badge variant={CLAIM_STATUS_VARIANT[claim.status]}>
+            {/* Status + Payment Mode Banner */}
+            <div
+              className={`flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 ${
+                claim.status === "paid"
+                  ? "border-emerald-500/30 bg-emerald-500/10"
+                  : claim.status === "approved"
+                    ? "border-blue-500/30 bg-blue-500/10"
+                    : claim.status === "rejected"
+                      ? "border-destructive/30 bg-destructive/10"
+                      : "border-amber-500/30 bg-amber-500/10"
+              }`}
+            >
+              <Badge variant={CLAIM_STATUS_VARIANT[claim.status]} className="text-xs px-2.5 py-0.5">
                 {t(STATUS_LABEL[claim.status])}
               </Badge>
-              <Badge variant={claim.payment_mode === "payroll" ? "secondary" : "outline"}>
+              <Badge variant={claim.payment_mode === "payroll" ? "secondary" : "outline"} className="text-xs">
                 {t(`expenses.mode.${claim.payment_mode}`)}
               </Badge>
+              {!claim.receipt_satisfied ? (
+                <span className="ml-auto text-xs font-medium text-amber-600 dark:text-amber-400">
+                  ⚠ {t("expenses.receiptMissing")}
+                </span>
+              ) : null}
             </div>
 
+            {/* Key Details Grid */}
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {t("expenses.expenseDate")} &amp; Details
+              </h3>
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t("expenses.expenseDate")}</dt>
+                  <dd className="font-medium text-foreground">{formatDate(claim.expense_date)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{t("expenses.paymentMode")}</dt>
+                  <dd className="font-medium text-foreground">{t(`expenses.mode.${claim.payment_mode}`)}</dd>
+                </div>
+                {claim.category_requires_receipt !== undefined ? (
+                  <div>
+                    <dt className="text-xs text-muted-foreground">{t("expenses.receipts")}</dt>
+                    <dd className="font-medium text-foreground">
+                      {claim.category_requires_receipt
+                        ? t("expenses.receiptRequired")
+                        : t("expenses.receiptOptional", "Optional")}
+                    </dd>
+                  </div>
+                ) : null}
+                {claim.paid_at ? (
+                  <div>
+                    <dt className="text-xs text-muted-foreground">{t("expenses.paidAt", { date: "" }).replace("", "").trim() || "Paid on"}</dt>
+                    <dd className="font-medium text-emerald-700 dark:text-emerald-400">{formatDate(claim.paid_at)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
+            {/* Description */}
             {claim.description ? (
-              <p className="whitespace-pre-wrap text-sm">{claim.description}</p>
+              <div className="rounded-xl border bg-muted/30 p-3 text-sm text-foreground whitespace-pre-wrap">
+                {claim.description}
+              </div>
             ) : null}
 
+            {/* Rejection reason */}
             {claim.rejection_reason ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
-                <p className="text-xs font-medium text-destructive">
+              <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-xs font-medium text-destructive mb-1">
                   {t("expenses.rejectionReason")}
                 </p>
                 <p className="whitespace-pre-wrap text-sm">{claim.rejection_reason}</p>
@@ -697,40 +750,49 @@ function MyClaimDialog({
               </div>
             ) : null}
 
+            {/* Paid notice */}
             {claim.paid_at ? (
-              <div className="rounded-md bg-muted/50 p-3 text-xs">
-                {t("expenses.paidAt", { date: formatDate(claim.paid_at) })}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                ✓ {t("expenses.paidAt", { date: formatDate(claim.paid_at) })}
               </div>
             ) : null}
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium">
-                {t("expenses.receipts")}
-                {claim.category_requires_receipt ? (
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    {t("expenses.receiptRequired")}
-                  </span>
+            {/* Receipts Section */}
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold">
+                  {t("expenses.receipts")}
+                  {claim.category_requires_receipt ? (
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      ({t("expenses.receiptRequired")})
+                    </span>
+                  ) : null}
+                </p>
+                {receipts.length > 0 ? (
+                  <span className="text-xs text-muted-foreground">{receipts.length} file{receipts.length !== 1 ? "s" : ""}</span>
                 ) : null}
-              </p>
+              </div>
 
-              {receipts.map((r) => (
-                <AttachmentCard
-                  key={r.uuid}
-                  attachment={r}
-                  handlers={EXPENSE_ATTACHMENT_HANDLERS}
-                  onDeleted={() => {
-                    onChanged();
-                    void qc.invalidateQueries({ queryKey: ["my-expense-claim", uuid] });
-                  }}
-                />
-              ))}
-
-              {receipts.length === 0 ? (
+              {receipts.length > 0 ? (
+                <div className="space-y-2">
+                  {receipts.map((r) => (
+                    <AttachmentCard
+                      key={r.uuid}
+                      attachment={r}
+                      handlers={EXPENSE_ATTACHMENT_HANDLERS}
+                      onDeleted={() => {
+                        onChanged();
+                        void qc.invalidateQueries({ queryKey: ["my-expense-claim", uuid] });
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
                 <p className="text-sm text-muted-foreground">{t("expenses.noReceipts")}</p>
-              ) : null}
+              )}
 
               {claim.status !== "rejected" ? (
-                <div className="space-y-2 pt-1">
+                <div className="space-y-2 border-t border-border/50 pt-3">
                   <FileDropzone
                     value={files}
                     onChange={setFiles}

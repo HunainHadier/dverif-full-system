@@ -73,7 +73,17 @@ if _cmd:
 # --- Regexes ----------------------------------------------------------------
 
 CNIC_RE = re.compile(r"\d{5}[- ]?\d{7}[- ]?\d")
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+# Pakistani mobile shape. The optional country code and separators are kept in
+# the match so the value can be shown the way it was printed on the CV; the
+# form's own validation accepts either the local or the +92 form.
+PHONE_RE = re.compile(r"(?<!\d)(?:(?:\+|00)92|0)?[\s\-]?3\d{2}[\s\-]?\d{7}(?!\d)")
 NAME_LABEL_RE = re.compile(r"\b(?:name|\u0646\u0627\u0645)\b", re.IGNORECASE)
+_RESUME_HEADING_RE = re.compile(
+    r"^(?:curriculum\s+vitae|resume|cv|profile|personal\s+(?:details|information)|"
+    r"contact(?:\s+details)?|professional\s+summary|summary)$",
+    re.IGNORECASE,
+)
 OTHER_LABEL_RE = re.compile(
     r"\b(?:c\.?n\.?i\.?c|national\s+identity|identity\s+no\b|"
     r"father|husband|spouse|mother|gender|signature|"
@@ -404,6 +414,55 @@ def _extract_name_field(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _extract_resume_name(text: str) -> tuple[str, str] | None:
+    """Name from a CV header, where "Name:" is usually omitted.
+
+    A CV puts the owner's name on the first line as a title, not as a labelled
+    form field, so `_extract_name_field` alone reports "not_visible" for most
+    real resumes. Scan the first few non-empty lines for a short capitalised
+    phrase that is not a section heading, email, phone, URL or address. The
+    first eligible line is the strongest signal; later lines are marked low
+    confidence so the recruiter knows to check them.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines[:15]):
+        candidate = EMAIL_RE.sub(" ", line)
+        candidate = PHONE_RE.sub(" ", candidate)
+        candidate = CNIC_RE.sub(" ", candidate)
+        candidate = re.sub(r"https?://\S+|www\.\S+", " ", candidate)
+        candidate = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", candidate)
+        candidate = candidate.strip(" \t|:.,-_")
+
+        if not candidate or "@" in candidate or re.search(r"\d", candidate):
+            continue
+        if _RESUME_HEADING_RE.match(candidate):
+            continue
+        if "|" in candidate or "\u2022" in candidate:
+            continue
+
+        words = candidate.split()
+        if not 2 <= len(words) <= 5:
+            continue
+        if not all(re.fullmatch(r"[A-Za-z][A-Za-z'.\-]*", word) for word in words):
+            continue
+        return " ".join(words), ("high" if index == 0 else "low")
+    return None
+
+
+def _extract_email(text: str) -> tuple[str, str] | None:
+    match = EMAIL_RE.search(text)
+    return (match.group(0), "high") if match else None
+
+
+def _extract_phone(text: str) -> tuple[str, str] | None:
+    # Strip CNICs first: a 13-digit identity number must never be mistaken for
+    # a mobile number after the optional country code is dropped.
+    match = PHONE_RE.search(CNIC_RE.sub(" ", text))
+    if not match:
+        return None
+    return re.sub(r"\s+", " ", match.group(0)), "high"
+
+
 def _extract_field(field: str, text: str) -> tuple[str, str] | None:
     """Canonical field extraction -> (value, confidence) or None when not found."""
     if field == "name":
@@ -411,6 +470,10 @@ def _extract_field(field: str, text: str) -> tuple[str, str] | None:
     if field == "cnic":
         value = _extract_cnic(text)
         return (value, "high") if value else None
+    if field == "email":
+        return _extract_email(text)
+    if field == "phone":
+        return _extract_phone(text)
     if field == "dob":
         return _extract_date_field(text, _FIELD_LABELS["dob"])
     if field in ("joining_date", "resignation_date", "effective_date", "recommendation_date"):
@@ -431,6 +494,11 @@ def extractFields(text: str, document_type: str | None = None) -> dict:
     fields: dict[str, dict] = {}
     for field in schema:
         found = _extract_field(field, text)
+        # A CV's name is a title, not a labelled field. Only fall back after the
+        # label reader has failed, so "Name: Asim Khan" still wins over a
+        # heading that happens to precede it.
+        if not found and key == "resume" and field == "name":
+            found = _extract_resume_name(text)
         if found:
             value, confidence = found
             fields[field] = {"value": value, "confidence": confidence}

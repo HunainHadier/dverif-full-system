@@ -7,7 +7,7 @@ import { ArrowLeft, Send } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
 import { StatusBadge } from "@/components/common/StatusBadge";
-import { PriorityBadge } from "./_app.org.support";
+import { AssignmentBadge, CategoryBadge, PriorityBadge } from "./_app.org.support";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,8 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/utils";
+import { apiErrorMessage, cn, formatDateTime } from "@/lib/utils";
 import { adminSupportService, type SupportReply, type SupportTicket } from "@/services";
 
 export const Route = createFileRoute("/_app/admin/support/$uuid")({
@@ -49,7 +48,7 @@ function AdminSupportDetailPage() {
       qc.invalidateQueries({ queryKey: ["adminSupport", uuid] });
       qc.invalidateQueries({ queryKey: ["admin-sidebar-counts"] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? t("common.failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, t("common.failed"))),
   });
 
   const setStatusMut = useMutation({
@@ -60,7 +59,7 @@ function AdminSupportDetailPage() {
       qc.invalidateQueries({ queryKey: ["adminSupport", uuid] });
       qc.invalidateQueries({ queryKey: ["admin-sidebar-counts"] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? t("common.failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, t("common.failed"))),
   });
 
   if (detail.isLoading) {
@@ -91,9 +90,12 @@ function AdminSupportDetailPage() {
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <StatusBadge status={ticket.status} />
                 <PriorityBadge priority={ticket.priority} />
+                <CategoryBadge category={ticket.category} />
+                <AssignmentBadge role={ticket.assigned_to_role} />
                 <span>{ticket.organization_name ?? "—”"}</span>
                 <span>
-                  {t("supportTickets.raisedBy")}: {ticket.raised_by_name ?? ticket.raised_by_email ?? "—”"}
+                  {t("supportTickets.raisedBy")}:{" "}
+                  {ticket.raised_by_name ?? ticket.raised_by_email ?? "—”"}
                 </span>
               </div>
             </div>
@@ -182,10 +184,10 @@ function AdminReplyBubble({ reply, currentEmail }: { reply: SupportReply; curren
   const isCurrentUser = !isOrgUser && !!currentEmail && reply.replied_by_email === currentEmail;
 
   const name = isOrgUser
-    ? reply.replied_by_name ?? reply.replied_by_email ?? t("supportTickets.you")
+    ? (reply.replied_by_name ?? reply.replied_by_email ?? t("supportTickets.you"))
     : isCurrentUser
       ? t("supportTickets.you")
-      : reply.replied_by_name ?? t("supportTickets.supportTeam");
+      : (reply.replied_by_name ?? t("supportTickets.supportTeam"));
   const initials = (name || "?").slice(0, 1).toUpperCase();
 
   return (
@@ -206,9 +208,13 @@ function AdminReplyBubble({ reply, currentEmail }: { reply: SupportReply; curren
       >
         <div className="mb-1 flex items-baseline gap-2">
           <span className="text-xs font-semibold text-foreground">{name}</span>
-          <span className="text-[10px] text-muted-foreground">{formatDateTime(reply.created_at)}</span>
+          <span className="text-[10px] text-muted-foreground">
+            {formatDateTime(reply.created_at)}
+          </span>
         </div>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{reply.message}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+          {reply.message}
+        </p>
       </div>
     </div>
   );
