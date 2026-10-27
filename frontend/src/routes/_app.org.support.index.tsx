@@ -45,7 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { orgSupportService, type SupportCategory, type SupportTicket } from "@/services";
+import { orgService, orgSupportService, type SupportCategory, type SupportTicket } from "@/services";
 import { apiErrorMessage, formatDateTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/support/")({
@@ -171,6 +171,9 @@ function OrgSupportPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">S.No</TableHead>
+                      <TableHead className="whitespace-nowrap">{t("supportTickets.organization")}</TableHead>
+                      <TableHead className="whitespace-nowrap">{t("supportTickets.raisedBy")}</TableHead>
+                      <TableHead className="whitespace-nowrap">{t("supportTickets.department")}</TableHead>
                       <TableHead className="whitespace-nowrap">
                         {t("supportTickets.subject")}
                       </TableHead>
@@ -199,6 +202,16 @@ function OrgSupportPage() {
                       >
                         <TableCell data-label="S.No" className="w-10 text-muted-foreground">
                           {(page - 1) * PAGE_SIZE + i + 1}
+                        </TableCell>
+                        <TableCell data-label={t("supportTickets.organization")} className="whitespace-nowrap text-sm">
+                          {tk.organization_name ?? "—"}
+                        </TableCell>
+                        <TableCell data-label={t("supportTickets.raisedBy")} className="whitespace-nowrap">
+                          <div className="text-sm font-medium text-foreground">{tk.raised_by_name ?? "—"}</div>
+                          <div className="text-xs text-muted-foreground">{tk.raised_by_email ?? ""}</div>
+                        </TableCell>
+                        <TableCell data-label={t("supportTickets.department")} className="whitespace-nowrap text-sm">
+                          {tk.raised_by_department ?? "—"}
                         </TableCell>
                         <TableCell data-label="Subject">
                           <button
@@ -265,6 +278,12 @@ function CreateTicketDialog({
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<SupportCategory>("it");
   const [priority, setPriority] = useState<SupportTicket["priority"]>("medium");
+  const [departmentUuid, setDepartmentUuid] = useState("auto");
+  const departments = useQuery({
+    queryKey: ["orgDepartments"],
+    queryFn: () => orgService.departments.list(),
+    enabled: open,
+  });
 
   useEffect(() => {
     if (open) {
@@ -272,11 +291,18 @@ function CreateTicketDialog({
       setDescription("");
       setCategory("it");
       setPriority("medium");
+      setDepartmentUuid("auto");
     }
   }, [open]);
 
   const create = useMutation({
-    mutationFn: () => orgSupportService.create({ subject, description, category, priority }),
+    mutationFn: () => orgSupportService.create({
+      subject,
+      description,
+      category,
+      priority,
+      department_uuid: departmentUuid === "auto" ? null : departmentUuid,
+    }),
     onSuccess: (data) => {
       toast.success(t("supportTickets.ticketCreated"));
       qc.invalidateQueries({ queryKey: ["orgSupport"] });
@@ -341,6 +367,20 @@ function CreateTicketDialog({
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label>{t("supportTickets.department")}</Label>
+            <Select value={departmentUuid} onValueChange={setDepartmentUuid}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("supportTickets.departmentAuto")}</SelectItem>
+                {(departments.data ?? []).map((department) => (
+                  <SelectItem key={department.uuid} value={department.uuid}>{department.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="tk-desc">{t("supportTickets.descriptionLabel")}</Label>

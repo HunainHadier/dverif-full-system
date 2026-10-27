@@ -74,10 +74,13 @@ if _cmd:
 
 CNIC_RE = re.compile(r"\d{5}[- ]?\d{7}[- ]?\d")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-# Pakistani mobile shape. The optional country code and separators are kept in
-# the match so the value can be shown the way it was printed on the CV; the
-# form's own validation accepts either the local or the +92 form.
-PHONE_RE = re.compile(r"(?<!\d)(?:(?:\+|00)92|0)?[\s\-]?3\d{2}[\s\-]?\d{7}(?!\d)")
+# Pakistani mobile. CVs commonly group the last seven digits as 3+4, 4+3,
+# or 3+2+2; allow separators between every digit while requiring exactly ten
+# mobile digits after an optional +92/0092/0 prefix. Preserve the printed form.
+_PHONE_SEP = r"[\s().\-\u2010-\u2015]*"
+PHONE_RE = re.compile(
+    rf"(?<!\d)(?:(?:\+|00)\s*92|0)?{_PHONE_SEP}3\d{{2}}(?:{_PHONE_SEP}\d){{7}}(?!\d)"
+)
 NAME_LABEL_RE = re.compile(r"\b(?:name|\u0646\u0627\u0645)\b", re.IGNORECASE)
 _RESUME_HEADING_RE = re.compile(
     r"^(?:curriculum\s+vitae|resume|cv|profile|personal\s+(?:details|information)|"
@@ -120,9 +123,19 @@ def _looks_useful(text: str) -> bool:
     return len(text.split()) >= 3
 
 
-def _extract_pdf_text(file_path: str) -> str:
+def _extract_pdf_text(file_path: str, all_pages: bool = False) -> str:
     doc = fitz.open(file_path)
     try:
+        if all_pages:
+            # CV contact details are not always on the first page. OCR a bounded
+            # set of pages and combine them so email/phone/CNIC can be found even
+            # when a CV begins with a photo or summary page.
+            page_text = [
+                _ocr_image(_render_page(doc[index]))
+                for index in range(min(doc.page_count, 4))
+            ]
+            return "\n".join(text for text in page_text if text)
+
         pages_to_try = [0]
         if doc.page_count > 1:
             # Fallback candidate: page with the most embedded text.
@@ -186,8 +199,31 @@ def _extract_docx_text(file_path: str) -> str:
     """
     if python_docx is not None:
         try:
+            from docx.oxml.table import CT_Tbl
+            from docx.oxml.text.paragraph import CT_P
             document = python_docx.Document(file_path)
-            lines = [p.text.strip() for p in document.paragraphs if p.text and p.text.strip()]
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
+
+            def table_lines(table):
+                result = []
+                for row in table.rows:
+                    for cell in row.cells:
+                        result.extend(
+                            p.text.strip() for p in cell.paragraphs if p.text and p.text.strip()
+                        )
+                        for nested in cell.tables:
+                            result.extend(table_lines(nested))
+                return result
+
+            lines = []
+            for block in document.element.body.iterchildren():
+                if isinstance(block, CT_P):
+                    paragraph = Paragraph(block, document).text.strip()
+                    if paragraph:
+                        lines.append(paragraph)
+                elif isinstance(block, CT_Tbl):
+                    lines.extend(table_lines(Table(block, document)))
             text = "\n".join(lines)
             if text.strip():
                 return text
@@ -197,7 +233,7 @@ def _extract_docx_text(file_path: str) -> str:
     return _docx_text_via_xml(file_path)
 
 
-def extractText(file_path: str) -> str:
+def extractText(file_path: str, all_pages: bool = False) -> str:
     """Return the document's text ('' when it carries none).
 
     PDFs and raster images go through OCR; DOCX text is read directly. Other
@@ -205,7 +241,7 @@ def extractText(file_path: str) -> str:
     """
     detected = sniff(file_path)
     if detected == "pdf":
-        return _extract_pdf_text(file_path)
+        return _extract_pdf_text(file_path, all_pages=all_pages)
     if detected in ("jpeg", "png") or detected == "image":
         return _extract_image_text(file_path)
     if _is_docx(file_path):

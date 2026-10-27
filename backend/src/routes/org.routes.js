@@ -81,6 +81,7 @@ import {
   getEmployeeLeaveHistory,
   listLeaveAllocations,
   setLeaveAllocation,
+  setDesignationLeaveAllocation,
 } from "../controllers/org/leaveAllocation.controller.js";
 import {
   listAdminUsers,
@@ -264,6 +265,7 @@ router.get("/leaves", leaveMgmt, asyncHandler(listOrgLeaves));
 // ---- Leave allocations (staff: allocate/edit balances; history = staff) ----
 router.get("/leave-allocations", leaveMgmt, asyncHandler(listLeaveAllocations));
 router.put("/leave-allocations", leaveMgmt, asyncHandler(setLeaveAllocation));
+router.put("/leave-allocations/designation", leaveMgmt, asyncHandler(setDesignationLeaveAllocation));
 router.get("/employees/:uuid/leave-allocations", leaveMgmt, asyncHandler(getEmployeeLeaveHistory));
 
 // ---- Attendance (staff: view, add/edit IPs, manual entries; delete IP = org_admin) ----

@@ -928,6 +928,7 @@ export type EmployeeLeaveAllocation = {
   employee_uuid: UUID;
   full_name: string;
   email: string;
+  designation_uuid?: UUID | null;
   designation?: string | null;
   department?: string | null;
   status: string;
@@ -1219,6 +1220,7 @@ export type SupportTicket = {
   raised_by_uuid?: UUID | null;
   raised_by_name?: string | null;
   raised_by_email?: string | null;
+  raised_by_department?: string | null;
   raised_by_role?: "org_admin" | "sub_admin" | "employee" | null;
 };
 

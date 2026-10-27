@@ -10,6 +10,7 @@ import { renderTemplate, validateBody, tagsForLetterType, tagLabel, unsupportedT
 import { sendRecruitmentOfferEmail } from "../utils/mailer.js";
 import { generateHrLetterPdf } from "../utils/hrLetterPdf.js";
 import { cnicError, normalizeCnic } from "../utils/contactFormat.js";
+import { applyDesignationLeavePolicies } from "../utils/designationLeavePolicy.js";
 import { ocrExtract } from "./documentService.js";
 
 /**
@@ -1142,6 +1143,7 @@ async function hireCandidateInTransaction({
   );
   const employeeCode = `EMP-${String(employeeInsert.insertId).padStart(6, "0")}`;
   await db.query("UPDATE employees SET employee_code=? WHERE id=? AND organization_id=?", [employeeCode, employeeInsert.insertId, orgId]);
+  await applyDesignationLeavePolicies(db, orgId, employeeUuid, employeeDesignation);
 
   if (startingSalary !== null) {
     const salaryDate = effectiveJoiningDate ? isoDate(effectiveJoiningDate) : isoDate(now ?? new Date());

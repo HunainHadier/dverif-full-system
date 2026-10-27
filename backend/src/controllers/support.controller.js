@@ -29,9 +29,18 @@ const TICKET_SELECT = `SELECT t.id, t.uuid, t.subject, t.description, t.category
         raiser.full_name AS raised_by_name,
         raiser.email AS raised_by_email,
         raiser.org_role AS raised_by_role,
+        COALESCE(ticket_department.name, (SELECT dp.name
+           FROM employees requester_employee
+           LEFT JOIN departments dp ON dp.id = requester_employee.department_id
+          WHERE requester_employee.organization_id = t.organization_id
+            AND (requester_employee.linked_user_uuid = raiser.uuid
+              OR (requester_employee.email = raiser.email AND raiser.email IS NOT NULL))
+          ORDER BY (requester_employee.linked_user_uuid = raiser.uuid) DESC, requester_employee.id DESC
+          LIMIT 1)) AS raised_by_department,
         COALESCE(assignee.full_name, assignee_admin.full_name) AS assigned_to_name
  FROM support_tickets t
  LEFT JOIN organizations o ON o.id = t.organization_id
+ LEFT JOIN departments ticket_department ON ticket_department.id = t.department_id
  LEFT JOIN users raiser ON raiser.uuid = t.raised_by_uuid
  LEFT JOIN users assignee ON assignee.uuid = t.assigned_to_uuid
  LEFT JOIN admin_profiles assignee_admin ON assignee_admin.uuid = t.assigned_to_uuid`;
@@ -283,7 +292,7 @@ export async function listOrgTickets(req, res) {
 }
 
 export async function createTicket(req, res) {
-  const { subject, description, priority = "medium" } = req.body ?? {};
+  const { subject, description, priority = "medium", department_uuid: departmentUuid } = req.body ?? {};
   const category = normalizeCategory(req.body?.category);
 
   if (!subject || !String(subject).trim()) throw new ApiError(400, "subject is required");
@@ -292,17 +301,37 @@ export async function createTicket(req, res) {
   if (!category) throw new ApiError(400, "category must be it, hr, admin, or payroll");
 
   const orgId = orgIdFrom(req);
+  let departmentId = null;
+  if (departmentUuid) {
+    assertUuid(departmentUuid, "department_uuid");
+    const [[department]] = await pool.query(
+      "SELECT id FROM departments WHERE uuid = ? AND organization_id = ? LIMIT 1",
+      [departmentUuid, orgId]
+    );
+    if (!department) throw new ApiError(400, "department_uuid is not a department in this organization");
+    departmentId = department.id;
+  } else {
+    const [[employee]] = await pool.query(
+      `SELECT department_id FROM employees
+        WHERE organization_id = ? AND department_id IS NOT NULL
+          AND (linked_user_uuid = ? OR (email = ? AND ? IS NOT NULL))
+        ORDER BY (linked_user_uuid = ?) DESC, id DESC LIMIT 1`,
+      [orgId, req.user.uuid, req.user.email ?? null, req.user.email ?? null, req.user.uuid]
+    );
+    departmentId = employee?.department_id ?? null;
+  }
   const assignment = await resolveTicketAssignment(orgId, req.user);
   const uuid = crypto.randomUUID();
 
   await pool.query(
     `INSERT INTO support_tickets
-       (uuid, organization_id, raised_by_uuid, subject, description, category,
+       (uuid, organization_id, department_id, raised_by_uuid, subject, description, category,
         priority, assigned_to_role, assigned_to_uuid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       uuid,
       orgId,
+      departmentId,
       req.user.uuid,
       String(subject).trim(),
       String(description).trim(),

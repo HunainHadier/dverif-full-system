@@ -179,6 +179,69 @@ describe("Add Candidate - resume upload", () => {
     expect((within(dialog).getByLabelText(/^Phone/) as HTMLInputElement).value).toBe(
       "+92 322 1315218",
     );
+    const coverLetter = (within(dialog).getByLabelText(/cover letter/i) as HTMLTextAreaElement).value;
+    expect(coverLetter).toContain("Ayesha Siddiqui");
+    expect(coverLetter).toContain("Senior Accountant");
+  });
+
+  it("clears the previous CV's extracted values and drafts a new job-specific letter", async () => {
+    vi_mock.resumeParse
+      .mockResolvedValueOnce({
+        name: "Hunain Haider",
+        name_confidence: "high",
+        cnic: "42101-1111111-1",
+        cnic_confidence: "high",
+        email: "hunain@example.com",
+        email_confidence: "high",
+        phone: "03001234567",
+        phone_confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        name: "Ali Raza",
+        name_confidence: "high",
+        cnic: "42101-2222222-2",
+        cnic_confidence: "high",
+        email: "ali@example.com",
+        email_confidence: "high",
+        phone: "03007654321",
+        phone_confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        name: "Sara Khan",
+        name_confidence: "high",
+        cnic: null,
+        cnic_confidence: null,
+        email: "sara@example.com",
+        email_confidence: "high",
+        phone: null,
+        phone_confidence: null,
+      });
+
+    const user = userEvent.setup();
+    withClient(<CandidatesPage />);
+    const dialog = await openAddDialog(user);
+
+    await user.upload(fileInput(dialog), cvFile("hunain-cv.pdf"));
+    await waitFor(() => expect((within(dialog).getByLabelText(/full name/i) as HTMLInputElement).value).toBe("Hunain Haider"));
+
+    await user.upload(fileInput(dialog), cvFile("ali-cv.pdf"));
+    expect(within(dialog).getByText("ali-cv.pdf")).toBeInTheDocument();
+    await waitFor(() => expect((within(dialog).getByLabelText(/full name/i) as HTMLInputElement).value).toBe("Ali Raza"));
+    expect((within(dialog).getByLabelText(/^Email/i) as HTMLInputElement).value).toBe("ali@example.com");
+
+    await user.click(within(dialog).getByRole("button", { name: /remove file/i }));
+
+    expect((within(dialog).getByLabelText(/full name/i) as HTMLInputElement).value).toBe("");
+    expect((within(dialog).getByLabelText(/^Email/i) as HTMLInputElement).value).toBe("");
+    expect((within(dialog).getByLabelText(/^CNIC/i) as HTMLInputElement).value).toBe("");
+
+    await user.upload(fileInput(dialog), cvFile("sara-cv.pdf"));
+    await waitFor(() => expect((within(dialog).getByLabelText(/full name/i) as HTMLInputElement).value).toBe("Sara Khan"));
+    expect((within(dialog).getByLabelText(/^Email/i) as HTMLInputElement).value).toBe("sara@example.com");
+    const coverLetter = (within(dialog).getByLabelText(/cover letter/i) as HTMLTextAreaElement).value;
+    expect(coverLetter).toContain("Sara Khan");
+    expect(coverLetter).not.toContain("Hunain Haider");
+    expect(coverLetter).not.toContain("Ali Raza");
   });
 
   it("attaches the CV to the candidate it created, in that order", async () => {

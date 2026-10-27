@@ -72,6 +72,7 @@ export const orgLeaveAllocationService = {
       .get<{
         year: number;
         leaveTypes: LeaveType[];
+        designations: { uuid: UUID; name: string }[];
         employees: EmployeeLeaveAllocation[];
       }>("/org/leave-allocations", { params: { year } })
       .then((r) => r.data),
@@ -83,6 +84,15 @@ export const orgLeaveAllocationService = {
   }) =>
     api
       .put<{ allocation: { id: number; allocated_days: number } }>("/org/leave-allocations", data)
+      .then((r) => r.data),
+  setByDesignation: (data: {
+    designation_uuid: UUID;
+    leave_type_id: number;
+    year: number;
+    allocated_days: number;
+  }) =>
+    api
+      .put<{ employee_count: number }>("/org/leave-allocations/designation", data)
       .then((r) => r.data),
   employeeHistory: (employee_uuid: UUID) =>
     api

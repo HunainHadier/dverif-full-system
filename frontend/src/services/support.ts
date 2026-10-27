@@ -29,6 +29,7 @@ export const orgSupportService = {
     description: string;
     category: SupportCategory;
     priority: "low" | "medium" | "high";
+    department_uuid?: UUID | null;
   }) => api.post<{ ticket: SupportTicket }>("/org/support/tickets", data).then((r) => r.data),
   get: (uuid: UUID) =>
     api.get<SupportTicketDetail>(`/org/support/tickets/${uuid}`).then((r) => r.data),

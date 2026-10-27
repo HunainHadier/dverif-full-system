@@ -192,6 +192,9 @@ function AdminSupportPage() {
                           <div className="text-xs text-muted-foreground">
                             {tk.raised_by_email ?? ""}
                           </div>
+                          <div className="text-xs text-muted-foreground">
+                            {t("supportTickets.department")}: {tk.raised_by_department ?? "—"}
+                          </div>
                         </TableCell>
                         <TableCell data-label="Subject">
                           <button

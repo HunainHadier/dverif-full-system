@@ -87,10 +87,14 @@ export function FileDropzone({
 
       // De-duplicate by name+size so re-adding the same file is a no-op rather
       // than a duplicate row.
-      const merged = [...value];
-      for (const file of accepted) {
-        if (merged.some((f) => f.name === file.name && f.size === file.size)) continue;
-        merged.push(file);
+      // A single-file picker means "replace this file" when a new one is chosen.
+      // Keeping the old item and slicing to one silently discarded every replacement.
+      const merged = maxFiles === 1 && accepted.length ? [accepted[0]] : [...value];
+      if (maxFiles !== 1) {
+        for (const file of accepted) {
+          if (merged.some((f) => f.name === file.name && f.size === file.size)) continue;
+          merged.push(file);
+        }
       }
       const limited = merged.slice(0, maxFiles);
       const dropped = merged.length - limited.length;

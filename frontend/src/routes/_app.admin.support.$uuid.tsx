@@ -92,10 +92,14 @@ function AdminSupportDetailPage() {
                 <PriorityBadge priority={ticket.priority} />
                 <CategoryBadge category={ticket.category} />
                 <AssignmentBadge role={ticket.assigned_to_role} />
-                <span>{ticket.organization_name ?? "—”"}</span>
+                <span>{ticket.organization_name ?? "—"}</span>
                 <span>
                   {t("supportTickets.raisedBy")}:{" "}
-                  {ticket.raised_by_name ?? ticket.raised_by_email ?? "—”"}
+                  {ticket.raised_by_name ?? ticket.raised_by_email ?? "—"}
+                </span>
+                <span>
+                  {t("supportTickets.department")}: {" "}
+                  {ticket.raised_by_department ?? "—"}
                 </span>
               </div>
             </div>

@@ -452,6 +452,8 @@ function AllocationsTab() {
   const [allocSearch, setAllocSearch] = useState("");
   const [allocDepartment, setAllocDepartment] = useState("");
   const [allocDesignation, setAllocDesignation] = useState("");
+  const [bulkLeaveType, setBulkLeaveType] = useState("");
+  const [bulkDays, setBulkDays] = useState("");
 
   const availableYears = Array.from(
     new Set([thisYear, thisYear - 1].concat(year)),
@@ -493,6 +495,22 @@ function AllocationsTab() {
       toast.error(e?.response?.data?.message ?? t("orgLeaves.allocSaveFailed")),
   });
 
+  const setDesignationAllocation = useMutation({
+    mutationFn: () =>
+      orgLeaveAllocationService.setByDesignation({
+        designation_uuid: allocDesignation,
+        leave_type_id: Number(bulkLeaveType),
+        year,
+        allocated_days: Number(bulkDays),
+      }),
+    onSuccess: (result) => {
+      toast.success(t("orgLeaves.allocBulkSaved", { count: result.employee_count }));
+      qc.invalidateQueries({ queryKey: ["orgLeaveAllocations", year] });
+    },
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.message ?? t("orgLeaves.allocSaveFailed")),
+  });
+
   const leaveTypes = allocations.data?.leaveTypes ?? [];
   const employees = allocations.data?.employees ?? [];
 
@@ -504,19 +522,13 @@ function AllocationsTab() {
     ),
   ).sort((a, b) => a.localeCompare(b));
 
-  const designations = Array.from(
-    new Set(
-      employees
-        .map((e) => e.designation?.trim())
-        .filter((d): d is string => !!d),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
+  const designations = allocations.data?.designations ?? [];
 
   const query = allocSearch.trim().toLowerCase();
   const filteredEmployees = employees.filter((e) => {
     if (query && !e.full_name?.toLowerCase().includes(query)) return false;
     if (allocDepartment && e.department !== allocDepartment) return false;
-    if (allocDesignation && e.designation !== allocDesignation) return false;
+    if (allocDesignation && e.designation_uuid !== allocDesignation) return false;
     return true;
   });
 
@@ -535,6 +547,8 @@ function AllocationsTab() {
               setAllocSearch("");
               setAllocDepartment("");
               setAllocDesignation("");
+              setBulkLeaveType("");
+              setBulkDays("");
             }}
           >
             <SelectTrigger className="w-32">
@@ -579,12 +593,35 @@ function AllocationsTab() {
             <SelectContent>
               <SelectItem value="">{t("orgLeaves.allocAllDesignations")}</SelectItem>
               {designations.map((d) => (
-                <SelectItem key={d} value={d}>
-                  {d}
+                <SelectItem key={d.uuid} value={d.uuid}>
+                  {d.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="mb-4 flex flex-col gap-3 rounded-md border border-border p-3 sm:flex-row sm:items-end">
+          <div className="min-w-48 flex-1">
+            <Label className="mb-1.5 block text-xs">{t("orgLeaves.allocBulkType")}</Label>
+            <Select value={bulkLeaveType} onValueChange={setBulkLeaveType}>
+              <SelectTrigger><SelectValue placeholder={t("orgLeaves.allocBulkTypePlaceholder")} /></SelectTrigger>
+              <SelectContent>
+                {leaveTypes.map((lt) => <SelectItem key={lt.id} value={String(lt.id)}>{lt.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full sm:w-32">
+            <Label htmlFor="designation-allocation-days" className="mb-1.5 block text-xs">{t("orgLeaves.allocated")}</Label>
+            <Input id="designation-allocation-days" type="number" min={0} step={1} value={bulkDays} onChange={(e) => setBulkDays(e.target.value)} />
+          </div>
+          <Button
+            type="button"
+            disabled={isLocked || !allocDesignation || !bulkLeaveType || bulkDays === "" || !/^\d+$/.test(bulkDays) || setDesignationAllocation.isPending}
+            onClick={() => setDesignationAllocation.mutate()}
+          >
+            {setDesignationAllocation.isPending ? t("orgLeaves.allocBulkSaving") : t("orgLeaves.allocBulkApply")}
+          </Button>
         </div>
 
         {allocations.isLoading ? (

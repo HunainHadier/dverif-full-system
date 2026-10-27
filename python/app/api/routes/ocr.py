@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from app.schemas.ocr import OcrResponse
+from app.core.document_schemas import get_schema
 from app.services.laya_engine import score_document
 from app.services.ocr_service import extractFields, extractText
 from app.utils.file_handling import _persist_upload
@@ -50,7 +51,8 @@ def run_ocr_extract(
     tmp_path = None
     try:
         tmp_path = _persist_upload(file)
-        text = extractText(tmp_path)
+        canonical_type, _ = get_schema(document_type)
+        text = extractText(tmp_path, all_pages=canonical_type == "resume")
         result = extractFields(text, document_type)
         result["laya"] = score_document(text)
         # Observability metadata only — never the extracted values.

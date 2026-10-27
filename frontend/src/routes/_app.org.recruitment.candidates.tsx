@@ -1,5 +1,5 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -318,6 +318,12 @@ type ParsedResume = {
   phone_confidence?: "high" | "low" | "not_visible" | null;
 };
 
+function buildCoverLetter(candidateName: string, openingTitle: string) {
+  const name = candidateName.trim() || "Applicant";
+  const role = openingTitle.trim() || "the advertised position";
+  return `Dear Hiring Team,\n\nI am writing to apply for the ${role} position. Please find my CV attached for your consideration; it outlines my background and qualifications.\n\nI would welcome the opportunity to discuss how my experience and skills may fit the needs of this role. Thank you for your time and consideration.\n\nSincerely,\n${name}`;
+}
+
 /**
  * The small marker under a field that was filled in by the CV read.
  *
@@ -412,6 +418,8 @@ function AddCandidateDialog({
    */
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [parsed, setParsed] = useState<ParsedResume | null>(null);
+  const parseSequence = useRef(0);
+  const generatedCoverLetter = useRef("");
   /*
    * null until the recruiter has actually read the CV, then true on success and
    * false once a read has failed OR the CV was never read at all. The three are
@@ -434,8 +442,26 @@ function AddCandidateDialog({
     setResumeFile(null);
     setParsed(null);
     setParseFailed(false);
+    parseSequence.current += 1;
+    generatedCoverLetter.current = "";
     setIdentityErrors({});
   }, [open, candidate?.uuid, openings, reset]);
+
+  const selectedOpeningUuid = form.watch("opening_uuid");
+  const watchedCandidateName = form.watch("full_name");
+
+  useEffect(() => {
+    if (!resumeFile) return;
+    const openingTitle = openings.find((o) => o.uuid === selectedOpeningUuid)?.title;
+    if (!openingTitle) return;
+
+    const currentLetter = form.getValues("cover_letter");
+    if (currentLetter && currentLetter !== generatedCoverLetter.current) return;
+
+    const draft = buildCoverLetter(watchedCandidateName, openingTitle);
+    form.setValue("cover_letter", draft, { shouldDirty: true });
+    generatedCoverLetter.current = draft;
+  }, [form, openings, resumeFile, selectedOpeningUuid, watchedCandidateName]);
 
   /*
    * Read the CV the moment it is dropped, not on submit.
@@ -451,8 +477,9 @@ function AddCandidateDialog({
    * "parsed" state that could win a merge against a human's correction.
    */
   const parse = useMutation({
-    mutationFn: (file: File) => candidatesService.parseResume(file),
-    onSuccess: (fields) => {
+    mutationFn: ({ file }: { file: File; sequence: number }) => candidatesService.parseResume(file),
+    onSuccess: (fields, variables) => {
+      if (variables.sequence !== parseSequence.current) return;
       setParsed(fields);
       setParseFailed(false);
       /*
@@ -478,7 +505,8 @@ function AddCandidateDialog({
         setIdentityErrors((prev) => ({ ...prev, cnic: undefined }));
       }
     },
-    onError: () => {
+    onError: (_error, variables) => {
+      if (variables.sequence !== parseSequence.current) return;
       // A failed read is NOT a failed form: the recruiter can still type the
       // candidate in by hand and save, so the file stays selected and can be
       // retried rather than being cleared out of the way.
@@ -617,11 +645,41 @@ function AddCandidateDialog({
             value={resumeFile ? [resumeFile] : []}
             onChange={(files) => {
               const file = files[0] ?? null;
+              const oldParsed = parsed;
+              const clearIfStillFromOldCv = (field: "full_name" | "email" | "phone" | "cnic", oldValue: string | null | undefined) => {
+                if (!oldValue) return;
+                const normalizedOld = field === "cnic" ? normalizeCNIC(oldValue) : oldValue;
+                if (form.getValues(field) === normalizedOld) {
+                  form.setValue(field, "", { shouldDirty: true });
+                }
+              };
+
+              if (!file || file !== resumeFile) {
+                clearIfStillFromOldCv("full_name", oldParsed?.name);
+                clearIfStillFromOldCv("email", oldParsed?.email);
+                clearIfStillFromOldCv("phone", oldParsed?.phone);
+                clearIfStillFromOldCv("cnic", oldParsed?.cnic);
+                if (generatedCoverLetter.current && form.getValues("cover_letter") === generatedCoverLetter.current) {
+                  form.setValue("cover_letter", "", { shouldDirty: true });
+                }
+                generatedCoverLetter.current = "";
+              }
+
+              const sequence = ++parseSequence.current;
               setResumeFile(file);
               setParsed(null);
               setParseFailed(false);
-              if (file) parse.mutate(file);
+              if (file) parse.mutate({ file, sequence });
               else parse.reset();
+              if (file) {
+                const openingTitle = openings.find((o) => o.uuid === form.getValues("opening_uuid"))?.title;
+                const currentLetter = form.getValues("cover_letter");
+                if (openingTitle && (!currentLetter || currentLetter === generatedCoverLetter.current)) {
+                  const draft = buildCoverLetter(form.getValues("full_name"), openingTitle);
+                  form.setValue("cover_letter", draft, { shouldDirty: true });
+                  generatedCoverLetter.current = draft;
+                }
+              }
             }}
             accept={RESUME_ACCEPT}
             maxFiles={1}
@@ -654,7 +712,7 @@ function AddCandidateDialog({
                 variant="link"
                 size="sm"
                 className="h-auto p-0 text-xs text-destructive"
-                onClick={() => resumeFile && parse.mutate(resumeFile)}
+                onClick={() => resumeFile && parse.mutate({ file: resumeFile, sequence: ++parseSequence.current })}
                 disabled={!resumeFile}
               >
                 <RefreshCw className="mr-1 h-3 w-3" aria-hidden="true" />
@@ -748,6 +806,7 @@ function AddCandidateDialog({
             rows={3}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
           />
+          <span className="text-xs text-muted-foreground">{t("recruitment.coverLetterAutoHint")}</span>
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.internalNotes")}</span>

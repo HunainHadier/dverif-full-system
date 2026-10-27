@@ -9,6 +9,7 @@ import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
 import { sendInviteEmail } from "../../utils/mailer.js";
 import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
+import { applyDesignationLeavePolicies } from "../../utils/designationLeavePolicy.js";
 import { STAFF_ROLES, assertRole, ROLE_ORG_ADMIN } from "../../utils/roles.js";
 import { cnicError, isValidPhone as isValidContactPhone, normalizeCnic } from "../../utils/contactFormat.js";
 
@@ -253,6 +254,10 @@ export async function createEmployee(req, res) {
     await conn.query("UPDATE employees SET employee_code=? WHERE id=? AND organization_id=?", [employeeCode, res2.insertId, orgId]);
     const [[createdEmployee]] = await conn.query("SELECT uuid FROM employees WHERE id=?", [res2.insertId]);
     createdEmployeeUuid = createdEmployee.uuid;
+
+    if (designationId && ["active", "current_employee"].includes(data.status)) {
+      await applyDesignationLeavePolicies(conn, orgId, createdEmployeeUuid, designationId);
+    }
 
     // Requirement 2: capture the employee's starting salary as the first
     // employee_salary_history row (active period) at creation time.

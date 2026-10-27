@@ -113,6 +113,11 @@ function OrgSupportDetailPage() {
               </div>
             </div>
           </div>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+            <span>{t("supportTickets.organization")}: {ticket.organization_name ?? "—"}</span>
+            <span>{t("supportTickets.raisedBy")}: {ticket.raised_by_name ?? ticket.raised_by_email ?? "—"}</span>
+            <span>{t("supportTickets.department")}: {ticket.raised_by_department ?? "—"}</span>
+          </div>
           <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
             {ticket.description}
           </p>
