@@ -1689,7 +1689,6 @@ export async function scheduleInterview({
         )
       : [[]];
     const interviewer = interviewerUser ? { ...interviewerUser, linked_user_uuid: interviewerUser.uuid } : legacyInterviewer;
-    const actionUrl = notificationActionUrl("/my-interviews");
     const dateLabel = new Date(scheduledAt).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" });
     const deliveries = [queueNotificationEmail({
       category: "recruitment",
