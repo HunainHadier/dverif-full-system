@@ -405,7 +405,6 @@ export interface FileRoutesByFullPath {
   '/my-letters': typeof AppMyLettersRoute
   '/my-interviews': typeof AppMyInterviewsRoute
   '/my-interviews': typeof AppMyInterviewsRoute
-  '/my-interviews': typeof AppMyInterviewsRoute
   '/my-resignation': typeof AppMyResignationRoute
   '/payments': typeof AppPaymentsRoute
   '/payroll': typeof AppPayrollRoute
@@ -468,6 +467,7 @@ export interface FileRoutesByTo {
   '/my-assets': typeof AppMyAssetsRoute
   '/my-expenses': typeof AppMyExpensesRoute
   '/my-letters': typeof AppMyLettersRoute
+  '/my-interviews': typeof AppMyInterviewsRoute
   '/my-resignation': typeof AppMyResignationRoute
   '/payments': typeof AppPaymentsRoute
   '/payroll': typeof AppPayrollRoute
