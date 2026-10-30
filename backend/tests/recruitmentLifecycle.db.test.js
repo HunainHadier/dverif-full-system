@@ -630,6 +630,7 @@ describe.runIf(HAS_DB)("interviews", () => {
       await scheduleInterview({
         orgId,
         candidateUuid: candidate.uuid,
+        interviewerUuid: adminUuid,
         scheduledAt: at,
         conn: db,
       });
