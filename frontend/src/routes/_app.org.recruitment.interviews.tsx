@@ -361,7 +361,6 @@ function ScheduleDialog({
   const interviewerUuid = form.watch("interviewer_uuid");
   const interviewerOptions = useMemo(
     () => [
-      { value: "", label: t("recruitment.interviewerUnassigned") },
       ...(interviewers.data ?? []).map((person) => ({
         value: person.uuid,
         label: person.full_name,
@@ -387,7 +386,7 @@ function ScheduleDialog({
     mutationFn: (v: ScheduleForm) =>
       interviewsService.schedule({
         candidate_uuid: v.candidate_uuid,
-        interviewer_uuid: v.interviewer_uuid || undefined,
+        interviewer_uuid: v.interviewer_uuid,
         // A `datetime-local` string is wall-clock time with no zone. Sending it
         // verbatim would have the server store it as UTC and shift every interview by
         // the browser's offset.
@@ -430,7 +429,10 @@ function ScheduleDialog({
       // people with the same name in the list indistinguishable. The extra width buys
       // the whole designation.
       size="lg"
-      onSubmit={(v) => schedule.mutate(v)}
+      onSubmit={(v) => {
+        if (!v.interviewer_uuid) { toast.error("Select an interviewer before scheduling"); return; }
+        schedule.mutate(v);
+      }}
     >
       <div className="space-y-3">
         <label className="block space-y-1 text-sm">
@@ -457,7 +459,7 @@ function ScheduleDialog({
             items={interviewerOptions}
             value={interviewerUuid}
             onChange={(value) => form.setValue("interviewer_uuid", value, { shouldDirty: true })}
-            placeholder={t("recruitment.interviewerUnassigned")}
+            placeholder="Select an interviewer"
             searchPlaceholder={t("recruitment.searchInterviewer", "Search interviewer...")}
             emptyText={t("recruitment.noInterviewersFound", "No interviewers found.")}
           />
