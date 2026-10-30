@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CheckCircle2, LogOut, ShieldAlert, Users } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldAlert, Users, Plus, Trash2, Pencil, X } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -27,6 +27,8 @@ import {
   isCurrentEmployee,
   orgService,
   type ClearanceQueueRow,
+  type ClearanceTemplateTask,
+  type ClearanceDepartment,
   type ExitRequestDetail,
   type ExitRequestListRow,
   type ExitStatus,
@@ -82,6 +84,7 @@ function OrgOffboardingPage() {
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  const isOrgAdmin = authStore.get().user?.org_role === "org_admin";
 
   useEffect(() => {
     setPage(1);
@@ -194,6 +197,7 @@ function OrgOffboardingPage() {
               {t("offboarding.clearances")}
               {queue.length > 0 ? <Badge variant="outline" className="ml-2">{queue.length}</Badge> : null}
             </TabsTrigger>
+            {isOrgAdmin ? <TabsTrigger value="templates">Clearance Settings</TabsTrigger> : null}
           </TabsList>
 
           <TabsContent value="requests">
@@ -249,6 +253,12 @@ function OrgOffboardingPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {isOrgAdmin ? (
+            <TabsContent value="templates">
+              <ClearanceTemplatePanel />
+            </TabsContent>
+          ) : null}
         </Tabs>
 
         <ExitDetailSheet
@@ -278,6 +288,96 @@ function OrgOffboardingPage() {
         />
       </div>
     </ModuleGate>
+  );
+}
+
+
+function ClearanceTemplatePanel() {
+  const qc = useQueryClient();
+  const [taskName, setTaskName] = useState("");
+  const [department, setDepartment] = useState<ClearanceDepartment>("HR");
+  const [editing, setEditing] = useState<ClearanceTemplateTask | null>(null);
+  const query = useQuery({
+    queryKey: ["offboarding-clearance-templates"],
+    queryFn: offboardingService.listClearanceTemplates,
+  });
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["offboarding-clearance-templates"] });
+  const save = useMutation({
+    mutationFn: () => editing
+      ? offboardingService.updateClearanceTemplate(editing.uuid, {
+          department, task_name: taskName.trim(), is_active: Boolean(editing.is_active),
+        })
+      : offboardingService.createClearanceTemplate({ department, task_name: taskName.trim() }),
+    onSuccess: () => {
+      toast.success(editing ? "Clearance task updated" : "Clearance task added");
+      setTaskName("");
+      setDepartment("HR");
+      setEditing(null);
+      refresh();
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Could not save clearance task")),
+  });
+  const remove = useMutation({
+    mutationFn: (uuid: string) => offboardingService.deleteClearanceTemplate(uuid as UUID),
+    onSuccess: () => { toast.success("Clearance task removed"); refresh(); },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Could not remove clearance task")),
+  });
+  const toggle = useMutation({
+    mutationFn: (item: ClearanceTemplateTask) => offboardingService.updateClearanceTemplate(item.uuid, {
+      department: item.department, task_name: item.task_name, is_active: !Boolean(item.is_active),
+    }),
+    onSuccess: refresh,
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Could not update clearance task")),
+  });
+  const startEdit = (item: ClearanceTemplateTask) => {
+    setEditing(item);
+    setTaskName(item.task_name);
+    setDepartment(item.department);
+  };
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-4">
+        <div>
+          <h3 className="font-semibold">Organization clearance checklist</h3>
+          <p className="text-sm text-muted-foreground">
+            Active tasks are copied into each new exit request. Changes here do not alter existing exits. No tasks are added automatically.
+          </p>
+        </div>
+        <form className="grid gap-2 sm:grid-cols-[1fr_150px_auto_auto]" onSubmit={(e) => { e.preventDefault(); if (taskName.trim()) save.mutate(); }}>
+          <input value={taskName} onChange={(e) => setTaskName(e.target.value)} maxLength={200} required placeholder="Enter clearance task" className="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+          <select value={department} onChange={(e) => setDepartment(e.target.value as ClearanceDepartment)} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
+            {(["IT", "Finance", "Assets", "HR"] as ClearanceDepartment[]).map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <Button type="submit" disabled={!taskName.trim() || save.isPending} loading={save.isPending}>
+            {editing ? <Pencil className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+            {editing ? "Save changes" : "Add task"}
+          </Button>
+          {editing ? <Button type="button" variant="outline" onClick={() => { setEditing(null); setTaskName(""); setDepartment("HR"); }}><X className="h-4 w-4" /></Button> : null}
+        </form>
+        {query.isLoading ? <p className="text-sm text-muted-foreground">Loading tasks…</p> : null}
+        {query.data?.length ? (
+          <div className="divide-y rounded-lg border">
+            {query.data.map((item) => (
+              <div key={item.uuid} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2"><Badge variant="secondary">{item.department}</Badge><Badge variant={Boolean(item.is_active) ? "default" : "outline"}>{Boolean(item.is_active) ? "Active" : "Inactive"}</Badge></div>
+                  <p className="mt-1 text-sm font-medium">{item.task_name}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => startEdit(item)}><Pencil className="mr-1 h-3.5 w-3.5" />Edit</Button>
+                  <Button size="sm" variant="outline" onClick={() => toggle.mutate(item)} disabled={toggle.isPending}>{Boolean(item.is_active) ? "Deactivate" : "Activate"}</Button>
+                  <Button size="sm" variant="destructive" onClick={() => remove.mutate(item.uuid)} disabled={remove.isPending}><Trash2 className="h-4 w-4" /></Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No clearance tasks configured. New exit requests will start with an empty checklist and can still be completed once assets are returned.
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
