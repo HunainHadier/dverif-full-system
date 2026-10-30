@@ -118,21 +118,25 @@ export async function orgDashboardAnalytics(req, res) {
     [orgId]
   );
 
-  // 9. Leave utilization by type (current year approved days)
+  // 9. Leave utilization by type (current year approved days for all configured leave types)
   const [leaveUtil] = await pool.query(
     `SELECT lt.name AS leave_type,
             COALESCE(SUM(
-              DATEDIFF(
-                LEAST(lr.end_date, LAST_DAY(CONCAT(YEAR(CURDATE()), '-', LPAD(MONTH(CURDATE()),2,'0'), '-01'))),
-                GREATEST(lr.start_date, CONCAT(YEAR(CURDATE()), '-01-01'))
-              ) + 1
+              CASE
+                WHEN lr.status = 'approved' AND YEAR(lr.start_date) = YEAR(CURDATE()) THEN
+                  DATEDIFF(
+                    LEAST(lr.end_date, CONCAT(YEAR(CURDATE()), '-12-31')),
+                    GREATEST(lr.start_date, CONCAT(YEAR(CURDATE()), '-01-01'))
+                  ) + 1
+                ELSE 0
+              END
             ), 0) AS days_used
-     FROM leave_requests lr
-     JOIN employees e ON e.uuid = lr.employee_uuid
-     JOIN leave_types lt ON lt.id = lr.leave_type_id
-     WHERE e.organization_id=? AND lr.status='approved' AND YEAR(lr.start_date)=YEAR(CURDATE())
+     FROM leave_types lt
+     LEFT JOIN leave_requests lr ON lt.id = lr.leave_type_id
+     LEFT JOIN employees e ON e.uuid = lr.employee_uuid AND e.organization_id = lt.organization_id
+     WHERE lt.organization_id = ?
      GROUP BY lt.id, lt.name
-     ORDER BY days_used DESC`,
+     ORDER BY days_used DESC, lt.name ASC`,
     [orgId]
   );
 
