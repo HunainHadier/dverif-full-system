@@ -1605,6 +1605,8 @@ export async function scheduleInterview({
     throw new ApiError(400, "scheduled_at must be a valid date and time");
   }
 
+  if (!interviewerUuid) throw new ApiError(400, "Select an interviewer before scheduling this interview");
+
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
 
   // Booking someone for an interview while they are still in `applied` records a
