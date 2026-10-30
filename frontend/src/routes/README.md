@@ -143,7 +143,9 @@ holds the **single** navigation guard in `beforeLoad`: no token ⇒ `/login`, el
    same table, so a rendered link and the guard can never disagree.
 4. If the page is plan-gated, wrap it in `components/hr/ModuleGate.tsx` (module flags),
    not `RequireOrgFeature` (delegated permissions). Personal ESS pages are role-gated,
-   never permission-gated.
+   never permission-gated. If the page also has a sidebar link, add its path to
+   `ROUTE_MODULES` in `src/lib/routeModules.ts` so the menu offers the upgrade badge
+   instead of opening a page that can only show the lock card.
 5. Use `t("…")` for every visible string, add the keys to **both** `en.json` and
    `ur.json`, then run `npm run audit:i18n`.
 6. `npm run verify` before you push.

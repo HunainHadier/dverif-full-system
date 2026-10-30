@@ -339,6 +339,13 @@ export async function createLeave(req, res) {
         message: `${req.user.full_name} requested ${days} day(s) of ${ltRows[0].name} leave.`,
         link: "/org/leaves",
         referenceId: rows[0].uuid,
+        email: {
+          category: "leave",
+          eventKey: `leave:${rows[0].uuid}:submitted`,
+          subject: `Leave request needs review — ${req.user.full_name}`,
+          title: "New leave request",
+          message: `${req.user.full_name} requested ${days} day(s) of ${ltRows[0].name} leave. Please review the request in Dverif.`,
+        },
       });
     }
   } catch (e) {
@@ -505,6 +512,13 @@ export async function decideLeave(req, res) {
         message: `Your ${lr.leave_type_name} leave request (${isoDate(lr.start_date)} → ${isoDate(lr.end_date)}) was ${statusText.toLowerCase()}.`,
         link: "/leaves",
         referenceId: uuid,
+        email: {
+          category: "leave",
+          eventKey: `leave:${uuid}:decision:${status}`,
+          subject: `Your ${lr.leave_type_name} leave was ${statusText.toLowerCase()}`,
+          title: `Leave ${statusText.toLowerCase()}`,
+          message: `Your ${lr.leave_type_name} leave request (${isoDate(lr.start_date)} to ${isoDate(lr.end_date)}) was ${statusText.toLowerCase()}.`,
+        },
       });
     } catch (e) {
       console.error("Leave decision notification failed:", e.message);

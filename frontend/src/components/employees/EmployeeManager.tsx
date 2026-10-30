@@ -54,7 +54,7 @@ type EmployeeApi = {
     total: number;
     totalPages: number;
   }>;
-  create: (data: Record<string, unknown>) => Promise<{ employee: EmployeeRecord; _email_warning?: string }>;
+  create: (data: Record<string, unknown>) => Promise<{ employee: EmployeeRecord; _email_warning?: string; linked_existing_account?: boolean }>;
   update: (uuid: UUID, data: Record<string, unknown>) => Promise<EmployeeRecord>;
   remove: (uuid: UUID) => Promise<unknown>;
   archiveReference?: (uuid: UUID) => Promise<EmployeeRecord>;
@@ -202,8 +202,12 @@ export function EmployeeManager({
 
   const resendInviteMut = useMutation({
     mutationFn: (uuid: UUID) => orgService.resendInvite(uuid),
-    onSuccess: () => {
-      toast.success("Invite resent. Fresh set-password link sent.");
+    onSuccess: (res) => {
+      toast.success(
+        res?.linked_existing_account
+          ? "Existing platform account linked."
+          : "Invite resent. Fresh set-password link sent.",
+      );
       invalidate();
     },
     onError: (e) => toast.error(apiErrorMessage(e, "Resend failed")),
@@ -675,10 +679,13 @@ function EmployeeFormDialog({
         const newUuid = createdRes?.employee?.uuid;
         // Saving an employee that carries an email already created their
         // platform account and emailed a set-password link, so there is no
-        // separate "invite" step any more.
-        const created = form.email.trim()
-          ? "Employee created — set-password link emailed to them."
-          : "Employee created.";
+        // separate "invite" step any more. A returning employee is different:
+        // their existing account was linked, so no email was sent.
+        const created = createdRes?.linked_existing_account
+          ? "Employee created — existing platform account linked."
+          : form.email.trim()
+            ? "Employee created — set-password link emailed to them."
+            : "Employee created.";
 
         if (stagedDocs.length && newUuid) {
           try {

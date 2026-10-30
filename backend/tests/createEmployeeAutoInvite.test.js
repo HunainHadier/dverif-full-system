@@ -56,7 +56,9 @@ function installRouter() {
   const route = (sql) => {
     const s = String(sql);
     if (s.includes("SELECT id FROM organizations")) return [[{ id: 1 }]];
-    if (s.includes("SELECT uuid FROM users WHERE email")) return [[]];
+    if (s.includes("FROM users WHERE email")) return [[]];
+    if (s.includes("FROM users WHERE") && s.includes("REPLACE(REPLACE(cnic")) return [[]];
+    if (s.includes("FROM users WHERE") && s.includes("phone_normalized")) return [[]];
     if (s.includes("SELECT id, uuid, email") && s.includes("FROM users")) return [[]];
     if (s.includes("SELECT uuid FROM users WHERE `phone_normalized`")) return [[]];
     if (s.includes("SELECT uuid FROM users WHERE `cnic`")) return [[]];

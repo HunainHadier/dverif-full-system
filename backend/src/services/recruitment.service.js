@@ -8,8 +8,10 @@ import * as attachments from "./attachments.service.js";
 import { getTemplate, listTemplates } from "./hrLetters.service.js";
 import { renderTemplate, validateBody, tagsForLetterType, tagLabel, unsupportedTags } from "../utils/letterMerge.js";
 import { sendRecruitmentOfferEmail } from "../utils/mailer.js";
+import { queueNotificationEmail, notificationActionUrl } from "./notificationEmail.service.js";
 import { generateHrLetterPdf } from "../utils/hrLetterPdf.js";
 import { cnicError, normalizeCnic } from "../utils/contactFormat.js";
+import { assertEmploymentIdentityAvailable } from "../utils/identityUniqueness.js";
 import { applyDesignationLeavePolicies } from "../utils/designationLeavePolicy.js";
 import { ocrExtract } from "./documentService.js";
 
@@ -1120,6 +1122,24 @@ async function hireCandidateInTransaction({
    * own email check at that point. A candidate hired from a walk-in with no email
    * on file is therefore a normal, complete hire rather than a refused one.
    */
+  /*
+   * Hiring is an EMPLOYMENT, so the same organization-scoped identity rule as
+   * the Employees screen applies here. Without this check the hire path was the
+   * one way around it: a recruiter could create a second current employee with a
+   * CNIC that an existing employee already holds — or hire a person who is still
+   * on another organization's roster. A previous `ex_employee` row does not
+   * block, which is what lets a former employee be rehired normally.
+   *
+   * Runs inside the same transaction as the INSERT below, so the check and the
+   * write cannot be separated by a concurrent hire.
+   */
+  await assertEmploymentIdentityAvailable({
+    executor: db,
+    organizationId: orgId,
+    cnic: normalizedEffectiveCnic,
+    email: candidate.email,
+  });
+
   const employeeUuid = randomUUID();
   const [employeeInsert] = await db.query(
     `INSERT INTO employees
@@ -1620,6 +1640,43 @@ export async function scheduleInterview({
     entityId: uuid,
     details: { candidate_uuid: candidateUuid, scheduled_at: scheduledAt },
   });
+
+  try {
+    const [[opening]] = await conn.query("SELECT title FROM job_openings WHERE uuid=? AND organization_id=?", [candidate.job_opening_uuid, orgId]);
+    const [[interviewer]] = interviewerUuid
+      ? await conn.query(
+          `SELECT e.email, e.linked_user_uuid, e.full_name FROM employees e
+            WHERE e.uuid=? AND e.organization_id=? LIMIT 1`,
+          [interviewerUuid, orgId]
+        )
+      : [[]];
+    const actionUrl = notificationActionUrl("/org/recruitment/interviews");
+    const dateLabel = new Date(scheduledAt).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" });
+    const deliveries = [queueNotificationEmail({
+      category: "recruitment",
+      eventKey: `interview:${uuid}:scheduled:candidate`,
+      to: candidate.email,
+      subject: `Interview scheduled — ${opening?.title || "your application"}`,
+      title: "Your interview is scheduled",
+      message: `Your interview for ${opening?.title || "the position"} is scheduled for ${dateLabel}${mode ? ` (${mode})` : ""}${location ? ` at ${location}` : ""}.`,
+      actionUrl,
+    })];
+    if (interviewer?.email || interviewer?.linked_user_uuid) {
+      deliveries.push(queueNotificationEmail({
+        category: "recruitment",
+        eventKey: `interview:${uuid}:scheduled:interviewer`,
+        userUuid: interviewer.linked_user_uuid,
+        to: interviewer.email,
+        subject: `Interview scheduled — ${candidate.full_name}`,
+        title: "Interview added to your schedule",
+        message: `You are scheduled to interview ${candidate.full_name} for ${opening?.title || "a position"} on ${dateLabel}.`,
+        actionUrl,
+      }));
+    }
+    await Promise.allSettled(deliveries);
+  } catch (error) {
+    console.error("Interview email enqueue failed:", error?.message);
+  }
 
   return getInterview({ orgId, interviewUuid: uuid, conn });
 }

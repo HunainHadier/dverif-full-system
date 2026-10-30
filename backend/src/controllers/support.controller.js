@@ -7,6 +7,7 @@ import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { createNotificationForUsers } from "./notification.controller.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { OPEN_TICKET_NEEDS_ADMIN_REPLY } from "../utils/supportTicketPredicates.js";
+import { queueNotificationEmail } from "../services/notificationEmail.service.js";
 
 const VALID_PRIORITIES = ["low", "medium", "high"];
 const VALID_STATUSES = ["open", "in_progress", "resolved", "closed"];
@@ -124,7 +125,7 @@ async function getTicketNotifyOrgUserIds(ticketUuid) {
   return rows.map((r) => r.uuid).filter(Boolean);
 }
 
-async function notifySystemAdmins({ title, message, link, referenceId, type }) {
+async function notifySystemAdmins({ title, message, link, referenceId, type, email }) {
   const adminIds = await getAdminUuids();
   if (!adminIds.length) return;
   await createNotificationForUsers({
@@ -134,10 +135,11 @@ async function notifySystemAdmins({ title, message, link, referenceId, type }) {
     message,
     link,
     referenceId,
+    email,
   });
 }
 
-async function notifyOrgAdmins({ orgId, excludeUuid, title, message, link, referenceId, type }) {
+async function notifyOrgAdmins({ orgId, excludeUuid, title, message, link, referenceId, type, email }) {
   const adminIds = await getOrgAdminUuids(orgId, excludeUuid);
   if (!adminIds.length) return;
   await createNotificationForUsers({
@@ -147,6 +149,7 @@ async function notifyOrgAdmins({ orgId, excludeUuid, title, message, link, refer
     message,
     link,
     referenceId,
+    email,
   });
 }
 
@@ -353,6 +356,13 @@ export async function createTicket(req, res) {
         message: `${req.user.full_name} (${ticket.organization_name}) — ${ticket.subject}`,
         link: `/admin/support/${uuid}`,
         referenceId: uuid,
+        email: {
+          category: "support",
+          eventKey: `support:${uuid}:created:system`,
+          subject: `New support ticket: ${ticket.subject}`,
+          title: "New support ticket from an organization",
+          message: `${req.user.full_name} from ${ticket.organization_name} opened a ticket: ${ticket.subject}`,
+        },
       });
     } else {
       await notifyOrgAdmins({
@@ -363,8 +373,24 @@ export async function createTicket(req, res) {
         message: `${req.user.full_name} — ${ticket.subject}`,
         link: `/org/support/${uuid}`,
         referenceId: uuid,
+        email: {
+          category: "support",
+          eventKey: `support:${uuid}:created:org`,
+          subject: `New support ticket: ${ticket.subject}`,
+          title: "New support ticket",
+          message: `${req.user.full_name} opened a support ticket: ${ticket.subject}`,
+        },
       });
     }
+    await queueNotificationEmail({
+      userUuid: req.user.uuid,
+      category: "support",
+      eventKey: `support:${uuid}:receipt:${req.user.uuid}`,
+      subject: `Support ticket received: ${ticket.subject}`,
+      title: "We received your support ticket",
+      message: `Your ticket “${ticket.subject}” was received. Our support team will update you by email when they reply or change its status.`,
+      actionUrl: `/org/support/${uuid}`,
+    });
   } catch (e) {
     console.error("Support ticket notification failed:", e.message);
   }
@@ -422,6 +448,13 @@ export async function addOrgReply(req, res) {
         message: `${req.user.full_name} replied: ${ticket.subject}`,
         link: `/admin/support/${uuid}`,
         referenceId: uuid,
+        email: {
+          category: "support",
+          eventKey: `support:${uuid}:reply:${replyUuid}`,
+          subject: `New reply on support ticket: ${ticket.subject}`,
+          title: "New reply on a support ticket",
+          message: `${req.user.full_name} replied to: ${ticket.subject}`,
+        },
       });
     } else if (repliedByType === "admin") {
       // An org admin answered an employee/sub-admin ticket: notify the requester
@@ -437,6 +470,13 @@ export async function addOrgReply(req, res) {
           message: `${req.user.full_name} replied: ${ticket.subject}`,
           link: `/org/support/${uuid}`,
           referenceId: uuid,
+          email: {
+            category: "support",
+            eventKey: `support:${uuid}:reply:${replyUuid}`,
+            subject: `Support team replied: ${ticket.subject}`,
+            title: "Support team replied to your ticket",
+            message: `There is a new reply on “${ticket.subject}”. Sign in to read it securely.`,
+          },
         });
       }
     } else {
@@ -448,6 +488,13 @@ export async function addOrgReply(req, res) {
         message: `${req.user.full_name} replied: ${ticket.subject}`,
         link: `/org/support/${uuid}`,
         referenceId: uuid,
+        email: {
+          category: "support",
+          eventKey: `support:${uuid}:reply:${replyUuid}`,
+          subject: `New reply on support ticket: ${ticket.subject}`,
+          title: "New reply on a support ticket",
+          message: `${req.user.full_name} replied to: ${ticket.subject}`,
+        },
       });
     }
   } catch (e) {
@@ -555,6 +602,13 @@ export async function addAdminReply(req, res) {
         message: `${req.admin.full_name} replied: ${ticket.subject}`,
         link: `/org/support/${uuid}`,
         referenceId: uuid,
+        email: {
+          category: "support",
+          eventKey: `support:${uuid}:reply:${replyUuid}`,
+          subject: `Support team replied: ${ticket.subject}`,
+          title: "Support team replied to your ticket",
+          message: `There is a new reply on “${ticket.subject}”. Sign in to read it securely.`,
+        },
       });
     }
   } catch (e) {
@@ -602,8 +656,16 @@ export async function updateTicketStatus(req, res) {
     uuid,
   ]);
 
-  try {
+  const statusChanged = ticket.status !== status;
+  if (statusChanged) try {
     const orgUserIds = await getTicketNotifyOrgUserIds(uuid);
+    const statusEmail = {
+      category: "support",
+      eventKey: `support:${uuid}:status:${ticket.status}:${status}:${new Date(ticket.updated_at).getTime()}`,
+      subject: `Support ticket ${status.replace("_", " ")}: ${ticket.subject}`,
+      title: "Support ticket status updated",
+      message: `Ticket “${ticket.subject}” is now ${status.replace("_", " ")}.`,
+    };
     if (req.admin) {
       // System Admin -> notify the org side of the conversation.
       if (orgUserIds.length) {
@@ -614,6 +676,7 @@ export async function updateTicketStatus(req, res) {
           message: `${ticket.subject} → ${status}`,
           link: `/org/support/${uuid}`,
           referenceId: uuid,
+          email: statusEmail,
         });
       }
     } else if (targetRoleFor(ticket) === TICKET_ROLES.SYSTEM_ADMIN) {
@@ -624,6 +687,7 @@ export async function updateTicketStatus(req, res) {
         message: `${ticket.subject} → ${status}`,
         link: `/admin/support/${uuid}`,
         referenceId: uuid,
+        email: statusEmail,
       });
     } else {
       const recipients = orgUserIds.filter((id) => id !== req.user.uuid);
@@ -635,6 +699,7 @@ export async function updateTicketStatus(req, res) {
           message: `${ticket.subject} → ${status}`,
           link: `/org/support/${uuid}`,
           referenceId: uuid,
+          email: statusEmail,
         });
       }
     }

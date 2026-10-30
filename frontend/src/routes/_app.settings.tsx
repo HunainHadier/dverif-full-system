@@ -12,6 +12,7 @@ import {
   Database,
   FileStack,
   UserCog,
+  Mail,
 } from "lucide-react";
 
 import { PageHeader } from "@/components/common/PageHeader";
@@ -30,6 +31,8 @@ import { DatabaseBackupPanel } from "@/components/admin/DatabaseBackupPanel";
 import { authStore, useAuth } from "@/lib/auth";
 import { digitsOnly, resolveAssetUrl } from "@/lib/utils";
 import { setLanguage, getLanguage } from "@/i18n";
+import { notificationService, type NotificationEmailPreferences } from "@/services/misc";
+import { Switch } from "@/components/ui/switch";
 
 export const Route = createFileRoute("/_app/settings")({
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
@@ -71,6 +74,21 @@ function SettingsPage() {
     queryKey: ["me"],
     queryFn: (): Promise<ProfileData> =>
       user?.role === "admin" ? authService.adminMe() : authService.me(),
+  });
+
+  const emailPreferences = useQuery({
+    queryKey: ["notification-email-preferences"],
+    queryFn: notificationService.preferences,
+    enabled: Boolean(user) && !isPlatformAdmin,
+  });
+  const saveEmailPreference = useMutation({
+    mutationFn: ({ key, enabled }: { key: keyof NotificationEmailPreferences; enabled: boolean }) =>
+      notificationService.updatePreferences({ [key]: enabled }),
+    onSuccess: (preferences) => {
+      qc.setQueryData(["notification-email-preferences"], preferences);
+      toast.success(t("settings.emailPreferenceUpdated"));
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? t("settings.emailPreferenceFailed")),
   });
 
   const [fullName, setFullName] = useState("");
@@ -139,13 +157,19 @@ function SettingsPage() {
       <Tabs defaultValue={initialTab}>
         <TabsList
           className={`mb-4 grid h-auto w-full gap-1 p-1 sm:w-auto ${
-            isPlatformAdmin ? "sm:grid-cols-3" : "sm:grid-cols-1"
+            isPlatformAdmin ? "sm:grid-cols-3" : "sm:grid-cols-2"
           }`}
         >
           <TabsTrigger value="account" className="text-sm">
             <UserCog className="mr-1.5 h-4 w-4 shrink-0" />
             Account
           </TabsTrigger>
+          {!isPlatformAdmin && (
+            <TabsTrigger value="notifications" className="text-sm">
+              <Mail className="mr-1.5 h-4 w-4 shrink-0" />
+              {t("settings.emailNotifications")}
+            </TabsTrigger>
+          )}
           {/* System-admin-only tabs. Gated on the role here AND on the route in
               routeAccess.ts, and the endpoints themselves are behind
               authAdminEnv — this is just the UI half. */}
@@ -281,6 +305,42 @@ function SettingsPage() {
               {user?.role !== "admin" && <LanguagePreferenceCard />}
             </div>
           </TabsContent>
+
+        {!isPlatformAdmin && (
+          <TabsContent value="notifications">
+            <Card className="border-border/70 shadow-none">
+              <CardContent className="p-6">
+                <h2 className="text-sm font-semibold text-foreground">{t("settings.emailNotifications")}</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("settings.emailNotificationsHint")}
+                </p>
+                <div className="mt-5 divide-y divide-border">
+                  {([
+                    ["leave", "leaveEmails", "leaveEmailsHint"],
+                    ["support", "supportEmails", "supportEmailsHint"],
+                    ["recruitment", "recruitmentEmails", "recruitmentEmailsHint"],
+                    ["payroll", "payrollEmails", "payrollEmailsHint"],
+                    ["attendance", "attendanceEmails", "attendanceEmailsHint"],
+                    ["onboarding", "onboardingEmails", "onboardingEmailsHint"],
+                  ] as const).map(([key, titleKey, descriptionKey]) => (
+                    <div key={key} className="flex items-center justify-between gap-4 py-4">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{t(`settings.${titleKey}`)}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{t(`settings.${descriptionKey}`)}</p>
+                      </div>
+                      <Switch
+                        checked={emailPreferences.data?.[key] ?? true}
+                        disabled={!emailPreferences.data || saveEmailPreference.isPending}
+                        onCheckedChange={(enabled) => saveEmailPreference.mutate({ key, enabled })}
+                        aria-label={`${t(`settings.${titleKey}`)} email notifications`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {isPlatformAdmin && (
           <>

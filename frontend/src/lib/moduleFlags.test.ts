@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { MODULE_FEATURES, MODULE_GROUPS, ALL_MODULE_FLAGS_ON, type ModuleFlags } from "@/services";
+import {
+  MODULE_FEATURES,
+  MODULE_GROUPS,
+  IMPLEMENTED_MODULE_KEYS,
+  IMPLEMENTED_MODULE_FEATURES,
+  ALL_MODULE_FLAGS_ON,
+  type ModuleFlags,
+} from "@/services";
 
 /**
  * Guards the client-side mirror of the backend's module registry.
@@ -62,6 +69,32 @@ describe("MODULE_GROUPS partitions the registry exactly", () => {
       expect(group.label, group.key).toBeTruthy();
       expect(group.moduleKeys.length, group.key).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("IMPLEMENTED_MODULE_FEATURES — the plan editor only offers real modules", () => {
+  it("contains exactly the implemented keys, in registry order", () => {
+    expect(IMPLEMENTED_MODULE_FEATURES.map((m) => m.key)).toEqual([...IMPLEMENTED_MODULE_KEYS]);
+  });
+
+  it("hides modules that have no page or server gate yet", () => {
+    const offered = IMPLEMENTED_MODULE_FEATURES.map((m) => m.key);
+    for (const roadmapKey of [
+      "manpower_management",
+      "onboarding_management",
+      "training_management",
+      "performance_management",
+      "piece_work_management",
+      "travel_management",
+      "helpdesk_management",
+      "scheduled_reports",
+    ] as const) {
+      expect(offered, roadmapKey).not.toContain(roadmapKey);
+    }
+  });
+
+  it("never invents a key that the full registry does not know", () => {
+    expect(IMPLEMENTED_MODULE_KEYS.filter((key) => !ALL_KEYS.includes(key))).toEqual([]);
   });
 });
 

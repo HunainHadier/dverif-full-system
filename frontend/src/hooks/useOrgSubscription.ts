@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import {
   paymentService,
-  MODULE_FEATURES,
+  IMPLEMENTED_MODULE_FEATURES,
   type OrgSubscription,
   type ModuleFlags,
 } from "@/services";
@@ -61,8 +61,12 @@ export function useOrgSubscription() {
     isModuleLocked,
     lockedModules,
     moduleFlags,
-    /** True when the org has a live plan but it excludes at least one module. */
-    hasModuleLocks: isActive && MODULE_FEATURES.some((m) => isModuleFlagOff(m.key)),
+    /**
+     * True when the org has a live plan but it excludes at least one module
+     * that the app can actually open. Roadmap-only flags must not trigger an
+     * upgrade prompt on their own.
+     */
+    hasModuleLocks: isActive && IMPLEMENTED_MODULE_FEATURES.some((m) => isModuleFlagOff(m.key)),
     isLoading: q.isLoading,
   };
 }

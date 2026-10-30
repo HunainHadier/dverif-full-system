@@ -660,15 +660,53 @@ export const MODULE_FEATURES: { key: keyof ModuleFlags; label: string }[] = [
 ];
 
 /**
- * Presentation-only grouping of MODULE_FEATURES for the plan editor.
+ * Modules that actually exist in the app today: each one has a page, a
+ * ROUTE_MODULES entry for its sidebar links, and server-side enforcement.
  *
- * Eighteen flat toggles on one screen is unusable, so the plan editor renders
- * one collapsible section per group. This carries NO enforcement meaning: the
- * plan's `module_flags` is the only source of truth for access, and this
- * grouping must never be consulted to decide it.
+ * MODULE_FEATURES deliberately keeps the full future HR suite so the stored
+ * contract stays stable, but the plan editor must only offer toggles for the
+ * modules above. A switch for a module with no page is a switch that changes a
+ * boolean nothing reads: the plan looks richer than it is, and the admin has no
+ * way to tell which toggles are real.
  *
- * Every key must appear in exactly one group. `MODULE_GROUPS_ARE_COMPLETE` below
- * is asserted in tests so a newly added module cannot be forgotten here.
+ * Keep this list in sync with ROUTE_MODULES; lib/routeModules.test.ts asserts
+ * that the two describe exactly the same set of modules.
+ */
+export const IMPLEMENTED_MODULE_KEYS = [
+  "employee_management",
+  "attendance_management",
+  "user_management",
+  "leave_management",
+  "payroll_management",
+  "recruitment_management",
+  "separation_management",
+  "expense_management",
+  "asset_management",
+  "hr_letters_management",
+] as const satisfies readonly (keyof ModuleFlags)[];
+
+/**
+ * The plan-editor view of MODULE_FEATURES: implemented modules only, in the
+ * registry's order. The editor and the plan list both use this, so a plan can
+ * never advertise a module the product cannot open.
+ */
+export const IMPLEMENTED_MODULE_FEATURES = MODULE_FEATURES.filter(({ key }) =>
+  (IMPLEMENTED_MODULE_KEYS as readonly (keyof ModuleFlags)[]).includes(key),
+);
+
+/**
+ * Presentation-only grouping of MODULE_FEATURES.
+ *
+ * Available for grouped presentations such as a pricing comparison table. The
+ * plan editor currently renders the smaller IMPLEMENTED_MODULE_FEATURES list
+ * flat, because only modules that exist in the app are worth toggling.
+ *
+ * This carries NO enforcement meaning: the plan's `module_flags` is the only
+ * source of truth for access, and this grouping must never be consulted to
+ * decide it.
+ *
+ * Every key must appear in exactly one group. moduleFlags.test.ts asserts the
+ * partition so a newly added module cannot be forgotten here.
  */
 export const MODULE_GROUPS: {
   key: string;

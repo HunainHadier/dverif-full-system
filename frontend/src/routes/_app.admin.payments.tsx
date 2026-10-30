@@ -43,6 +43,7 @@ import { TableSkeleton } from "./_app.requests";
 import {
   adminService,
   MODULE_FEATURES,
+  IMPLEMENTED_MODULE_FEATURES,
   ALL_MODULE_FLAGS_ON,
   type ModuleFlags,
   type CustomPlanRequest,
@@ -881,6 +882,11 @@ function PlansTab() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["admin-plans"] });
     qc.invalidateQueries({ queryKey: ["marketing-plans"] });
+    // Saving a plan changes what every org on it can open. Refresh the
+    // subscription snapshot the sidebar badges read, and the plan-chooser
+    // banner, instead of leaving them stale until the next window focus.
+    qc.invalidateQueries({ queryKey: ["org-subscription"] });
+    qc.invalidateQueries({ queryKey: ["plans-banner"] });
   };
 
   const save = useMutation({
@@ -1069,7 +1075,7 @@ function PlansTab() {
                     <TableCell data-label="Features" className="text-muted-foreground">{(p.features ?? []).length}</TableCell>
                     <TableCell data-label="Modules">
                       <div className="flex items-center gap-1">
-                        {MODULE_FEATURES.map(({ key, label }) => {
+                        {IMPLEMENTED_MODULE_FEATURES.map(({ key, label }) => {
                           const on = p.module_flags?.[key] ?? true;
                           return (
                             <span
@@ -1086,7 +1092,7 @@ function PlansTab() {
                           );
                         })}
                         <span className="ml-1.5 text-xs font-medium tabular-nums">
-                          {MODULE_FEATURES.filter(({ key }) => p.module_flags?.[key] ?? true).length}/{MODULE_FEATURES.length}
+                          {IMPLEMENTED_MODULE_FEATURES.filter(({ key }) => p.module_flags?.[key] ?? true).length}/{IMPLEMENTED_MODULE_FEATURES.length}
                         </span>
                       </div>
                     </TableCell>
@@ -1249,7 +1255,7 @@ function PlansTab() {
             <div className="space-y-2">
               <Label>Modules included</Label>
               <div className="space-y-1.5">
-                {MODULE_FEATURES.map(({ key, label }) => (
+                {IMPLEMENTED_MODULE_FEATURES.map(({ key, label }) => (
                   <div
                     key={key}
                     className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2"
@@ -1269,7 +1275,8 @@ function PlansTab() {
               </div>
               <p className="text-xs text-muted-foreground">
                 These map to the plan's module_flags. A module switched off is blocked for
-                organizations subscribed to this plan.
+                organizations subscribed to this plan. Only modules that exist in the app are
+                listed; roadmap modules are hidden until they have a page.
               </p>
             </div>
             <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 p-3">

@@ -11,6 +11,7 @@ import * as payrollService from "../services/payroll.service.js";
 const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalaryRecordLines } =
   payrollService;
 import * as expenses from "../services/expenses.service.js";
+import { queueNotificationEmail, notificationActionUrl } from "../services/notificationEmail.service.js";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -76,11 +77,17 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
   // and never apply every active catalog component to every employee. Inactive
   // assignments are excluded so they stop affecting future runs; already-generated
   // records store computed totals and are never retroactively changed.
+  //
+  // The catalog's own is_active flag is checked as well. Deactivating a component
+  // in the catalog is documented as stopping it being applied to future payroll
+  // generations, and the status toggle writes only `salary_components.is_active`.
+  // Without this predicate the assignment kept paying an "inactive" component
+  // forever, while the screen showed it as switched off.
   const [empComponents] = await conn.query(
     `SELECT sc.name, sc.type, sc.is_percentage, esc.amount
      FROM employee_salary_components esc
      JOIN salary_components sc ON sc.id = esc.salary_component_id
-     WHERE esc.employee_uuid=? AND esc.is_active=1`,
+     WHERE esc.employee_uuid=? AND esc.is_active=1 AND sc.is_active=1`,
     [employeeUuid]
   );
 
@@ -206,6 +213,7 @@ export async function generatePayroll(req, res) {
 
   const conn = await pool.getConnection();
   let skipped = 0;
+  const generatedEmployeeUuids = [];
   // Declared outside the transaction block because it is reported after the commit.
   let claimsPaid = 0;
   /**
@@ -369,6 +377,7 @@ export async function generatePayroll(req, res) {
       // salary_record_lines has to point at it and the two are written in the same
       // transaction. UUID() inside the INSERT would return the value to nobody.
       const recordUuid = randomUUID();
+      generatedEmployeeUuids.push(emp.uuid);
       const carried = carriedExpenses.get(emp.uuid) ?? [];
       const carriedExpenseReimbursement = moneyField(
         carried.reduce((sum, line) => sum + Number(line.amount || 0), 0),
@@ -478,6 +487,7 @@ export async function generatePayroll(req, res) {
 
   const [rows] = await pool.query(
     `SELECT sr.*, e.full_name AS employee_name, e.email AS employee_email,
+            e.linked_user_uuid AS employee_user_uuid,
             dg.name AS designation, o.name AS organization_name
      FROM salary_records sr
      JOIN employees e ON e.uuid = sr.employee_uuid
@@ -487,6 +497,40 @@ export async function generatePayroll(req, res) {
      ORDER BY e.full_name`,
     [orgId, m, y]
   );
+
+  try {
+    const generated = new Set(generatedEmployeeUuids);
+    const period = `${MONTHS[m - 1]} ${y}`;
+    const employeeEmails = rows.filter((row) => generated.has(row.employee_uuid) && row.employee_user_uuid);
+    const notificationJobs = employeeEmails.map((row) => queueNotificationEmail({
+      category: "payroll",
+      eventKey: `payroll:${row.uuid}:payslip-ready`,
+      userUuid: row.employee_user_uuid,
+      subject: `Your ${period} payslip is ready`,
+      title: `Your ${period} payslip is ready`,
+      message: `Your payslip for ${period} has been generated. Sign in to Dverif to view it securely. Salary details are not included in this email.`,
+      actionUrl: notificationActionUrl("/payroll"),
+    }));
+    if (generatedEmployeeUuids.length) {
+      const [admins] = await pool.query(
+        `SELECT uuid FROM users WHERE organization=? AND status='active' AND deleted_at IS NULL
+          AND org_role IN ('org_admin','sub_admin')`,
+        [orgId]
+      );
+      notificationJobs.push(...admins.map((admin) => queueNotificationEmail({
+        category: "payroll",
+        eventKey: `payroll:${orgId}:${y}-${m}:completed:${admin.uuid}`,
+        userUuid: admin.uuid,
+        subject: `${period} payroll generated`,
+        title: "Payroll generation complete",
+        message: `Payroll for ${period} was generated for ${generatedEmployeeUuids.length} employee(s). ${skipped} selected employee(s) were skipped because a record already existed. Review the payroll in Dverif.`,
+        actionUrl: notificationActionUrl("/org/payroll"),
+      })));
+    }
+    await Promise.allSettled(notificationJobs);
+  } catch (error) {
+    console.error("Payroll email enqueue failed:", error?.message);
+  }
 
   logAudit({
     ...getActorFromReq(req),
@@ -582,8 +626,17 @@ export async function previewPayroll(req, res) {
        * total. It is money the employee is owed back for their own spending, and
        * an approver looking at a payslip deserves to see that it came from four
        * taxi claims rather than from a component nobody can name.
+       *
+       * The NUMERIC total is `expense_reimbursement` above, which is what the
+       * totals reducer and the preview dialog read. This detailed object used to
+       * also be called `expense_reimbursement`, and because it came second in the
+       * literal it silently replaced the number with an object. Every preview
+       * then crashed in the totals reducer ("expense reimbursement must be a
+       * non-negative number"), because Number(object) is NaN. One name per shape:
+       * the number keeps the field the client already expects, the breakdown gets
+       * its own key.
        */
-      expense_reimbursement: {
+      expense_reimbursement_details: {
         claim_count: computed.approvedClaims.length,
         amount: computed.expenseLine ? computed.expenseLine.amount : 0,
         claims: computed.approvedClaims,

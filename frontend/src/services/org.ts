@@ -43,7 +43,7 @@ export const orgService = {
     api.get<{ employee: EmployeeRecord }>(`/org/employees/${uuid}`).then((r) => r.data.employee),
   createEmployee: (data: Record<string, unknown>) =>
     api
-      .post<{ employee: EmployeeRecord; _email_warning?: string }>("/org/employees", data)
+      .post<{ employee: EmployeeRecord; _email_warning?: string; linked_existing_account?: boolean }>("/org/employees", data)
       .then((r) => r.data),
   createReference: (data: { full_name: string; cnic: string }) =>
     api
@@ -63,7 +63,9 @@ export const orgService = {
       .post<{ employee: EmployeeRecord }>(`/org/employees/${uuid}/archive-reference`)
       .then((r) => r.data.employee),
   resendInvite: (uuid: UUID) =>
-    api.post<{ message?: string }>(`/org/employees/${uuid}/resend-invite`).then((r) => r.data),
+    api
+      .post<{ linked_existing_account?: boolean }>(`/org/employees/${uuid}/resend-invite`)
+      .then((r) => r.data),
   departments: {
     list: () => api.get<{ items: ManagedOption[] }>("/org/departments").then((r) => r.data.items),
     create: (name: string) =>

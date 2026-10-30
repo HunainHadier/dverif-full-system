@@ -368,6 +368,25 @@ function emailWrapper(bodyHtml, lang = "en", preheader = "") {
 </html>`;
 }
 
+/** Shared branded template for queued workflow notifications. */
+export async function sendWorkflowNotificationEmail({ to, subject, title, message, actionUrl, lang = "en" }) {
+  const transporter = getMailerTransport();
+  if (!transporter) throw new Error("SMTP is not configured");
+  const bodyHtml = [
+    badge(lang === "ur" ? "خودکار اطلاع" : "Workflow notification", "info"),
+    h1(esc(title)),
+    p(esc(message).replace(/\n/g, "<br>")),
+    actionUrl ? button(actionUrl, lang === "ur" ? "کھولیں" : "Open in Dverif", lang) : "",
+    actionUrl ? linkFallback(actionUrl, lang) : "",
+  ].join("");
+  await transporter.sendMail(buildMail({
+    to,
+    subject,
+    text: [title, "", message, actionUrl ? `\n${actionUrl}` : ""].join("\n"),
+    html: emailWrapper(bodyHtml, lang, title),
+  }));
+}
+
 function requireTransport() {
   const transporter = getMailerTransport();
   if (!transporter) {

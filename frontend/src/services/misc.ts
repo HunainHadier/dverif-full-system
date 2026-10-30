@@ -19,6 +19,15 @@ import type {
   OrgDashboardAnalytics,
   Notification,
 } from "./core";
+
+export type NotificationEmailPreferences = {
+  leave: boolean;
+  support: boolean;
+  recruitment: boolean;
+  payroll: boolean;
+  attendance: boolean;
+  onboarding: boolean;
+};
 export const dashboardService = {
   auto: () => api.get<DashboardStats>("/dashboard").then((r) => r.data),
   admin: () => api.get<DashboardStats>("/dashboard/admin").then((r) => r.data),
@@ -37,6 +46,9 @@ export const notificationService = {
   markReadByReference: (referenceId: string) =>
     api.post(`/notifications/read-by-reference/${referenceId}`).then((r) => r.data),
   markAllRead: () => api.post("/notifications/read-all").then((r) => r.data),
+  preferences: () => api.get<{ preferences: NotificationEmailPreferences }>("/notifications/preferences").then((r) => r.data.preferences),
+  updatePreferences: (preferences: Partial<NotificationEmailPreferences>) =>
+    api.patch<{ preferences: NotificationEmailPreferences }>("/notifications/preferences", { preferences }).then((r) => r.data.preferences),
 };
 
 export const attendanceService = {

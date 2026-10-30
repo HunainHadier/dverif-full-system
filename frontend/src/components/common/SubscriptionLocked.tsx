@@ -126,32 +126,43 @@ export function SubscriptionBanner() {
     return classifyPlanForOrg(orgSub, target) === "downgrade";
   }, [hasLiveSub, selected, plans.data, orgSub]);
 
+  // Both halves live together on purpose: the banner is only for a genuinely
+  // broken subscription, but the dialog is the shared plan chooser used by the
+  // sidebar's "upgrade" badges and the locked module cards. The shell therefore
+  // mounts this component for every non-admin, even when `isLocked` is false --
+  // otherwise `openPicker()` would set state that nothing renders.
   return (
-    <div className="mb-6 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10">
-        <Lock className="h-4 w-4 text-destructive" />
-      </div>
-      <div className="flex-1">
-        <p className="text-sm font-medium text-foreground">
-          {t("subscriptionLocked.notActive")}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {t("subscriptionLocked.contactAdmin")}
-        </p>
-      </div>
-      {isStaff && (
-        <Button size="sm" variant="outline" className="shrink-0" onClick={() => openPicker()}>
-          {t("subscriptionLocked.viewPlans")}
-        </Button>
-      )}
+    <div
+      className={
+        isLocked
+          ? "mb-6 flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"
+          : undefined
+      }
+    >
+      {isLocked ? (
+        <>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+            <Lock className="h-4 w-4 text-destructive" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-foreground">
+              {t("subscriptionLocked.notActive")}
+            </p>
+            <p className="text-xs text-muted-foreground">{t("subscriptionLocked.contactAdmin")}</p>
+          </div>
+          {isStaff && (
+            <Button size="sm" variant="outline" className="shrink-0" onClick={() => openPicker()}>
+              {t("subscriptionLocked.viewPlans")}
+            </Button>
+          )}
+        </>
+      ) : null}
 
       <Dialog open={open} onOpenChange={(o) => !o && closePicker()}>
         <DialogContent className="sm:max-h-[92vh] sm:max-w-4xl lg:max-w-6xl">
           <DialogHeader>
             <DialogTitle>{t("subscriptionLocked.viewPlans")}</DialogTitle>
-            <DialogDescription>
-              {t("subscriptionLocked.selectPlanHint")}
-            </DialogDescription>
+            <DialogDescription>{t("subscriptionLocked.selectPlanHint")}</DialogDescription>
           </DialogHeader>
 
           <Tabs defaultValue="plans" className="w-full">
@@ -176,10 +187,14 @@ export function SubscriptionBanner() {
                   </div>
                 )}
                 {plans.isError && (
-                  <p className="col-span-full text-sm text-destructive">{t("subscriptionLocked.loadError")}</p>
+                  <p className="col-span-full text-sm text-destructive">
+                    {t("subscriptionLocked.loadError")}
+                  </p>
                 )}
                 {plans.data && plans.data.length === 0 && (
-                  <p className="col-span-full text-sm text-muted-foreground">{t("subscriptionLocked.empty")}</p>
+                  <p className="col-span-full text-sm text-muted-foreground">
+                    {t("subscriptionLocked.empty")}
+                  </p>
                 )}
                 {(plans.data ?? []).map((plan: SubscriptionPlan) => {
                   const relation = classifyPlanForOrg(orgSub, plan);
@@ -302,7 +317,10 @@ export function SubscriptionBanner() {
                                 )}
                                 {(r.requested_price ?? r.approved_price) != null && (
                                   <span className="text-muted-foreground">
-                                    Rs. {Number(r.requested_price ?? r.approved_price).toLocaleString("en-PK")}
+                                    Rs.{" "}
+                                    {Number(r.requested_price ?? r.approved_price).toLocaleString(
+                                      "en-PK",
+                                    )}
                                   </span>
                                 )}
                               </div>
@@ -327,7 +345,7 @@ export function SubscriptionBanner() {
                                     : r.status === "approved"
                                       ? "customPlanApproved"
                                       : "customPlanDenied"
-                                }`
+                                }`,
                               )}
                             </Badge>
                           </div>

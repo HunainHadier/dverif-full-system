@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import ApiError from "../../utils/ApiError.js";
-import { rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
+import { assertEmploymentIdentityAvailable, rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
 import { createEmployeePortalInvite, deliverEmployeePortalInvite } from "../../services/employeeAccess.service.js";
 import { pool } from "../../config/db.js";
 import { ok, created } from "../../utils/response.js";
@@ -205,19 +205,20 @@ export async function createEmployee(req, res) {
     orgId = await resolveOrganizationId(req.body.organization_uuid);
   }
 
-  if (data.email) {
-    const [dupeEmp] = await pool.query(
-      "SELECT uuid FROM employees WHERE email=?",
-      [data.email]
-    );
-    if (dupeEmp.length) throw new ApiError(409, "An employee with this email already exists");
-  }
+  // Employment history is per organization. A person who already left another
+  // company must remain hireable here: only a CURRENT row (in this org or
+  // another) is a conflict. A same-org duplicate is still refused so the roster
+  // cannot contain the same person twice. See assertEmploymentIdentityAvailable.
+  await assertEmploymentIdentityAvailable({
+    executor: pool,
+    organizationId: orgId,
+    cnic: data.cnic,
+    email: data.email,
+  });
   if (data.reporting_manager_uuid) {
     const [manager] = await pool.query("SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND status IN ('active','current_employee')", [data.reporting_manager_uuid, orgId]);
     if (!manager.length) throw new ApiError(400, "Choose an active reporting manager from this organization");
   }
-  const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=?", [data.cnic]);
-  if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists");
 
   const addedByUuid = req.admin?.uuid || req.user?.uuid || null;
   // An employee that carries an email is created as a platform user straight
@@ -301,9 +302,11 @@ export async function createEmployee(req, res) {
   const [employeeRow] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [createdEmployeeUuid]);
 
   // Sent after the transaction commits so a mail failure can never roll back a
-  // successfully created employee.
+  // successfully created employee. A returning employee already has a password
+  // (the account was linked, not created), so there is no set-password link to
+  // deliver in that case.
   let inviteWarning = null;
-  if (wantsPlatformUser && portalInvite) {
+  if (wantsPlatformUser && portalInvite?.rawToken) {
     const delivery = await deliverEmployeePortalInvite({
       ...portalInvite,
       to: data.email,
@@ -322,15 +325,23 @@ export async function createEmployee(req, res) {
       email: data.email,
       organization_id: orgId,
       created_platform_user: !!linkedUserUuid,
-      email_sent: wantsPlatformUser && !inviteWarning,
+      linked_existing_account: Boolean(portalInvite?.linkedExisting),
+      email_sent: Boolean(wantsPlatformUser && portalInvite?.rawToken && !inviteWarning),
     },
     req,
   });
 
-  const payload = { employee: employeeRow[0] };
+  const payload = {
+    employee: employeeRow[0],
+    linked_existing_account: Boolean(portalInvite?.linkedExisting),
+  };
   let message = "Employee created successfully";
   if (wantsPlatformUser) {
-    message = inviteWarning ? "Employee created but invite delivery failed." : "Employee created. Set-password invitation sent.";
+    if (portalInvite?.linkedExisting) {
+      message = "Employee created. Existing platform account linked.";
+    } else {
+      message = inviteWarning ? "Employee created but invite delivery failed." : "Employee created. Set-password invitation sent.";
+    }
     if (inviteWarning) payload._email_warning = inviteWarning;
   }
 
@@ -387,20 +398,29 @@ export async function resendEmployeeInvite(req, res) {
       conn.release();
     }
     const invitedByName = req.user?.full_name || "Org Admin";
-    await deliverEmployeePortalInvite({
-      tokenId: portalInvite.tokenId,
-      rawToken: portalInvite.rawToken,
-      to: eData.email,
-      invitedByName,
-    });
+    if (portalInvite.rawToken) {
+      await deliverEmployeePortalInvite({
+        tokenId: portalInvite.tokenId,
+        rawToken: portalInvite.rawToken,
+        to: eData.email,
+        invitedByName,
+      });
+    }
     logAudit({
       ...getActorFromReq(req),
-      action: "employee.invite_create",
+      action: portalInvite.linkedExisting ? "employee.account_link" : "employee.invite_create",
       entityType: "employee",
       entityId: uuid,
+      details: { linked_existing_account: Boolean(portalInvite.linkedExisting) },
       req,
     });
-    return ok(res, {}, "Invitation sent successfully");
+    return ok(
+      res,
+      { linked_existing_account: Boolean(portalInvite.linkedExisting) },
+      portalInvite.linkedExisting
+        ? "Existing platform account linked."
+        : "Invitation sent successfully"
+    );
   }
   if (emp.linked_user_status === "active") {
     throw new ApiError(400, "This user is already active. Use forgot password instead.");
@@ -564,6 +584,11 @@ export async function updateEmployee(req, res) {
 
   const updateFields = [];
   const updateValues = [];
+  // The values the row will hold after this update. The reactivation check below
+  // must test THESE, not the old row: changing the email and reactivating in one
+  // request is otherwise judged against the identity being replaced.
+  let nextEmail = emp.email;
+  let nextCnic = emp.cnic;
 
   if (full_name !== undefined && String(full_name).trim() !== "") {
     updateFields.push("full_name = ?");
@@ -572,8 +597,13 @@ export async function updateEmployee(req, res) {
   if (email !== undefined) {
     const trimmed = email ? String(email).trim() : null;
     if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) throw new ApiError(400, "email is invalid");
-    const [dupeEmp] = await pool.query("SELECT uuid FROM employees WHERE email=? AND uuid<>?", [trimmed, uuid]);
-    if (dupeEmp.length) throw new ApiError(409, "An employee with this email already exists");
+    await assertEmploymentIdentityAvailable({
+      executor: pool,
+      organizationId: emp.organization_id,
+      email: trimmed,
+      excludeEmployeeUuid: uuid,
+    });
+    nextEmail = trimmed;
     updateFields.push("email = ?");
     updateValues.push(trimmed);
   }
@@ -584,10 +614,13 @@ export async function updateEmployee(req, res) {
   if (cnic !== undefined) {
     const trimmed = normalizeCnic(cnic);
     if (cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
-    if (trimmed) {
-      const [dupeCnic] = await pool.query("SELECT uuid FROM employees WHERE cnic=? AND uuid<>?", [trimmed, uuid]);
-      if (dupeCnic.length) throw new ApiError(409, "An employee with this CNIC already exists");
-    }
+    await assertEmploymentIdentityAvailable({
+      executor: pool,
+      organizationId: emp.organization_id,
+      cnic: trimmed || null,
+      excludeEmployeeUuid: uuid,
+    });
+    nextCnic = trimmed || null;
     updateFields.push("cnic = ?");
     updateValues.push(trimmed || null);
   }
@@ -602,15 +635,32 @@ export async function updateEmployee(req, res) {
     updateValues.push(departmentId);
   }
   if (status !== undefined) {
+    const nextStatus = ALLOWED_EMPLOYEE_STATUS.includes(status)
+      ? status
+      : (emp.status ?? "current_employee");
+    // Reactivating an ex_employee must re-run the identity check: while they were
+    // an ex-employee a new current row for the same person could have appeared in
+    // this organization or another one. Without this, flipping the status back to
+    // current would silently create two active employments.
+    if (
+      ["active", "current_employee"].includes(nextStatus) &&
+      !["active", "current_employee"].includes(emp.status)
+    ) {
+      await assertEmploymentIdentityAvailable({
+        executor: pool,
+        organizationId: emp.organization_id,
+        cnic: nextCnic,
+        email: nextEmail,
+        excludeEmployeeUuid: uuid,
+      });
+    }
     updateFields.push("status = ?");
     // An update MAY set 'inactive' — deactivating an existing employee is the
     // whole point of that value, and it is what the auth guards key off. An
     // unrecognised value falls back to the row's CURRENT status rather than to a
     // fixed default: defaulting to 'active' here would silently un-deactivate
     // someone the caller only meant to rename.
-    updateValues.push(
-      ALLOWED_EMPLOYEE_STATUS.includes(status) ? status : (emp.status ?? "current_employee")
-    );
+    updateValues.push(nextStatus);
   }
   if (joining_date !== undefined) {
     updateFields.push("joining_date = ?");

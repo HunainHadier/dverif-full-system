@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { SidebarInner } from "@/components/layout/AppShell";
 import { accountItemsFor, primaryNavItemsFor } from "@/lib/navItems";
 import { canAccessRoute } from "@/lib/routeAccess";
+import { ROUTE_MODULES } from "@/lib/routeModules";
 import type { AuthUser } from "@/lib/auth";
 import { FEATURE_KEYS, type FeatureAccessMap } from "@/lib/featureKeys";
 
@@ -43,10 +44,12 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-/** The plan context is only used by the upgrade affordance, which these tests avoid. */
+/** The plan picker is a no-op default here; the plan-lock tests assert on its spy. */
+const { openPicker } = vi.hoisted(() => ({ openPicker: vi.fn() }));
+
 vi.mock("@/components/common/PlanPickerProvider", () => ({
   PlanPickerProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  usePlanPicker: () => ({ openPicker: vi.fn() }),
+  usePlanPicker: () => ({ openPicker }),
 }));
 
 function user(over: Partial<AuthUser> = {}): AuthUser {
@@ -106,6 +109,32 @@ function renderSidebarFor(u: AuthUser) {
       moduleOffPaths={new Set()}
       blanketLockedPaths={new Set()}
       pathModule={{}}
+    />,
+  );
+}
+
+/**
+ * The same sidebar, but with the given paths reporting a module the current
+ * plan excludes. This is the state a Free-plan org is in for every module it
+ * has not bought, and the behaviour under test is what the menu offers when a
+ * link would otherwise lead to a page showing only a lock card.
+ */
+function renderSidebarWithPlanLocks(u: AuthUser, lockedPaths: string[]) {
+  const primary = primaryNavItemsFor(u.org_role).filter((it) => canAccessRoute(u, it.to));
+  const account =
+    u.role === "admin" ? [] : accountItemsFor(u).filter((it) => canAccessRoute(u, it.to));
+
+  return render(
+    <SidebarInner
+      items={primary}
+      accountItems={account}
+      pathname="/dashboard"
+      onNavigate={() => {}}
+      onLogout={() => {}}
+      locked={false}
+      moduleOffPaths={new Set(lockedPaths)}
+      blanketLockedPaths={new Set()}
+      pathModule={ROUTE_MODULES}
     />,
   );
 }
@@ -275,5 +304,47 @@ describe("the account group renders its own links and collapses like the others"
     for (const p of ["/settings", "/payments", "/org/support"]) {
       expect(within(nav).queryByTestId(`link-${p}`), `${p} still in the primary nav`).toBeNull();
     }
+  });
+});
+
+/**
+ * A PLAN IS A SECOND AXIS, SEPARATE FROM ROLE.
+ *
+ * The complaint that prompted these tests: some modules excluded by the plan
+ * showed an "Upgrade" badge in the sidebar, while others opened their page and
+ * only then showed the lock card. Nothing was insecure -- every page gates
+ * itself -- but the same situation looked like two different bugs depending on
+ * which link the user happened to click. The badge must be offered for every
+ * gated link, not the subset that happened to be listed in AppShell.
+ */
+describe("plan-locked modules are offered where the user meets them", () => {
+  const orgPaths = Object.keys(ROUTE_MODULES).filter((p) => p.startsWith("/org/"));
+  const selfServicePaths = Object.keys(ROUTE_MODULES).filter((p) => !p.startsWith("/org/"));
+
+  it("badges EVERY gated management link for an org_admin", () => {
+    renderSidebarWithPlanLocks(orgAdmin, orgPaths);
+    const nav = primaryNav();
+    for (const p of orgPaths) {
+      const link = within(nav).getByTestId(`link-${p}`);
+      expect(within(link).getByText("Upgrade"), `${p} has no upgrade badge`).toBeInTheDocument();
+    }
+  });
+
+  it("badges EVERY gated self-service link for an employee", () => {
+    renderSidebarWithPlanLocks(employee, selfServicePaths);
+    const nav = primaryNav();
+    for (const p of selfServicePaths) {
+      const link = within(nav).getByTestId(`link-${p}`);
+      expect(within(link).getByText("Upgrade"), `${p} has no upgrade badge`).toBeInTheDocument();
+    }
+  });
+
+  it("opens the plan chooser for the link's module instead of navigating", async () => {
+    const user_ = userEvent.setup();
+    renderSidebarWithPlanLocks(orgAdmin, ["/org/assets"]);
+
+    await user_.click(within(primaryNav()).getByTestId("link-/org/assets"));
+
+    expect(openPicker).toHaveBeenCalledWith("asset_management");
   });
 });

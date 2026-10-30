@@ -61,6 +61,7 @@ const ACTION_LABELS: Record<string, string> = {
   "employee.update": "Employee updated",
   "employee.delete": "Employee deleted",
   "employee.promote": "Employee promoted",
+  "employee.account_link": "Existing account linked",
   "subadmin.create": "Sub-admin created",
   "subadmin.access_update": "Sub-admin permissions updated",
   "subadmin.deactivate": "Sub-admin deactivated",

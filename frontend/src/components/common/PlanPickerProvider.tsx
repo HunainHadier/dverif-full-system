@@ -3,11 +3,13 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 /**
  * Lets any component open the plan chooser.
  *
- * The plan picker used to live inside SubscriptionBanner, which is only rendered
- * when the whole subscription is inactive. That made it impossible for the
- * "this module isn't in your plan" prompts to do the obvious thing and offer
- * the upgrade right where the user hit the wall. With this provider, a locked
- * nav item or a locked feature card can open the same dialog directly.
+ * The chooser used to be reachable only through SubscriptionBanner's own
+ * "View plans" button, and that banner only rendered when the whole
+ * subscription was inactive. That made it impossible for the "this module isn't
+ * in your plan" prompts to do the obvious thing and offer the upgrade right
+ * where the user hit the wall. With this provider, a locked nav item or a
+ * locked feature card can open the same dialog directly; SubscriptionBanner
+ * hosts it and the app shell mounts that for every non-admin.
  */
 type PlanPickerContextValue = {
   open: boolean;
