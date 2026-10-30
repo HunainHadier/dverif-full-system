@@ -368,7 +368,7 @@ function ScheduleDialog({
         keywords: person.email,
       })),
     ],
-    [interviewers.data?.items, t],
+    [interviewers.data, t],
   );
 
   useEffect(() => {
