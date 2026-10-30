@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
-import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { RecruitmentTabs } from "@/components/hr/RecruitmentTabs";
 import {
   candidatesService,
@@ -468,14 +467,26 @@ function ScheduleDialog({
 
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.interviewer")}</span>
-          <SearchableSelect
-            items={interviewerOptions}
-            value={interviewerUuid}
-            onChange={(value) => form.setValue("interviewer_uuid", value, { shouldDirty: true })}
-            placeholder="Select an interviewer"
-            searchPlaceholder={t("recruitment.searchInterviewer", "Search interviewer...")}
-            emptyText={interviewers.isLoading ? "Loading interviewers..." : interviewers.isError ? "Could not load interviewers. Close and reopen this form to retry." : t("recruitment.noInterviewersFound", "No interviewers found.")}
-          />
+          <select
+            {...form.register("interviewer_uuid", { required: true })}
+            disabled={interviewers.isLoading || interviewers.isError || interviewerOptions.length === 0}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            <option value="">
+              {interviewers.isLoading
+                ? "Loading interviewers..."
+                : interviewers.isError
+                  ? "Could not load interviewers. Reopen this form to retry."
+                  : interviewerOptions.length
+                    ? "Select an interviewer"
+                    : t("recruitment.noInterviewersFound", "No interviewers found.")}
+            </option>
+            {interviewerOptions.map((person) => (
+              <option key={person.value} value={person.value}>
+                {person.label}{person.hint ? ` — ${person.hint}` : ""}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("recruitment.scheduledAt")}</span>
