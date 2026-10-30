@@ -1133,7 +1133,7 @@ async function hireCandidateInTransaction({
   const effectiveEmail = email === undefined
     ? String(candidate.email ?? "").trim().toLowerCase()
     : String(email ?? "").trim().toLowerCase();
-  if (!effectiveEmail || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(effectiveEmail)) {
+  if (!effectiveEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(effectiveEmail)) {
     throw new ApiError(400, "Enter a valid email address before hiring");
   }
   await assertCandidateEmailAvailable({ orgId, candidateUuid, email: effectiveEmail, conn: db });
