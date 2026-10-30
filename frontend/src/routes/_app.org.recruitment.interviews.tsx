@@ -16,10 +16,8 @@ import { SearchInput } from "@/components/common/SearchInput";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { RecruitmentTabs } from "@/components/hr/RecruitmentTabs";
 import {
-  CURRENT_EMPLOYEE_STATUSES,
   candidatesService,
   interviewsService,
-  orgService,
   type Interview,
   type InterviewMode,
 } from "@/services";
@@ -130,6 +128,11 @@ export function InterviewsPage() {
       key: "candidate_name",
       header: t("recruitment.candidate"),
       render: (i) => <span className="font-medium">{i.candidate_name ?? "—"}</span>,
+    },
+    {
+      key: "interviewer_name",
+      header: "Interviewer",
+      render: (i) => <span className="text-sm">{i.interviewer_name ?? "Unassigned"}</span>,
     },
     {
       key: "mode",
@@ -341,7 +344,7 @@ function ScheduleDialog({
 
   const interviewers = useQuery({
     queryKey: ["recruitment-interviewers"],
-    queryFn: () => orgService.employees({ scope: "org", limit: 100 }),
+    queryFn: () => interviewsService.interviewers(),
     enabled: open,
   });
 
@@ -359,14 +362,12 @@ function ScheduleDialog({
   const interviewerOptions = useMemo(
     () => [
       { value: "", label: t("recruitment.interviewerUnassigned") },
-      ...(interviewers.data?.items ?? [])
-        .filter((employee) => CURRENT_EMPLOYEE_STATUSES.includes(employee.status))
-        .map((employee) => ({
-          value: employee.uuid,
-          label: employee.full_name,
-          hint: employee.designation ?? undefined,
-          keywords: employee.email ?? undefined,
-        })),
+      ...(interviewers.data ?? []).map((person) => ({
+        value: person.uuid,
+        label: person.full_name,
+        hint: [person.designation, person.department, person.org_role.replace("_", " ")].filter(Boolean).join(" · "),
+        keywords: person.email,
+      })),
     ],
     [interviewers.data?.items, t],
   );
