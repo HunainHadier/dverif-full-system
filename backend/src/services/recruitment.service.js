@@ -546,19 +546,23 @@ export async function createCandidate({
     [orgId]
   );
   const duplicate = existingCandidates.find((existing) =>
-    (address && String(existing.email ?? "").trim().toLowerCase() === address) ||
     (normalizedPhone && String(existing.phone ?? "").replace(/\D/g, "") === normalizedPhone) ||
     (normalizedCnic && String(existing.cnic ?? "").replace(/\D/g, "") === normalizedCnic)
   );
   if (duplicate) {
-    if (address && String(duplicate.email ?? "").trim().toLowerCase() === address) {
-      throw new ApiError(409, "A candidate with this email already exists");
-    }
     if (normalizedPhone && String(duplicate.phone ?? "").replace(/\D/g, "") === normalizedPhone) {
       throw new ApiError(409, "A candidate with this phone number already exists");
     }
     throw new ApiError(409, "A candidate with this CNIC already exists");
   }
+  const [[emailDuplicateRow]] = await conn.query(
+    `SELECT
+       (EXISTS(SELECT 1 FROM candidates WHERE organization_id=? AND LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM users WHERE organization=? AND LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM employees WHERE organization_id=? AND LOWER(email)=?)) AS email_duplicate`,
+    [orgId, address, orgId, address, orgId, address],
+  );
+  const emailDuplicate = Boolean(emailDuplicateRow?.email_duplicate);
 
   const uuid = randomUUID();
   try {
@@ -602,7 +606,22 @@ export async function createCandidate({
     details: { opening_uuid: opening.uuid, email: address },
   });
 
-  return getCandidate({ orgId, candidateUuid: uuid, conn });
+  return { ...(await getCandidate({ orgId, candidateUuid: uuid, conn })), email_duplicate: emailDuplicate };
+}
+
+async function assertCandidateEmailAvailable({ orgId, candidateUuid, email, conn = pool }) {
+  const address = String(email ?? "").trim().toLowerCase();
+  if (!address) throw new ApiError(409, "Add the candidate's email address before assigning an offer");
+  const [[row]] = await conn.query(
+    `SELECT
+       (EXISTS(SELECT 1 FROM candidates WHERE organization_id=? AND LOWER(email)=? AND uuid<>?)
+        OR EXISTS(SELECT 1 FROM users WHERE organization=? AND LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM employees WHERE organization_id=? AND LOWER(email)=?)) AS email_in_use`,
+    [orgId, address, candidateUuid, orgId, address, orgId, address],
+  );
+  if (row?.email_in_use) {
+    throw new ApiError(409, "This candidate email is already in use. Update the candidate email to a unique address before assigning or sending an offer.");
+  }
 }
 
 export async function updateCandidate({
@@ -627,6 +646,9 @@ export async function updateCandidate({
   if (!nextEmail) throw new ApiError(400, "email is required");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new ApiError(400, "email is not a valid address");
 
+  if (email !== undefined && nextEmail !== candidate.email) {
+    await assertCandidateEmailAvailable({ orgId, candidateUuid, email: nextEmail, conn });
+  }
   const nextPhone = phone === undefined ? candidate.phone : (phone ? String(phone).trim() : null);
   if (cnic !== undefined && cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
   const nextCnic = cnic === undefined ? candidate.cnic : (normalizeCnic(cnic) || null);
@@ -635,12 +657,10 @@ export async function updateCandidate({
     [orgId, candidateUuid]
   );
   const duplicate = existingCandidates.find((existing) =>
-    String(existing.email ?? "").trim().toLowerCase() === nextEmail ||
     (nextPhone && String(existing.phone ?? "").replace(/\D/g, "") === String(nextPhone).replace(/\D/g, "")) ||
     (nextCnic && String(existing.cnic ?? "").replace(/\D/g, "") === nextCnic)
   );
   if (duplicate) {
-    if (String(duplicate.email ?? "").trim().toLowerCase() === nextEmail) throw new ApiError(409, "A candidate with this email already exists");
     if (nextPhone && String(duplicate.phone ?? "").replace(/\D/g, "") === String(nextPhone).replace(/\D/g, "")) throw new ApiError(409, "A candidate with this phone number already exists");
     throw new ApiError(409, "A candidate with this CNIC already exists");
   }
@@ -1600,6 +1620,17 @@ export async function scheduleInterview({
 
   if (interviewerUuid) {
     assertUuid(interviewerUuid, "Interviewer UUID");
+    const [[userInterviewer]] = await conn.query(
+      "SELECT uuid FROM users WHERE uuid=? AND organization=? AND status='active' LIMIT 1",
+      [interviewerUuid, orgId],
+    );
+    if (!userInterviewer) {
+      const [[employeeInterviewer]] = await conn.query(
+        "SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND status IN ('active','probation','notice_period') LIMIT 1",
+        [interviewerUuid, orgId],
+      );
+      if (!employeeInterviewer) throw new ApiError(400, "Choose an active user in this organization as the interviewer");
+    }
   }
 
   const uuid = randomUUID();
@@ -1643,14 +1674,18 @@ export async function scheduleInterview({
 
   try {
     const [[opening]] = await conn.query("SELECT title FROM job_openings WHERE uuid=? AND organization_id=?", [candidate.job_opening_uuid, orgId]);
-    const [[interviewer]] = interviewerUuid
+    const [[interviewerUser]] = interviewerUuid
+      ? await conn.query("SELECT uuid, email, full_name FROM users WHERE uuid=? AND organization=? AND status='active' LIMIT 1", [interviewerUuid, orgId])
+      : [[]];
+    const [[legacyInterviewer]] = interviewerUuid && !interviewerUser
       ? await conn.query(
           `SELECT e.email, e.linked_user_uuid, e.full_name FROM employees e
             WHERE e.uuid=? AND e.organization_id=? LIMIT 1`,
-          [interviewerUuid, orgId]
+          [interviewerUuid, orgId],
         )
       : [[]];
-    const actionUrl = notificationActionUrl("/org/recruitment/interviews");
+    const interviewer = interviewerUser ? { ...interviewerUser, linked_user_uuid: interviewerUser.uuid } : legacyInterviewer;
+    const actionUrl = notificationActionUrl("/my-interviews");
     const dateLabel = new Date(scheduledAt).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" });
     const deliveries = [queueNotificationEmail({
       category: "recruitment",
@@ -1725,6 +1760,22 @@ export async function getInterview({ orgId, interviewUuid, conn = pool }) {
  * The `total` count reuses the SAME WHERE clause as the page query, so the page
  * count cannot disagree with what a page actually contains.
  */
+export async function listInterviewers({ orgId, conn = pool }) {
+  const [rows] = await conn.query(
+    `SELECT u.uuid, u.full_name, u.email, u.org_role,
+            dg.name AS designation, dp.name AS department
+       FROM users u
+       LEFT JOIN employees e
+         ON e.linked_user_uuid=u.uuid AND e.organization_id=u.organization
+       LEFT JOIN designations dg ON dg.id=e.designation_id
+       LEFT JOIN departments dp ON dp.id=e.department_id
+      WHERE u.organization=? AND u.status='active'
+      ORDER BY u.full_name ASC`,
+    [orgId],
+  );
+  return rows;
+}
+
 export async function listInterviews({
   orgId,
   candidateUuid,
@@ -1759,10 +1810,17 @@ export async function listInterviews({
   );
 
   const [rows] = await conn.query(
-    `SELECT i.*, c.full_name AS candidate_name
+    `SELECT i.*, c.full_name AS candidate_name,
+            COALESCE(u.full_name, iu.full_name, e.full_name) AS interviewer_name,
+            COALESCE(u.email, iu.email, e.email) AS interviewer_email,
+            COALESCE(dg.name, idg.name) AS interviewer_designation
        FROM interviews i
-       LEFT JOIN candidates c
-         ON c.uuid = i.candidate_uuid AND c.organization_id = i.organization_id
+       LEFT JOIN candidates c ON c.uuid=i.candidate_uuid AND c.organization_id=i.organization_id
+       LEFT JOIN users u ON u.uuid=i.interviewer_uuid AND u.organization=i.organization_id
+       LEFT JOIN employees e ON e.uuid=i.interviewer_uuid AND e.organization_id=i.organization_id
+       LEFT JOIN users iu ON iu.uuid=e.linked_user_uuid AND iu.organization=i.organization_id
+       LEFT JOIN designations dg ON dg.id=(SELECT e2.designation_id FROM employees e2 WHERE e2.linked_user_uuid=u.uuid AND e2.organization_id=i.organization_id LIMIT 1)
+       LEFT JOIN designations idg ON idg.id=e.designation_id
       WHERE ${where}
       ORDER BY i.scheduled_at DESC, i.created_at DESC
       LIMIT ? OFFSET ?`,
@@ -1784,6 +1842,30 @@ export async function listInterviews({
  * meeting that has not happened is how a decision gets recorded without anyone
  * having actually met, which is the failure this whole module exists to prevent.
  */
+export async function listMyInterviews({ orgId, userUuid, page = 1, limit = 100, offset = 0, conn = pool }) {
+  assertUuid(userUuid, "User UUID");
+  const clauses = ["i.organization_id=?", "(i.interviewer_uuid=? OR i.interviewer_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id=? AND e.linked_user_uuid=?))"];
+  const params = [orgId, userUuid, orgId, userUuid];
+  const where = clauses.join(" AND ");
+  const effectiveOffset = offset || (page - 1) * limit;
+  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM interviews i WHERE ${where}`, params);
+  const [rows] = await conn.query(
+    `SELECT i.*, c.full_name AS candidate_name,
+            COALESCE(u.full_name, iu.full_name, e.full_name) AS interviewer_name,
+            COALESCE(u.email, iu.email, e.email) AS interviewer_email
+       FROM interviews i
+       LEFT JOIN candidates c ON c.uuid=i.candidate_uuid AND c.organization_id=i.organization_id
+       LEFT JOIN users u ON u.uuid=i.interviewer_uuid AND u.organization=i.organization_id
+       LEFT JOIN employees e ON e.uuid=i.interviewer_uuid AND e.organization_id=i.organization_id
+       LEFT JOIN users iu ON iu.uuid=e.linked_user_uuid AND iu.organization=i.organization_id
+      WHERE ${where}
+      ORDER BY i.scheduled_at ASC, i.created_at DESC
+      LIMIT ? OFFSET ?`,
+    [...params, limit, effectiveOffset],
+  );
+  return { items: rows.map((r) => ({ ...r, rating: r.rating === null ? null : money(r.rating) })), total: Number(total), page, limit };
+}
+
 export async function recordInterviewFeedback({
   orgId,
   actorUuid,
@@ -1795,6 +1877,14 @@ export async function recordInterviewFeedback({
   conn = pool,
 }) {
   const interview = await loadInterview({ orgId, interviewUuid, conn, forUpdate: true });
+
+  const [[legacyAssignment]] = await conn.query(
+    "SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND linked_user_uuid=? LIMIT 1",
+    [interview.interviewer_uuid, orgId, actorUuid],
+  );
+  if (!actorUuid || (interview.interviewer_uuid !== actorUuid && !legacyAssignment)) {
+    throw new ApiError(403, "Only the assigned interviewer can record feedback for this interview");
+  }
 
   if (status === "cancelled") {
     if (outcome && outcome !== "pending") {
