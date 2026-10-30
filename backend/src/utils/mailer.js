@@ -518,6 +518,8 @@ export async function sendOffboardingUpdateEmail({
 }
 
 export async function sendPasswordResetEmail({ to, resetLink, lang = "en" }) {
+  const transporter = requireTransport();
+
   const appName = process.env.APP_NAME || "Dverif";
   const expiry = process.env.RESET_PASSWORD_EXPIRES_IN || "15m";
   const T = emailTexts(lang);
