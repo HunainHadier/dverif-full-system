@@ -583,8 +583,6 @@ export async function sendLoginOtpEmail({ to, otp, lang = "en" }) {
 }
 
 export async function sendInviteEmail({ to, setLink, invitedByName, lang = "en" }) {
-  const transporter = requireTransport();
-
   const appName = process.env.APP_NAME || "Dverif";
   const expiryHours = process.env.INVITE_EXPIRES_IN_HOURS || "72";
   const T = emailTexts(lang);
