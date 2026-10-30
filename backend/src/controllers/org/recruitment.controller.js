@@ -284,6 +284,7 @@ export async function respondToOffer(req, res) {
     candidateUuid: req.params.uuid,
     joiningDate: str(req.body?.joining_date),
     cnic: str(req.body?.cnic),
+    email: str(req.body?.email),
     designationId: req.body?.designation_id,
     departmentId: req.body?.department_id,
     emergencyContact: str(req.body?.emergency_contact),
