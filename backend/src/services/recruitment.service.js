@@ -960,6 +960,7 @@ export async function hireCandidate({
   actorUuid,
   candidateUuid,
   cnic,
+  email,
   joiningDate,
   designationId,
   departmentId,
@@ -1012,6 +1013,7 @@ export async function hireCandidate({
       actorUuid,
       candidateUuid,
       cnic,
+      email,
       joiningDate,
       designationId,
       departmentId,
@@ -1048,6 +1050,7 @@ async function hireCandidateInTransaction({
   actorUuid,
   candidateUuid,
   cnic,
+  email,
   joiningDate,
   designationId,
   departmentId,
@@ -1061,7 +1064,6 @@ async function hireCandidateInTransaction({
 }) {
 
   const candidate = await loadCandidate({ orgId, candidateUuid, conn: db, forUpdate: true });
-  await assertCandidateEmailAvailable({ orgId, candidateUuid, email: candidate.email, conn: db });
 
   if (!offerAcceptance || candidate.offer_status !== "sent") {
     throw new ApiError(409, "A candidate can be hired only after the offer has been sent");
@@ -1124,10 +1126,20 @@ async function hireCandidateInTransaction({
   // The sent offer snapshot is the offer letter. Hiring must not create a
   // second draft HR letter after marking the candidate hired; it converts the offer once.
   const approvedOfferValues = parseOfferValues(candidate.offer_values);
-  const effectiveCnic = cnic ?? candidate.cnic ?? approvedOfferValues.cnic ?? null;
+  const effectiveCnic = cnic || candidate.cnic || approvedOfferValues.cnic || null;
   const normalizedEffectiveCnic = normalizeCnic(effectiveCnic);
   if (!normalizedEffectiveCnic) throw new ApiError(400, "CNIC is required before hiring");
   if (cnicError(effectiveCnic)) throw new ApiError(400, "CNIC must be 13 digits");
+  const effectiveEmail = email === undefined
+    ? String(candidate.email ?? "").trim().toLowerCase()
+    : String(email ?? "").trim().toLowerCase();
+  if (!effectiveEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(effectiveEmail)) {
+    throw new ApiError(400, "Enter a valid email address before hiring");
+  }
+  await assertCandidateEmailAvailable({ orgId, candidateUuid, email: effectiveEmail, conn: db });
+  if (effectiveEmail !== String(candidate.email ?? "").trim().toLowerCase()) {
+    await db.query("UPDATE candidates SET email=?, updated_at=NOW() WHERE uuid=? AND organization_id=?", [effectiveEmail, candidateUuid, orgId]);
+  }
   const effectiveJoiningDate = joiningDate ?? approvedOfferValues.joining_date ?? null;
   const startingSalaryRaw = approvedOfferValues.new_salary;
   const startingSalary = startingSalaryRaw == null || String(startingSalaryRaw).trim() === "" ? null : Number(String(startingSalaryRaw).replace(/,/g, ""));
@@ -1158,7 +1170,7 @@ async function hireCandidateInTransaction({
     executor: db,
     organizationId: orgId,
     cnic: normalizedEffectiveCnic,
-    email: candidate.email,
+    email: effectiveEmail,
   });
 
   const employeeUuid = randomUUID();
@@ -1171,7 +1183,7 @@ async function hireCandidateInTransaction({
       employeeUuid,
       orgId,
       candidate.full_name,
-      candidate.email,
+      effectiveEmail,
       candidate.phone,
       normalizedEffectiveCnic,
       employeeDesignation,
@@ -1317,6 +1329,7 @@ export async function listOffers({
   return {
     items: rows.map((r) => ({
       ...r,
+      cnic: r.cnic || parseOfferValues(r.offer_values).cnic || null,
       // Mirrors hrLetters.getLetter: a verify URL is only meaningful once issued,
       // because the QR token is minted at issue time.
       verify_url: r.qr_token && r.letter_status === "issued" ? `/verify/${r.qr_token}` : null,
@@ -1460,7 +1473,7 @@ export async function downloadOfferPdf({ orgId, candidateUuid, conn = pool }) {
  * something. The controller handles the field it still receives on the body.
  */
 export async function respondToOffer({
-  orgId, actorUuid, candidateUuid, joiningDate, cnic,
+  orgId, actorUuid, candidateUuid, joiningDate, cnic, email,
   designationId, departmentId, emergencyContact, comments, conn = pool,
 }) {
   const candidate = await loadCandidate({ orgId, candidateUuid, conn, forUpdate: true });
@@ -1468,7 +1481,7 @@ export async function respondToOffer({
     throw new ApiError(409, "Only a sent offer can be marked hired");
   }
   return hireCandidate({
-    orgId, actorUuid, candidateUuid, cnic, joiningDate, designationId, departmentId,
+    orgId, actorUuid, candidateUuid, cnic, email, joiningDate, designationId, departmentId,
     emergencyContact, offerAcceptance: true, responseNotes: comments, conn,
   });
 }
@@ -1689,7 +1702,6 @@ export async function scheduleInterview({
         )
       : [[]];
     const interviewer = interviewerUser ? { ...interviewerUser, linked_user_uuid: interviewerUser.uuid } : legacyInterviewer;
-    const actionUrl = notificationActionUrl("/my-interviews");
     const dateLabel = new Date(scheduledAt).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi" });
     const deliveries = [queueNotificationEmail({
       category: "recruitment",
@@ -1698,7 +1710,6 @@ export async function scheduleInterview({
       subject: `Interview scheduled — ${opening?.title || "your application"}`,
       title: "Your interview is scheduled",
       message: `Your interview for ${opening?.title || "the position"} is scheduled for ${dateLabel}${mode ? ` (${mode})` : ""}${location ? ` at ${location}` : ""}.`,
-      actionUrl,
     })];
     if (interviewer?.email || interviewer?.linked_user_uuid) {
       deliveries.push(queueNotificationEmail({
@@ -1709,7 +1720,7 @@ export async function scheduleInterview({
         subject: `Interview scheduled — ${candidate.full_name}`,
         title: "Interview added to your schedule",
         message: `You are scheduled to interview ${candidate.full_name} for ${opening?.title || "a position"} on ${dateLabel}.`,
-        actionUrl,
+        actionUrl: notificationActionUrl("/my-interviews"),
       }));
     }
     await Promise.allSettled(deliveries);

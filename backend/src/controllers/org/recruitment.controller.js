@@ -284,6 +284,7 @@ export async function respondToOffer(req, res) {
     candidateUuid: req.params.uuid,
     joiningDate: str(req.body?.joining_date),
     cnic: str(req.body?.cnic),
+    email: str(req.body?.email),
     designationId: req.body?.designation_id,
     departmentId: req.body?.department_id,
     emergencyContact: str(req.body?.emergency_contact),
@@ -323,6 +324,12 @@ export async function getPipeline(req, res) {
 
 export async function listInterviewers(req, res) {
   const items = await recruitment.listInterviewers({ orgId: req.scopeOrgId });
+  // The interviewer directory changes as org users are added/deactivated. A 304
+  // response has no JSON body, which leaves Axios/React Query with no option data.
+  // Always return the current directory instead of allowing conditional caching.
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   return ok(res, { items }, "Interviewers");
 }
 

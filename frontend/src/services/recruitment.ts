@@ -404,7 +404,9 @@ export const candidatesService = {
 
 export const interviewsService = {
   interviewers: () =>
-    api.get<{ items: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers").then((r) => r.data.items),
+    api
+      .get<{ items?: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers")
+      .then((r) => Array.isArray(r.data?.items) ? r.data.items : []),
 
   myAssigned: (params: { page?: number; limit?: number } = {}) =>
     api.get<Paginated<Interview>>("/org/my/interviews", { params: { ...params, limit: params.limit ?? 100 } }).then((r) => r.data.items ?? []),
@@ -526,7 +528,7 @@ export const offersService = {
   downloadPdf: (candidateUuid: UUID) =>
     api.get(`/org/offers/${candidateUuid}/pdf`, { responseType: "blob" }).then((r) => r.data as Blob),
   /** Mark the candidate as hired and create their employee record. */
-  hire: (candidateUuid: UUID, data: { cnic?: string | null; joining_date?: string; comments?: string } = {}) =>
+  hire: (candidateUuid: UUID, data: { cnic?: string | null; email?: string; joining_date?: string; comments?: string } = {}) =>
     api.post<{ candidate: Candidate; employee_uuid: UUID | null }>(
       "/org/offers/" + candidateUuid + "/hire",
       data,

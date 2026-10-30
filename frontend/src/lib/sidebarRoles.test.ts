@@ -128,6 +128,7 @@ describe("staff primary menu is management only", () => {
       "/org/offboarding",
       "/org/hr-letters",
       "/org/letter-templates",
+      "/my-interviews",
     ]) {
       expect(shown, `${p} vanished from the staff menu`).toContain(p);
     }
@@ -154,6 +155,7 @@ describe("staff primary menu is management only", () => {
     // their own to raise, and they should not have to know a dropdown existed to find
     // it.
     expect(shown).toContain("/requests");
+    expect(shown).toContain("/my-interviews");
   });
 
   it("puts the management modules in a sensible order, payroll before expenses", () => {

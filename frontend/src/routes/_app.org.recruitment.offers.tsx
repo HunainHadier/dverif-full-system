@@ -55,6 +55,7 @@ export function OffersPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Offer | null>(null);
   const [hireCnic, setHireCnic] = useState("");
+  const [hireEmail, setHireEmail] = useState("");
   const [showCnicPrompt, setShowCnicPrompt] = useState(false);
 
   const list = useQuery({
@@ -94,12 +95,13 @@ export function OffersPage() {
   });
 
   const hire = useMutation({
-    mutationFn: (args: { offer: Offer; cnic: string }) => offersService.hire(args.offer.candidate_uuid, { cnic: normalizeCNIC(args.cnic) }),
+    mutationFn: (args: { offer: Offer; cnic: string; email: string }) => offersService.hire(args.offer.candidate_uuid, { cnic: normalizeCNIC(args.cnic), email: args.email.trim() }),
     onSuccess: () => {
       invalidate();
       setSelected(null);
       setShowCnicPrompt(false);
       setHireCnic("");
+      setHireEmail("");
       toast.success(t("recruitment.hired", "Candidate hired and added to employees"));
     },
     onError: (error) => toast.error(apiErrorMessage(error, t("recruitment.offerActionFailed"))),
@@ -147,6 +149,10 @@ export function OffersPage() {
 
   const confirmHire = () => {
     const problem = cnicError(hireCnic);
+    if (!hireEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(hireEmail.trim())) {
+      toast.error("Enter a valid email address");
+      return;
+    }
     if (!hireCnic.trim()) {
       toast.error("CNIC is required");
       return;
@@ -155,7 +161,7 @@ export function OffersPage() {
       toast.error(problem);
       return;
     }
-    if (selected) hire.mutate({ offer: selected, cnic: hireCnic });
+    if (selected) hire.mutate({ offer: selected, cnic: hireCnic, email: hireEmail });
   };
 
   return (
@@ -239,8 +245,9 @@ export function OffersPage() {
                 </Button>
                 <Button disabled={hire.isPending || Number(selected?.feedback_recorded_interviews ?? 0) < 1} onClick={() => {
                   if (!selected) return;
-                  if (!selected.cnic || cnicError(selected.cnic)) { setHireCnic(formatCNIC(selected.cnic ?? "")); setShowCnicPrompt(true); return; }
-                  hire.mutate({ offer: selected, cnic: selected.cnic });
+                  setHireEmail(selected.email ?? "");
+                  setHireCnic(formatCNIC(selected.cnic ?? ""));
+                  setShowCnicPrompt(true);
                 }}>
                   <UserCheck className="mr-2 h-4 w-4" />
                   {t("recruitment.markHired", "Hired")}
@@ -254,9 +261,13 @@ export function OffersPage() {
       <Dialog open={showCnicPrompt} onOpenChange={setShowCnicPrompt}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>CNIC required to hire</DialogTitle>
-            <DialogDescription>Enter the candidate’s 13 digit CNIC to add them as an employee.</DialogDescription>
+            <DialogTitle>Confirm hiring details</DialogTitle>
+            <DialogDescription>Review or update the candidate email and CNIC before creating the employee record.</DialogDescription>
           </DialogHeader>
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium">Email address *</span>
+            <input type="email" value={hireEmail} onChange={(event) => setHireEmail(event.target.value)} placeholder="candidate@example.com" aria-label="Email address" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
+          </label>
           <label className="block space-y-1 text-sm">
             <span className="font-medium">CNIC *</span>
             <input value={formatCNIC(hireCnic)} onChange={(event) => setHireCnic(formatCNIC(event.target.value))} inputMode="numeric" maxLength={15} placeholder="42101-2345678-9" aria-label="CNIC" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
@@ -264,10 +275,7 @@ export function OffersPage() {
           </label>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCnicPrompt(false)}>Cancel</Button>
-            <Button disabled={!hireCnic.trim() || Boolean(cnicError(hireCnic)) || hire.isPending} onClick={() => {
-              confirmHire();
-              setShowCnicPrompt(false);
-            }}>Continue hiring</Button>
+            <Button disabled={!hireCnic.trim() || Boolean(cnicError(hireCnic)) || !hireEmail.trim() || hire.isPending} onClick={confirmHire}>Continue hiring</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
