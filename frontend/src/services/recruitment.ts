@@ -405,7 +405,9 @@ export const candidatesService = {
 export const interviewsService = {
   interviewers: () =>
     api
-      .get<{ items?: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers")
+      .get<{ items?: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers", {
+        headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      })
       .then((r) => Array.isArray(r.data?.items) ? r.data.items : []),
 
   myAssigned: (params: { page?: number; limit?: number } = {}) =>
