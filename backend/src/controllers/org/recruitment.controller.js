@@ -321,6 +321,19 @@ export async function getPipeline(req, res) {
 // Interviews
 // ---------------------------------------------------------------------------
 
+export async function listInterviewers(req, res) {
+  const items = await recruitment.listInterviewers({ orgId: req.scopeOrgId });
+  return ok(res, { items }, "Interviewers");
+}
+
+export async function listMyInterviews(req, res) {
+  const { page, limit, offset } = parsePagination(req.query);
+  const result = await recruitment.listMyInterviews({
+    orgId: req.scopeOrgId, userUuid: req.user.uuid, page, limit, offset,
+  });
+  return ok(res, paginatedResponse(result.items, result.total, result.page, result.limit), "My assigned interviews");
+}
+
 export async function listInterviews(req, res) {
   const { page, limit, offset } = parsePagination(req.query);
   const result = await recruitment.listInterviews({
