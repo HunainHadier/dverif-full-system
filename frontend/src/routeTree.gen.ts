@@ -1263,6 +1263,7 @@ interface AppRouteChildren {
   AppMyAssetsRoute: typeof AppMyAssetsRoute
   AppMyExpensesRoute: typeof AppMyExpensesRoute
   AppMyLettersRoute: typeof AppMyLettersRoute
+  AppMyInterviewsRoute: typeof AppMyInterviewsRoute
   AppMyResignationRoute: typeof AppMyResignationRoute
   AppPaymentsRoute: typeof AppPaymentsRoute
   AppPayrollRoute: typeof AppPayrollRoute
