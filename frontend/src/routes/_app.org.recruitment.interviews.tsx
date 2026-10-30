@@ -66,10 +66,15 @@ export function InterviewsPage() {
     queryKey: ["recruitment-candidates-all"],
     queryFn: () => candidatesService.list({ limit: 200 }),
   });
+  const schedulableCandidates = useMemo(
+    () => (candidates.data?.items ?? []).filter((candidate) => (candidate.completed_interviews ?? 0) === 0),
+    [candidates.data?.items],
+  );
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["recruitment-interviews"] });
     void qc.invalidateQueries({ queryKey: ["recruitment-candidates"] });
+    void qc.invalidateQueries({ queryKey: ["recruitment-candidates-all"] });
   };
 
   /**
@@ -281,7 +286,7 @@ export function InterviewsPage() {
 
       <ScheduleDialog
         open={scheduling}
-        candidates={candidates.data?.items ?? []}
+        candidates={schedulableCandidates}
         onOpenChange={setScheduling}
         onDone={invalidate}
       />
@@ -346,7 +351,14 @@ function ScheduleDialog({
     queryKey: ["recruitment-interviewers"],
     queryFn: () => interviewsService.interviewers(),
     enabled: open,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
+
+  useEffect(() => {
+    if (open) void interviewers.refetch();
+  }, [open, interviewers.refetch]);
 
   const form = useForm<ScheduleForm>({
     defaultValues: {
@@ -363,8 +375,8 @@ function ScheduleDialog({
     () => [
       ...(interviewers.data ?? []).map((person) => ({
         value: person.uuid,
-        label: person.full_name,
-        hint: [person.designation, person.department, person.org_role.replace("_", " ")].filter(Boolean).join(" · "),
+        label: String(person.full_name ?? "").trim() || person.email,
+        hint: [person.designation, person.department, String(person.org_role ?? "").replaceAll("_", " ")].filter(Boolean).join(" · "),
         keywords: person.email,
       })),
     ],
@@ -439,6 +451,7 @@ function ScheduleDialog({
           <span className="font-medium">{t("recruitment.interviewFor")}</span>
           <select
             {...form.register("candidate_uuid", { required: true })}
+            disabled={!candidates.length}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {candidates.length ? (
@@ -448,7 +461,7 @@ function ScheduleDialog({
                 </option>
               ))
             ) : (
-              <option value="">{t("recruitment.noCandidates")}</option>
+              <option value="">{t("recruitment.noCandidates", "No candidates awaiting an interview")}</option>
             )}
           </select>
         </label>
@@ -461,7 +474,7 @@ function ScheduleDialog({
             onChange={(value) => form.setValue("interviewer_uuid", value, { shouldDirty: true })}
             placeholder="Select an interviewer"
             searchPlaceholder={t("recruitment.searchInterviewer", "Search interviewer...")}
-            emptyText={t("recruitment.noInterviewersFound", "No interviewers found.")}
+            emptyText={interviewers.isLoading ? "Loading interviewers..." : interviewers.isError ? "Could not load interviewers. Close and reopen this form to retry." : t("recruitment.noInterviewersFound", "No interviewers found.")}
           />
         </label>
         <label className="block space-y-1 text-sm">
