@@ -584,9 +584,8 @@ function AddCandidateDialog({
         toast.success(t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated"));
       }
     },
-    // The duplicate-application case lands here: one row per candidate per opening is
-    // enforced by a unique index, so re-adding the same person is a 409 the recruiter
-    // needs told about rather than a form that appears to ignore them.
+    // Phone/CNIC conflicts still refuse creation. Duplicate email is a warning only:
+    // the application is retained, then the email must be changed before an offer.
     //
     // The shape marker is checked first and quietly dropped: a CNIC that is 12
     // digits long is already reported on the input itself, and a toast saying
