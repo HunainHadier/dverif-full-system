@@ -651,7 +651,9 @@ function EmployeeFormDialog({
         // decided.
         cnic: normalizeCNIC(form.cnic),
         email: form.email.trim() || undefined,
-        send_invite: !isEdit && Boolean(form.email.trim()),
+        // Respect the checkbox: an email alone only makes the employee
+        // contactable. Portal access is opt-in, exactly as the field explains.
+        send_invite: !isEdit && form.send_invite,
         phone: form.phone.trim() || undefined,
         designation: form.designation.trim() || undefined,
         department: form.department.trim() || undefined,
@@ -913,7 +915,6 @@ function EmployeeFormDialog({
                   onChange={(e) => setForm({ ...form, current_salary: e.target.value })}
                   placeholder="0.00"
                 />
-                <p className="text-xs text-muted-foreground">Leave blank if compensation is not agreed yet. A positive amount is saved effective on the joining date and payroll uses the organization currency/pay-frequency policy.</p>
                 {errors.current_salary ? <p className="text-xs text-destructive">{errors.current_salary}</p> : null}
               </div>
             )}
