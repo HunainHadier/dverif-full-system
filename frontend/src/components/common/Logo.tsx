@@ -15,7 +15,7 @@ export function Logo({
         <div className="flex flex-col leading-none">
           <span className="text-base font-semibold tracking-tight text-foreground">Dverif</span>
           <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Verification
+            HRMS
           </span>
         </div>
       ) : null}
