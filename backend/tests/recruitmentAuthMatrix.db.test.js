@@ -306,7 +306,7 @@ describe.runIf(HAS_DB)("every registered recruitment route is covered by this ma
     const src = readFileSync("src/routes/org.routes.js", "utf8");
     const registered = [
       ...src.matchAll(
-        /router\.(get|post|put|delete)\(\s*"(\/(?:job-openings|candidates|applications|pipeline|interviews|offers|candidate-attachments)[^"]*)"/g,
+        /router\.(get|post|put|delete)\(\s*"(\/(?:job-openings|candidates|applications|pipeline|interviewers|interviews|my\/interviews|offers|candidate-attachments)[^"]*)"/g,
       ),
     ]
       .map((m) => [m[1].toUpperCase(), `/api/v1/org${m[2]}`])
