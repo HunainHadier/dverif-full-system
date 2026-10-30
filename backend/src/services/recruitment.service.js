@@ -1766,14 +1766,14 @@ export async function getInterview({ orgId, interviewUuid, conn = pool }) {
  */
 export async function listInterviewers({ orgId, conn = pool }) {
   const [rows] = await conn.query(
-    `SELECT u.uuid, u.full_name, u.email, u.org_role,
+    `SELECT DISTINCT u.uuid, u.full_name, u.email, u.org_role,
             dg.name AS designation, dp.name AS department
        FROM users u
        LEFT JOIN employees e
-         ON e.linked_user_uuid=u.uuid AND e.organization_id=u.organization
+         ON e.linked_user_uuid=u.uuid AND e.organization_id=u.organization AND e.status IN ('current_employee','active')
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
-      WHERE u.organization=? AND u.status='active'
+      WHERE u.organization=? AND u.status='active' AND (u.org_role IN ('org_admin','sub_admin') OR e.uuid IS NOT NULL)
       ORDER BY u.full_name ASC`,
     [orgId],
   );
