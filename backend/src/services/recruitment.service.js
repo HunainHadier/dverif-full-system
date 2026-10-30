@@ -557,10 +557,10 @@ export async function createCandidate({
   }
   const [[emailDuplicateRow]] = await conn.query(
     `SELECT
-       (EXISTS(SELECT 1 FROM candidates WHERE organization_id=? AND LOWER(email)=?)
-        OR EXISTS(SELECT 1 FROM users WHERE organization=? AND LOWER(email)=?)
-        OR EXISTS(SELECT 1 FROM employees WHERE organization_id=? AND LOWER(email)=?)) AS email_duplicate`,
-    [orgId, address, orgId, address, orgId, address],
+       (EXISTS(SELECT 1 FROM candidates WHERE LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM users WHERE LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM employees WHERE LOWER(email)=?)) AS email_duplicate`,
+    [address, address, address],
   );
   const emailDuplicate = Boolean(emailDuplicateRow?.email_duplicate);
 
@@ -614,10 +614,10 @@ async function assertCandidateEmailAvailable({ orgId, candidateUuid, email, conn
   if (!address) throw new ApiError(409, "Add the candidate's email address before assigning an offer");
   const [[row]] = await conn.query(
     `SELECT
-       (EXISTS(SELECT 1 FROM candidates WHERE organization_id=? AND LOWER(email)=? AND uuid<>?)
-        OR EXISTS(SELECT 1 FROM users WHERE organization=? AND LOWER(email)=?)
-        OR EXISTS(SELECT 1 FROM employees WHERE organization_id=? AND LOWER(email)=?)) AS email_in_use`,
-    [orgId, address, candidateUuid, orgId, address, orgId, address],
+       (EXISTS(SELECT 1 FROM candidates WHERE LOWER(email)=? AND uuid<>?)
+        OR EXISTS(SELECT 1 FROM users WHERE LOWER(email)=?)
+        OR EXISTS(SELECT 1 FROM employees WHERE LOWER(email)=?)) AS email_in_use`,
+    [address, candidateUuid, address, address],
   );
   if (row?.email_in_use) {
     throw new ApiError(409, "This candidate email is already in use. Update the candidate email to a unique address before assigning or sending an offer.");
