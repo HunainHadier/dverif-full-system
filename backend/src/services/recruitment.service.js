@@ -637,7 +637,6 @@ export async function updateCandidate({
   conn = pool,
 }) {
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
-  await assertCandidateEmailAvailable({ orgId, candidateUuid, email: candidate.email, conn });
   if (["sent", "hired"].includes(candidate.offer_status) || candidate.stage === "hired") {
     throw new ApiError(409, "A candidate cannot be edited after the offer has been sent or they have been hired");
   }
@@ -2099,6 +2098,7 @@ export async function startCandidateOffer({
 }) {
   assertUuid(candidateUuid, "Candidate UUID");
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
+  await assertCandidateEmailAvailable({ orgId, candidateUuid, email: candidate.email, conn });
   if (!["selected", "offered"].includes(candidate.stage)) throw new ApiError(409, "Only a selected candidate can receive an offer");
   await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn });
   if (["sent", "hired"].includes(candidate.offer_status)) {
