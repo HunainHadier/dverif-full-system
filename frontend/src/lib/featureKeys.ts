@@ -46,7 +46,6 @@ export const FEATURE_KEYS = [
   "manage_separation",
   "approve_expenses",
   "manage_recruitment",
-  "override_failed_interview",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];

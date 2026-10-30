@@ -27,7 +27,6 @@ import {
   type OfferPreview,
 } from "@/services";
 import { apiErrorMessage } from "@/lib/utils";
-import { usePermissions } from "@/lib/permissions";
 import { cnicError, formatCNIC, normalizeCNIC } from "@/lib/contactFormat";
 
 export const Route = createFileRoute("/_app/org/recruitment/pipeline")({
@@ -406,9 +405,7 @@ export function HireDialog({
   const navigate = useNavigate();
   const open = Boolean(candidate);
   const qc = useQueryClient();
-  const permissions = usePermissions();
   const [preview, setPreview] = useState<OfferPreview | null>(null);
-  const [overrideReason, setOverrideReason] = useState("");
   const form = useForm<OfferPreparationForm>({ defaultValues: { offer_template_uuid: "", offer_values: {} } });
   const preparation = useQuery({
     queryKey: ["recruitment-offer-preparation", candidate?.uuid],
@@ -424,12 +421,10 @@ export function HireDialog({
   useEffect(() => {
     if (!candidate) {
       setPreview(null);
-      setOverrideReason("");
       return;
     }
     form.reset({ offer_template_uuid: "", offer_values: {} });
     setPreview(null);
-    setOverrideReason("");
   }, [candidate?.uuid, form]);
 
   useEffect(() => {
@@ -450,9 +445,7 @@ export function HireDialog({
     mutationFn: (values: OfferPreparationForm) => {
       const data = { offer_template_uuid: values.offer_template_uuid, offer_values: values.offer_values };
       if (preparation.data?.candidate.final_interview_outcome === "failed") {
-        if (!permissions.override_failed_interview) throw new Error("An authorized interview override is required.");
-        if (!overrideReason.trim()) throw new Error("Enter the reason for the failed-interview exception.");
-        return candidatesService.prepareOfferWithInterviewOverride(candidate!.uuid, { ...data, reason: overrideReason.trim() });
+        throw new Error("The final interview was failed; an offer cannot be prepared for this candidate.");
       }
       return candidatesService.prepareOffer(candidate!.uuid, data);
     },
@@ -490,12 +483,8 @@ export function HireDialog({
       });
       return;
     }
-    if (preparation.data?.candidate.final_interview_outcome === "failed" && !permissions.override_failed_interview) {
-      form.setError("root.server", { message: t("recruitment.noInterviewOverridePermission", "Ask an organization administrator with interview override permission to review this exception.") });
-      return;
-    }
-    if (preparation.data?.candidate.final_interview_outcome === "failed" && permissions.override_failed_interview && !overrideReason.trim()) {
-      form.setError("root.server", { message: t("recruitment.overrideReasonRequired", "Enter a reason for the failed-interview exception.") });
+    if (preparation.data?.candidate.final_interview_outcome === "failed") {
+      form.setError("root.server", { message: t("recruitment.failedInterviewBlocked", "The final interview outcome is Failed. An offer cannot be prepared.") });
       return;
     }
     const offerCnic = values.offer_values?.cnic ?? "";
@@ -604,8 +593,7 @@ export function HireDialog({
         {preparation.isLoading ? <p className="text-sm text-muted-foreground">{t("common.loading", "Loading templates?")}</p> : null}
         {preparation.isError ? <p className="text-sm text-destructive">{t("recruitment.offerPrepareFailed", "Offer preparation data could not be loaded.")}</p> : null}
         {preparation.data?.candidate.final_interview_outcome === "failed" ? <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-          <p>{t("recruitment.failedInterviewBlocked", "The final interview outcome is Failed. A normal offer is blocked.")}</p>
-          {permissions.override_failed_interview ? <label className="block space-y-1"><span className="font-medium">{t("recruitment.overrideReason", "Authorized exception reason")}</span><textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={3} maxLength={1000} required className="w-full rounded-md border border-input bg-background px-3 py-2" /><span className="text-xs text-muted-foreground">{t("recruitment.overrideReasonAudit", "This reason and your account will be recorded in the audit trail.")}</span></label> : <p className="text-xs text-muted-foreground">{t("recruitment.noInterviewOverridePermission", "Ask an organization administrator with interview override permission to review this exception.")}</p>}
+          <p>{t("recruitment.failedInterviewBlocked", "The final interview outcome is Failed. A candidate who failed the final interview cannot receive an offer.")}</p>
         </div> : null}
         <label className="block space-y-1.5 text-sm">
           <span className="font-medium">{t("letters.type", "Offer Letter template")}</span>

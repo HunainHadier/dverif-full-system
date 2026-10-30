@@ -43,7 +43,6 @@ export const PERMISSION_KEYS = [
   "manage_separation",
   "approve_expenses",
   "manage_recruitment",
-  "override_failed_interview",
 ];
 
 /**

@@ -254,13 +254,10 @@ export async function moveApplicationStage(req, res) {
 
 /** Prepare an offer for direct dispatch to the candidate. */
 export async function startOfferApplication(req, res) {
-  const override = req.route?.path?.endsWith("/override") === true;
   const result = await recruitment.startCandidateOffer({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
     candidateUuid: req.params.uuid,
-    overrideFailedInterviewReason: str(req.body?.override_failed_interview_reason),
-    overrideFailedInterviewAuthorized: override,
     offerTemplateUuid: str(req.body?.offer_template_uuid),
     offerValues: req.body?.offer_values ?? {},
   });

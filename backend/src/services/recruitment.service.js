@@ -2104,8 +2104,7 @@ export async function getPipelineBoard({ orgId, openingUuid, conn = pool }) {
 
 /** Prepare the offer snapshot and leave it ready for direct email dispatch. */
 export async function startCandidateOffer({
-  orgId, actorUuid, candidateUuid, overrideFailedInterviewReason = null,
-  overrideFailedInterviewAuthorized = false, offerTemplateUuid, offerValues = {}, conn = pool,
+  orgId, actorUuid, candidateUuid, offerTemplateUuid, offerValues = {}, conn = pool,
 }) {
   assertUuid(candidateUuid, "Candidate UUID");
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
@@ -2140,13 +2139,7 @@ export async function startCandidateOffer({
     throw new ApiError(409, "This opening requires a passed final interview before an offer can be prepared");
   }
   if (finalOutcome === "failed") {
-    if (!overrideFailedInterviewAuthorized) throw new ApiError(403, "The final interview failed; an authorized exception with a reason is required");
-    if (!overrideFailedInterviewReason?.trim()) throw new ApiError(400, "An override reason is required");
-    if (overrideFailedInterviewReason.trim().length > 1000) throw new ApiError(400, "The interview override reason must be 1000 characters or fewer");
-    await conn.query(
-      "UPDATE candidates SET failed_interview_override_reason=?, failed_interview_override_by_uuid=?, failed_interview_override_at=NOW() WHERE uuid=? AND organization_id=?",
-      [overrideFailedInterviewReason.trim(), actorUuid, candidate.uuid, orgId]
-    );
+    throw new ApiError(409, "The final interview was failed; an offer cannot be prepared for this candidate.");
   }
   const offerValuesJson = JSON.stringify(prepared.values);
   const snapshotHash = createHash("sha256").update(stableJson({ template_uuid: prepared.template_uuid, values: prepared.values, body: prepared.rendered_body })).digest("hex");
@@ -2162,6 +2155,6 @@ export async function startCandidateOffer({
   }
   logAudit({ actorType: "user", actorId: actorUuid ?? null, action: "candidate.offer.start",
     entityType: ATTACHMENT_ENTITY.CANDIDATE, entityId: candidateUuid,
-    details: { stage: "offered", offer_status: "ready", interview_override: finalOutcome === "failed" } });
+    details: { stage: "offered", offer_status: "ready" } });
   return { candidate: await getCandidate({ orgId, candidateUuid, conn }) };
 }
