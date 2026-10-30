@@ -344,13 +344,6 @@ export const candidatesService = {
   prepareOffer: (uuid: UUID, data: { offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
     api.post<{ candidate: Candidate }>(`/org/applications/${uuid}/start-offer`, data)
       .then((r) => r.data),
-  prepareOfferWithInterviewOverride: (uuid: UUID, data: { reason: string; offer_template_uuid: UUID; offer_values: Record<string, string> }) =>
-    api.post<{ candidate: Candidate }>(`/org/applications/${uuid}/start-offer/override`, {
-      override_failed_interview_reason: data.reason,
-      offer_template_uuid: data.offer_template_uuid,
-      offer_values: data.offer_values,
-    }).then((r) => r.data),
-
 
   uploadResume: (uuid: UUID, files: File[]) => {
     const form = new FormData();
