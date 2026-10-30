@@ -526,7 +526,7 @@ export const offersService = {
   downloadPdf: (candidateUuid: UUID) =>
     api.get(`/org/offers/${candidateUuid}/pdf`, { responseType: "blob" }).then((r) => r.data as Blob),
   /** Mark the candidate as hired and create their employee record. */
-  hire: (candidateUuid: UUID, data: { cnic?: string | null; joining_date?: string; comments?: string } = {}) =>
+  hire: (candidateUuid: UUID, data: { cnic?: string | null; email?: string; joining_date?: string; comments?: string } = {}) =>
     api.post<{ candidate: Candidate; employee_uuid: UUID | null }>(
       "/org/offers/" + candidateUuid + "/hire",
       data,
