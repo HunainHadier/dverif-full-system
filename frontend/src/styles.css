@@ -113,6 +113,26 @@
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  /* Keep native select controls and their option list readable in both themes. */
+  select {
+    color: var(--color-foreground);
+    background-color: var(--color-background);
+  }
+
+  select option,
+  select optgroup {
+    color: var(--color-popover-foreground);
+    background-color: var(--color-popover);
+  }
+
   * {
     border-color: var(--color-border);
   }
