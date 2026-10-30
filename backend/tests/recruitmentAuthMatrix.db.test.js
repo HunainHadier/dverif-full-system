@@ -94,8 +94,11 @@ const ROUTES = [
   ["GET", "/api/v1/org/pipeline"],
   ["GET", "/api/v1/org/pipeline/11111111-1111-4111-8111-111111111111"],
   ["POST", "/api/v1/org/interviews"],
+  ["GET", "/api/v1/org/interviewers"],
   ["GET", "/api/v1/org/interviews"],
   ["POST", "/api/v1/org/interviews/11111111-1111-4111-8111-111111111111/feedback"],
+  ["GET", "/api/v1/org/my/interviews"],
+  ["POST", "/api/v1/org/my/interviews/11111111-1111-4111-8111-111111111111/feedback"],
   ["GET", "/api/v1/org/offers"],
   // Prepare and preview are available before direct offer dispatch.
   ["GET", "/api/v1/org/offers/11111111-1111-4111-8111-111111111111/prepare"],
@@ -235,6 +238,11 @@ const ALLOWED = {
  * covered by the recruitment permission: manage_recruitment means "run
  * recruitment", and overriding a failed interview is a rarer, more accountable act.
  */
+const PERSONAL_ASSIGNED_ROUTES = new Set([
+  "/api/v1/org/my/interviews",
+  "/api/v1/org/my/interviews/11111111-1111-4111-8111-111111111111/feedback",
+]);
+
 const EXTRA_PERMISSION = {
   "/api/v1/org/applications/11111111-1111-4111-8111-111111111111/start-offer/override": {
     key: "override_failed_interview",
@@ -250,7 +258,7 @@ describe.runIf(HAS_DB)("auth matrix — every recruitment route x every persona"
       // however much of everything else it holds. org_admin is exempt: hasPermission
       // short-circuits on the role, so an org admin is never refused a permission
       // check at all and the extra permission does not restrict them.
-      const allowed = baseAllowed && (!extra || persona === "orgAdmin" || persona === extra.holder);
+      const allowed = PERSONAL_ASSIGNED_ROUTES.has(path) || (baseAllowed && (!extra || persona === "orgAdmin" || persona === extra.holder));
       it(`${persona} ${allowed ? "may" : "may NOT"} ${method} ${path.replace("/api/v1/org", "")}`, async () => {
         const res = await call(method, path, persona);
 
