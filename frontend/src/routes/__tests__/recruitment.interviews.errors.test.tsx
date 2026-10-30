@@ -158,13 +158,16 @@ describe("scheduling an interview", () => {
     expect(values).toContain("u-2");
   });
 
-  it("requires an interviewer so every scheduled interview has an owner", async () => {
+  it("requires an interviewer and does not preselect a manager", async () => {
     const user = userEvent.setup();
     setUp();
 
     await user.click(screen.getByRole("button", { name: /schedule interview/i }));
     const picker = (await screen.findByLabelText(/interviewer/i)) as HTMLSelectElement;
-    expect(Array.from(picker.options).some((o) => o.value === "")).toBe(false);
+    expect(picker.required).toBe(true);
+    expect(picker.value).toBe("");
+    expect(Array.from(picker.options).some((o) => o.value === "u-1")).toBe(true);
+    expect(Array.from(picker.options).some((o) => o.value === "u-2")).toBe(true);
   });
 
   it("loads the interviewer directory from the organization-wide endpoint", async () => {
@@ -174,6 +177,27 @@ describe("scheduling an interview", () => {
     await user.click(screen.getByRole("button", { name: /schedule interview/i }));
     await screen.findByLabelText(/interviewer/i);
     expect(vi_mock.interviewers).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer candidates whose interview is completed", async () => {
+    vi_mock.candidatesList.mockResolvedValue({
+      items: [
+        { uuid: "c-1", full_name: "Ayesha Siddiqui", completed_interviews: 0 },
+        { uuid: "c-2", full_name: "Already Interviewed", completed_interviews: 1 },
+      ],
+      total: 2,
+      totalPages: 1,
+      page: 1,
+      limit: 200,
+    });
+    const user = userEvent.setup();
+    setUp();
+
+    await user.click(screen.getByRole("button", { name: /schedule interview/i }));
+    const candidatePicker = await screen.findByLabelText(/interview for/i);
+    const labels = Array.from((candidatePicker as HTMLSelectElement).options).map((o) => o.text);
+    expect(labels).toContain("Ayesha Siddiqui");
+    expect(labels).not.toContain("Already Interviewed");
   });
 
   it("SURFACES the server's refusal instead of failing silently", async () => {
