@@ -216,13 +216,7 @@ const ALLOWED = {
 };
 
 /**
- * Routes that demand a permission beyond manage_recruitment, and the persona that
- * holds it.
- *
- * `start-offer/override` is the only one. It is the route that lets an
- * organization hire someone whose final interview FAILED, so it is deliberately not
- * covered by the recruitment permission: manage_recruitment means "run
- * recruitment", and overriding a failed interview is a rarer, more accountable act.
+ * Interviewer self-service routes are limited to the assigned interviewer.
  */
 const PERSONAL_ASSIGNED_ROUTES = new Set([
   "/api/v1/org/my/interviews",
@@ -231,7 +225,6 @@ const PERSONAL_ASSIGNED_ROUTES = new Set([
 
 describe.runIf(HAS_DB)("auth matrix — every recruitment route x every persona", () => {
   for (const [method, path] of ROUTES) {
-    const extra = EXTRA_PERMISSION[path];
     for (const [persona, baseAllowed] of Object.entries(ALLOWED)) {
       const allowed = PERSONAL_ASSIGNED_ROUTES.has(path) || baseAllowed;
       it(`${persona} ${allowed ? "may" : "may NOT"} ${method} ${path.replace("/api/v1/org", "")}`, async () => {
