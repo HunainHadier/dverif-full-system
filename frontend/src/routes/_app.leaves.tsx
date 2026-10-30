@@ -45,7 +45,6 @@ import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { LeaveRequestDetailsDialog } from "@/components/leaves/LeaveRequestDetailsDialog";
 import { LeaveReasonEditor } from "@/components/leaves/LeaveReasonEditor";
-import { FormattedLeaveReason } from "@/components/leaves/FormattedLeaveReason";
 
 export const Route = createFileRoute("/_app/leaves")({
   beforeLoad: () => {
@@ -188,11 +187,6 @@ function LeavesContent() {
                         </TableCell>
                         <TableCell data-label="Leave type" className="whitespace-nowrap font-medium text-foreground">
                           {r.leave_type_name}
-                          {r.reason && (
-                            <div className="mt-0.5 max-w-[240px] truncate text-xs font-normal text-muted-foreground">
-                              <FormattedLeaveReason text={r.reason} />
-                            </div>
-                          )}
                         </TableCell>
                         <TableCell data-label="Dates" className="whitespace-nowrap text-sm text-muted-foreground">
                           {formatDate(r.start_date)} → {formatDate(r.end_date)}
@@ -298,7 +292,7 @@ function ApplyLeaveDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] w-[95vw] max-w-md overflow-y-auto sm:w-full">
         <DialogHeader>
           <DialogTitle>{t("leaves.applyForLeave")}</DialogTitle>
           <DialogDescription>{t("leaves.dialogDescription")}</DialogDescription>
