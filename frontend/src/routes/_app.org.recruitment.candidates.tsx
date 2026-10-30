@@ -575,7 +575,7 @@ function AddCandidateDialog({
       onOpenChange(false);
       const savedMessage = t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated");
       if (result.candidate.email_duplicate) {
-        toast.warning(`${savedMessage} Email already exists in this organization. Update it to a unique email before preparing an offer.`);
+        toast.warning(`${savedMessage} Email already exists in DVerif. Update it to a unique email before preparing an offer.`);
       } else if (result.resumeAttached === false) {
         toast.warning(`${savedMessage} ${t("recruitment.resumeAttachFailed")}`);
       } else if (result.resumeAttached === null) {
