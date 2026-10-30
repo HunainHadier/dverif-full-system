@@ -1626,7 +1626,7 @@ export async function scheduleInterview({
     );
     if (!userInterviewer) {
       const [[employeeInterviewer]] = await conn.query(
-        "SELECT uuid FROM employees WHERE uuid=? AND organization_id=? AND status IN ('active','probation','notice_period') LIMIT 1",
+        "SELECT uuid FROM employees WHERE uuid=? AND organization_id=? LIMIT 1",
         [interviewerUuid, orgId],
       );
       if (!employeeInterviewer) throw new ApiError(400, "Choose an active user in this organization as the interviewer");
