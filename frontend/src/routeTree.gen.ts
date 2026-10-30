@@ -404,6 +404,8 @@ export interface FileRoutesByFullPath {
   '/my-expenses': typeof AppMyExpensesRoute
   '/my-letters': typeof AppMyLettersRoute
   '/my-interviews': typeof AppMyInterviewsRoute
+  '/my-interviews': typeof AppMyInterviewsRoute
+  '/my-interviews': typeof AppMyInterviewsRoute
   '/my-resignation': typeof AppMyResignationRoute
   '/payments': typeof AppPaymentsRoute
   '/payroll': typeof AppPayrollRoute
@@ -527,6 +529,7 @@ export interface FileRoutesById {
   '/_app/my-assets': typeof AppMyAssetsRoute
   '/_app/my-expenses': typeof AppMyExpensesRoute
   '/_app/my-letters': typeof AppMyLettersRoute
+  '/_app/my-interviews': typeof AppMyInterviewsRoute
   '/_app/my-resignation': typeof AppMyResignationRoute
   '/_app/payments': typeof AppPaymentsRoute
   '/_app/payroll': typeof AppPayrollRoute
@@ -591,6 +594,7 @@ export interface FileRouteTypes {
     | '/my-assets'
     | '/my-expenses'
     | '/my-letters'
+    | '/my-interviews'
     | '/my-resignation'
     | '/payments'
     | '/payroll'
@@ -713,6 +717,7 @@ export interface FileRouteTypes {
     | '/_app/my-assets'
     | '/_app/my-expenses'
     | '/_app/my-letters'
+    | '/_app/my-interviews'
     | '/_app/my-resignation'
     | '/_app/payments'
     | '/_app/payroll'
@@ -1305,6 +1310,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMyAssetsRoute: AppMyAssetsRoute,
   AppMyExpensesRoute: AppMyExpensesRoute,
   AppMyLettersRoute: AppMyLettersRoute,
+  AppMyInterviewsRoute: AppMyInterviewsRoute,
   AppMyResignationRoute: AppMyResignationRoute,
   AppPaymentsRoute: AppPaymentsRoute,
   AppPayrollRoute: AppPayrollRoute,
