@@ -66,7 +66,7 @@ export function InterviewsPage() {
     queryFn: () => candidatesService.list({ limit: 200 }),
   });
   const schedulableCandidates = useMemo(
-    () => (candidates.data?.items ?? []).filter((candidate) => (candidate.completed_interviews ?? 0) === 0),
+    () => (candidates.data?.items ?? []).filter((candidate) => Number(candidate.completed_interviews ?? 0) === 0),
     [candidates.data?.items],
   );
 
@@ -369,7 +369,6 @@ function ScheduleDialog({
     },
   });
   const { reset } = form;
-  const interviewerUuid = form.watch("interviewer_uuid");
   const interviewerOptions = useMemo(
     () => [
       ...(interviewers.data ?? []).map((person) => ({
