@@ -455,7 +455,7 @@ export const interviewsService = {
 
   schedule: (data: {
     candidate_uuid: UUID;
-    interviewer_uuid?: UUID;
+    interviewer_uuid: UUID;
     scheduled_at: string;
     mode?: InterviewMode;
     location?: string;
