@@ -1,9 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CheckCircle2, CircleDollarSign, LogOut, ShieldAlert, Users } from "lucide-react";
+import { CheckCircle2, LogOut, ShieldAlert, Users } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -16,38 +16,29 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-  import {
-    offboardingService,
-    isCurrentEmployee,
-    orgService,
-    type ClearanceQueueRow,
-    type ExitRequestDetail,
-    type ExitRequestListRow,
-    type ExitStatus,
-    type SettlementCalc,
-    type UUID,
-  } from "@/services";
+import {
+  offboardingService,
+  isCurrentEmployee,
+  orgService,
+  type ClearanceQueueRow,
+  type ExitRequestDetail,
+  type ExitRequestListRow,
+  type ExitStatus,
+  type UUID,
+} from "@/services";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { authStore } from "@/lib/auth";
 import { apiErrorMessage, formatCurrency, formatDate } from "@/lib/utils";
+
 export const Route = createFileRoute("/_app/org/offboarding")({
   beforeLoad: () => {
     if (typeof window === "undefined") return;
-    // The same call the sidebar makes before rendering the link, so a visible
-    // link and a reachable page cannot disagree. See lib/routeAccess.
     if (!canAccessRoute(authStore.get().user, "/org/offboarding")) {
       throw redirect({ to: "/dashboard" });
     }
@@ -89,13 +80,9 @@ function OrgOffboardingPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ExitStatus | "">("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
-  const [settlementFor, setSettlementFor] = useState<string | null>(null);
-    const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
-    const [newOpen, setNewOpen] = useState(false);
+  const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
 
-  // Reset to the first page whenever the result set narrows, or the table renders
-  // an empty page that reads as "nobody is leaving" when in fact there is no
-  // page 4 of this filter.
   useEffect(() => {
     setPage(1);
   }, [search, status]);
@@ -120,7 +107,6 @@ function OrgOffboardingPage() {
     void qc.invalidateQueries({ queryKey: ["exit-requests"] });
     void qc.invalidateQueries({ queryKey: ["offboarding-clearances"] });
     void qc.invalidateQueries({ queryKey: ["exit-request"] });
-    void qc.invalidateQueries({ queryKey: ["exit-settlement"] });
   };
 
   const complete = useMutation({
@@ -144,20 +130,14 @@ function OrgOffboardingPage() {
       render: (r) => (
         <div className="min-w-0">
           <p className="truncate font-medium">{r.employee_name}</p>
-          {r.designation ? (
-            <p className="truncate text-xs text-muted-foreground">{r.designation}</p>
-          ) : null}
+          {r.designation ? <p className="truncate text-xs text-muted-foreground">{r.designation}</p> : null}
         </div>
       ),
     },
     {
       key: "request_type",
       header: t("offboarding.type"),
-      render: (r) => (
-        <span className="text-sm text-muted-foreground">
-          {t(`offboarding.requestType.${r.request_type}`)}
-        </span>
-      ),
+      render: (r) => <span className="text-sm text-muted-foreground">{t(`offboarding.requestType.${r.request_type}`)}</span>,
     },
     {
       key: "last_working_day",
@@ -172,9 +152,6 @@ function OrgOffboardingPage() {
     {
       key: "clearance",
       header: t("offboarding.clearance"),
-      // A count, not a percentage, and never a bare tick: an exit with two of
-      // nine tasks done is not "in progress" in any sense a person being chased
-      // about it would recognise.
       render: (r) => (
         <span className="text-sm">
           {t("offboarding.clearedOf", {
@@ -192,9 +169,7 @@ function OrgOffboardingPage() {
     {
       key: "status",
       header: t("common.status"),
-      render: (r) => (
-        <Badge variant={STATUS_VARIANT[r.status]}>{t(`offboarding.status.${r.status}`)}</Badge>
-      ),
+      render: (r) => <Badge variant={STATUS_VARIANT[r.status]}>{t(`offboarding.status.${r.status}`)}</Badge>,
     },
   ];
 
@@ -217,21 +192,13 @@ function OrgOffboardingPage() {
             <TabsTrigger value="requests">{t("offboarding.exitRequests")}</TabsTrigger>
             <TabsTrigger value="clearances">
               {t("offboarding.clearances")}
-              {queue.length > 0 ? (
-                <Badge variant="outline" className="ml-2">
-                  {queue.length}
-                </Badge>
-              ) : null}
+              {queue.length > 0 ? <Badge variant="outline" className="ml-2">{queue.length}</Badge> : null}
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="requests">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <SearchInput
-                value={search}
-                onChange={setSearch}
-                placeholder={t("offboarding.searchEmployees")}
-              />
+              <SearchInput value={search} onChange={setSearch} placeholder={t("offboarding.searchEmployees")} />
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as ExitStatus | "")}
@@ -239,9 +206,7 @@ function OrgOffboardingPage() {
               >
                 <option value="">{t("offboarding.allStatuses")}</option>
                 {(["pending", "approved", "rejected", "completed"] as ExitStatus[]).map((s) => (
-                  <option key={s} value={s}>
-                    {t(`offboarding.status.${s}`)}
-                  </option>
+                  <option key={s} value={s}>{t(`offboarding.status.${s}`)}</option>
                 ))}
               </select>
             </div>
@@ -290,14 +255,7 @@ function OrgOffboardingPage() {
           uuid={detailUuid}
           onClose={() => setDetailUuid(null)}
           onChanged={invalidate}
-          onOpenSettlement={(uuid) => setSettlementFor(uuid)}
           onRequestComplete={setConfirmComplete}
-        />
-
-        <SettlementDialog
-          uuid={settlementFor}
-          onClose={() => setSettlementFor(null)}
-          onSaved={invalidate}
         />
 
         <NewExitDialog
@@ -323,14 +281,6 @@ function OrgOffboardingPage() {
   );
 }
 
-/**
- * The clearance queue, grouped by department.
- *
- * One row per (exit, department) rather than per exit, because the question this
- * tab answers is "what is waiting on IT", not "who is leaving". Collapsing to one
- * row per exit hides which team is the blocker, which is the only reason to open
- * the tab.
- */
 function clearanceColumns(
   t: (k: string, o?: Record<string, unknown>) => string,
 ): DataTableColumn<ClearanceQueueRow>[] {
@@ -350,9 +300,7 @@ function clearanceColumns(
       header: t("offboarding.department"),
       render: (r) => (
         <div className="flex flex-wrap gap-1">
-          {r.pending_departments.map((department) => (
-            <Badge key={department} variant="secondary">{department}</Badge>
-          ))}
+          {r.pending_departments.map((department) => <Badge key={department} variant="secondary">{department}</Badge>)}
         </div>
       ),
     },
@@ -366,43 +314,29 @@ function clearanceColumns(
       header: t("offboarding.outstanding"),
       render: (r) => (
         <span className="text-sm">
-          {t("offboarding.clearedOf", {
-            cleared: r.total_count - r.pending_count,
-            total: r.total_count,
-          })}
+          {t("offboarding.clearedOf", { cleared: r.total_count - r.pending_count, total: r.total_count })}
         </span>
       ),
     },
     {
       key: "assets_outstanding",
       header: t("offboarding.assets"),
-      render: (r) =>
-        r.assets_outstanding > 0 ? (
-          <Badge variant="destructive">
-            {t("offboarding.assetsHeld", { count: r.assets_outstanding })}
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
+      render: (r) => r.assets_outstanding > 0 ? (
+        <Badge variant="destructive">{t("offboarding.assetsHeld", { count: r.assets_outstanding })}</Badge>
+      ) : <span className="text-muted-foreground">—</span>,
     },
   ];
 }
-
-// ---------------------------------------------------------------------------
-// Detail sheet: review, clearance, and what is still owed
-// ---------------------------------------------------------------------------
 
 function ExitDetailSheet({
   uuid,
   onClose,
   onChanged,
-  onOpenSettlement,
   onRequestComplete,
 }: {
   uuid: string | null;
   onClose: () => void;
   onChanged: () => void;
-  onOpenSettlement: (uuid: string) => void;
   onRequestComplete: (uuid: string) => void;
 }) {
   const { t } = useTranslation();
@@ -438,8 +372,7 @@ function ExitDetailSheet({
   });
 
   const clearTask = useMutation({
-    mutationFn: (vars: { checklistUuid: string }) =>
-      offboardingService.clearTask(uuid as UUID, vars.checklistUuid),
+    mutationFn: (vars: { checklistUuid: string }) => offboardingService.clearTask(uuid as UUID, vars.checklistUuid),
     onSuccess: () => {
       onChanged();
       void qc.invalidateQueries({ queryKey: ["exit-request", uuid] });
@@ -450,25 +383,15 @@ function ExitDetailSheet({
   const d = detail.data;
 
   return (
-    <Sheet
-      open={Boolean(uuid)}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-    >
-      <SheetContent
-        side="right"
-        className="w-full max-w-2xl gap-0 overflow-y-auto p-0 sm:max-w-2xl"
-      >
-        <SheetHeader className="border-b px-6 py-5 text-left bg-card/40">
+    <Sheet open={Boolean(uuid)} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full max-w-2xl gap-0 overflow-y-auto p-0 sm:max-w-2xl">
+        <SheetHeader className="border-b bg-card/40 px-6 py-5 text-left">
           <SheetTitle className="text-xl font-semibold">{d ? d.employee_name : t("loading")}</SheetTitle>
-          <SheetDescription className="text-xs text-muted-foreground mt-1">
-            {d
-              ? t("offboarding.detailDescription", {
-                  type: t(`offboarding.requestType.${d.request_type}`),
-                  lastDay: formatDate(d.last_working_day),
-                })
-              : ""}
+          <SheetDescription className="mt-1 text-xs text-muted-foreground">
+            {d ? t("offboarding.detailDescription", {
+              type: t(`offboarding.requestType.${d.request_type}`),
+              lastDay: formatDate(d.last_working_day),
+            }) : ""}
           </SheetDescription>
         </SheetHeader>
 
@@ -478,31 +401,16 @@ function ExitDetailSheet({
           <p className="p-6 text-sm text-destructive">{t("offboarding.notFound")}</p>
         ) : (
           <div className="space-y-6 p-6">
-            {/* Status and Action Buttons Bar with proper spacing */}
-            <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border bg-muted/20">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-muted-foreground">{t("common.status")}:</span>
                 <Badge variant={STATUS_VARIANT[d.status]} className="px-2.5 py-0.5 text-xs font-medium capitalize">
                   {t(`offboarding.status.${d.status}`)}
                 </Badge>
               </div>
-
               <div className="flex flex-wrap items-center gap-2">
                 {d.status === "pending" ? (
-                  <Button size="sm" onClick={() => setReviewOpen(true)} className="shadow-sm">
-                    {t("offboarding.review")}
-                  </Button>
-                ) : null}
-                {d.status === "approved" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onOpenSettlement(d.uuid)}
-                    className="border-primary/30 text-primary hover:bg-primary/10"
-                  >
-                    <CircleDollarSign className="mr-1.5 h-4 w-4" />
-                    {t("offboarding.fnf")}
-                  </Button>
+                  <Button size="sm" onClick={() => setReviewOpen(true)} className="shadow-sm">{t("offboarding.review")}</Button>
                 ) : null}
                 {d.status === "approved" ? (
                   <Button size="sm" variant="secondary" onClick={() => onRequestComplete(d.uuid)}>
@@ -513,7 +421,6 @@ function ExitDetailSheet({
               </div>
             </div>
 
-            {/* Blocking conditions */}
             {assets.data && assets.data.count > 0 ? (
               <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-700 dark:text-amber-400">
                 <div className="flex items-center gap-2 font-medium">
@@ -523,120 +430,60 @@ function ExitDetailSheet({
               </div>
             ) : null}
 
-            {/* Details Section */}
-            <div className="rounded-xl border bg-card p-4 space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Request Details
-              </h3>
+            <div className="space-y-3 rounded-xl border bg-card p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Request Details</h3>
               <dl className="grid grid-cols-2 gap-4 text-sm">
-                <Field label={t("offboarding.type")}>
-                  <span className="font-medium text-foreground">{t(`offboarding.requestType.${d.request_type}`)}</span>
-                </Field>
-                <Field label={t("offboarding.lastWorkingDay")}>
-                  <span className="font-medium text-foreground">{formatDate(d.last_working_day)}</span>
-                </Field>
-                <Field label={t("offboarding.daysUntilLastWorkingDay")}>
-                  <span className="font-medium text-foreground">{t("offboarding.days", { count: d.days_until_last_working_day })}</span>
-                </Field>
-                <Field label={t("offboarding.submitted")}>
-                  <span className="font-medium text-foreground">{formatDate(d.created_at)}</span>
-                </Field>
-                {d.reason ? (
-                  <div className="col-span-2 pt-2 border-t border-border/50">
-                    <Field label={t("offboarding.reason")}>
-                      <p className="mt-1 text-sm text-foreground">{d.reason}</p>
-                    </Field>
-                  </div>
-                ) : null}
-                {d.decision_notes ? (
-                  <div className="col-span-2 pt-2 border-t border-border/50">
-                    <Field label={t("offboarding.decisionNotes")}>
-                      <p className="mt-1 text-sm text-foreground">{d.decision_notes}</p>
-                    </Field>
-                  </div>
-                ) : null}
+                <Field label={t("offboarding.type")}><span className="font-medium text-foreground">{t(`offboarding.requestType.${d.request_type}`)}</span></Field>
+                <Field label={t("offboarding.lastWorkingDay")}><span className="font-medium text-foreground">{formatDate(d.last_working_day)}</span></Field>
+                <Field label={t("offboarding.daysUntilLastWorkingDay")}><span className="font-medium text-foreground">{t("offboarding.days", { count: d.days_until_last_working_day })}</span></Field>
+                <Field label={t("offboarding.submitted")}><span className="font-medium text-foreground">{formatDate(d.created_at)}</span></Field>
+                {d.reason ? <div className="col-span-2 border-t border-border/50 pt-2"><Field label={t("offboarding.reason")}><p className="mt-1 text-sm text-foreground">{d.reason}</p></Field></div> : null}
+                {d.decision_notes ? <div className="col-span-2 border-t border-border/50 pt-2"><Field label={t("offboarding.decisionNotes")}><p className="mt-1 text-sm text-foreground">{d.decision_notes}</p></Field></div> : null}
               </dl>
             </div>
 
-            {/* Assets still held */}
             {assets.data && assets.data.count > 0 ? (
-              <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+              <section className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                    {t("offboarding.assetsHeldTitle")}
-                  </h3>
-                  <Badge variant="destructive" className="text-xs">
-                    {assets.data.count} {assets.data.count === 1 ? "Asset" : "Assets"}
-                  </Badge>
+                  <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">{t("offboarding.assetsHeldTitle")}</h3>
+                  <Badge variant="destructive" className="text-xs">{assets.data.count} {assets.data.count === 1 ? "Asset" : "Assets"}</Badge>
                 </div>
                 <ul className="space-y-2">
                   {assets.data.items.map((a) => (
-                    <li
-                      key={a.asset_uuid}
-                      className="flex items-center justify-between gap-3 rounded-lg border bg-background/80 p-2.5 text-sm"
-                    >
-                      <span className="font-mono text-xs font-medium">
-                        {a.asset_tag} — {a.name}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {a.purchase_cost == null ? "—" : formatCurrency(a.purchase_cost)}
-                      </span>
+                    <li key={a.asset_uuid} className="flex items-center justify-between gap-3 rounded-lg border bg-background/80 p-2.5 text-sm">
+                      <span className="font-mono text-xs font-medium">{a.asset_tag} — {a.name}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{a.purchase_cost == null ? "—" : formatCurrency(a.purchase_cost)}</span>
                     </li>
                   ))}
                 </ul>
               </section>
             ) : null}
 
-            {/* Clearance checklist */}
-            <section className="rounded-xl border bg-card p-4 space-y-3">
+            <section className="space-y-3 rounded-xl border bg-card p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold">{t("offboarding.clearance")}</h3>
-                {d.checklistSummary ? (
-                  <Badge variant="outline" className="text-xs">
-                    {t("offboarding.clearedOf", {
-                      cleared: d.checklistSummary.cleared,
-                      total: d.checklistSummary.total,
-                    })}
-                  </Badge>
-                ) : null}
+                {d.checklistSummary ? <Badge variant="outline" className="text-xs">{t("offboarding.clearedOf", { cleared: d.checklistSummary.cleared, total: d.checklistSummary.total })}</Badge> : null}
               </div>
               <ul className="space-y-2">
                 {d.checklist.map((item) => (
-                  <li
-                    key={item.uuid}
-                    className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-2.5 text-sm"
-                  >
+                  <li key={item.uuid} className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-2.5 text-sm">
                     <span className="min-w-0 flex items-center gap-2">
-                      <Badge variant="secondary" className="shrink-0 text-xs">
-                        {item.department}
-                      </Badge>
-                      <span
-                        className={`truncate ${
-                          item.status === "cleared"
-                            ? "line-through opacity-60 text-muted-foreground"
-                            : "font-medium text-foreground"
-                        }`}
-                      >
-                        {item.task_name}
-                      </span>
+                      <Badge variant="secondary" className="shrink-0 text-xs">{item.department}</Badge>
+                      <span className={`truncate ${item.status === "cleared" ? "line-through text-muted-foreground opacity-60" : "font-medium text-foreground"}`}>{item.task_name}</span>
                     </span>
                     {item.status === "cleared" ? (
-                      <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                      <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                         <span>Cleared</span>
                       </div>
                     ) : (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="shrink-0 h-8 text-xs"
+                        className="h-8 shrink-0 text-xs"
                         loading={clearTask.isPending}
                         disabled={d.status !== "approved" && d.status !== "completed"}
-                        title={
-                          d.status !== "approved" && d.status !== "completed"
-                            ? t("offboarding.clearNeedsApproval")
-                            : undefined
-                        }
+                        title={d.status !== "approved" && d.status !== "completed" ? t("offboarding.clearNeedsApproval") : undefined}
                         onClick={() => clearTask.mutate({ checklistUuid: item.uuid })}
                       >
                         {t("offboarding.markCleared")}
@@ -645,21 +492,13 @@ function ExitDetailSheet({
                   </li>
                 ))}
               </ul>
-              {clearTask.isError ? (
-                <p className="mt-2 text-sm text-destructive">
-                  {apiErrorMessage(clearTask.error, t("offboarding.clearFailed"))}
-                </p>
-              ) : null}
+              {clearTask.isError ? <p className="mt-2 text-sm text-destructive">{apiErrorMessage(clearTask.error, t("offboarding.clearFailed"))}</p> : null}
             </section>
 
             {d.hr_notes ? (
-              <section className="rounded-xl border bg-card p-4 space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {t("offboarding.hrNotes")}
-                </h3>
-                <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm text-foreground">
-                  {d.hr_notes}
-                </p>
+              <section className="space-y-2 rounded-xl border bg-card p-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{t("offboarding.hrNotes")}</h3>
+                <p className="whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 text-sm text-foreground">{d.hr_notes}</p>
               </section>
             ) : null}
           </div>
@@ -678,12 +517,7 @@ function ExitDetailSheet({
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  );
+  return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd>{children}</dd></div>;
 }
 
 function ReviewDialog({
@@ -718,52 +552,29 @@ function ReviewDialog({
       description={t("offboarding.reviewDescription")}
       submitLabel={t("offboarding.approve")}
       cancelLabel={t("common.cancel")}
-      onSubmit={() => {
-        if (lastWorkingDay) onSubmit("approved", notes, lastWorkingDay);
-      }}
+      onSubmit={() => { if (lastWorkingDay) onSubmit("approved", notes, lastWorkingDay); }}
     >
       <div className="space-y-3">
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <p className="font-medium">{detail?.employee_name}</p>
           <p className="text-xs text-muted-foreground">
-            {detail
-              ? t("offboarding.submittedLastDay", {
-                  lastDay: formatDate(detail.last_working_day),
-                  days: t("offboarding.days", { count: detail.days_until_last_working_day }),
-                })
-              : ""}
+            {detail ? t("offboarding.submittedLastDay", {
+              lastDay: formatDate(detail.last_working_day),
+              days: t("offboarding.days", { count: detail.days_until_last_working_day }),
+            }) : ""}
           </p>
-          {detail?.reason ? (
-            <p className="mt-1 text-xs text-muted-foreground">{detail.reason}</p>
-          ) : null}
+          {detail?.reason ? <p className="mt-1 text-xs text-muted-foreground">{detail.reason}</p> : null}
         </div>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
-          <input
-            type="date"
-            required
-            value={lastWorkingDay}
-            onChange={(e) => setLastWorkingDay(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-          <span className="text-xs text-muted-foreground">
-            {t("offboarding.confirmLastWorkingDayHint")}
-          </span>
+          <input type="date" required value={lastWorkingDay} onChange={(e) => setLastWorkingDay(e.target.value)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
+          <span className="text-xs text-muted-foreground">{t("offboarding.confirmLastWorkingDayHint")}</span>
         </label>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.decisionNotes")}</span>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-          />
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm" />
         </label>
-        <Button
-          variant="outline"
-          className="w-full"
-          loading={pending}
-          onClick={() => onSubmit("rejected", notes, lastWorkingDay)}
-        >
+        <Button variant="outline" className="w-full" loading={pending} onClick={() => onSubmit("rejected", notes, lastWorkingDay)}>
           {t("offboarding.reject")}
         </Button>
       </div>
@@ -771,19 +582,6 @@ function ReviewDialog({
   );
 }
 
-/**
- * Opens an exit.
- *
- * The review, clearance and settlement halves of this module all existed and all
- * worked, but nothing could start one -- the exit-requests list could only ever
- * stay empty because an employee can open their own exit from the ESS side and a
- * resignation nobody recorded was simply an employee who stopped showing up.
- * This writes through `offboardingService.create`, which already posted to the
- * server's own endpoint.
- *
- * Status is not offered: the server always opens a new request as pending, and
- * that is deliberate, so this form does not pretend otherwise.
- */
 function NewExitDialog({
   open,
   onOpenChange,
@@ -807,14 +605,13 @@ function NewExitDialog({
   });
 
   const submit = useMutation({
-    mutationFn: () =>
-      offboardingService.create({
-        employee_uuid: employeeUuid,
-        request_type: "termination",
-        last_working_day: lastWorkingDay,
-        reason: reason.trim(),
-        hr_notes: hrNotes.trim() || undefined,
-      }),
+    mutationFn: () => offboardingService.create({
+      employee_uuid: employeeUuid,
+      request_type: "termination",
+      last_working_day: lastWorkingDay,
+      reason: reason.trim(),
+      hr_notes: hrNotes.trim() || undefined,
+    }),
     onSuccess: (result) => {
       if (result._email_warning) toast.warning(result._email_warning);
       else toast.success(t("offboarding.exitSubmitted"));
@@ -840,328 +637,50 @@ function NewExitDialog({
   return (
     <FormDialog
       open={open}
-      onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) setErrors({});
-      }}
+      onOpenChange={(o) => { onOpenChange(o); if (!o) setErrors({}); }}
       title={t("offboarding.newExitRequest")}
       description={t("offboarding.newExitRequestDescription")}
       submitLabel={t("offboarding.submitExit")}
       cancelLabel={t("common.cancel")}
-      onSubmit={(values) => {
-        void values;
-        handleSubmit();
-        return Promise.resolve();
-      }}
+      onSubmit={(values) => { void values; handleSubmit(); return Promise.resolve(); }}
     >
       <div className="space-y-1 text-sm">
         <span className="font-medium">{t("offboarding.employee")} *</span>
-        <select
-          value={employeeUuid}
-          onChange={(e) => setEmployeeUuid(e.target.value)}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
-          aria-label={t("offboarding.employee")}
-        >
+        <select value={employeeUuid} onChange={(e) => setEmployeeUuid(e.target.value)} className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm" aria-label={t("offboarding.employee")}>
           <option value="">{t("offboarding.selectEmployee")}</option>
-          {(employees.data?.items ?? [])
-            .filter((e) => isCurrentEmployee(e.status))
-            .map((e) => (
-              <option key={e.uuid} value={e.uuid}>
-                {e.full_name}
-                {e.employee_code ? ` (${e.employee_code})` : ""}
-              </option>
-            ))}
+          {(employees.data?.items ?? []).filter((e) => isCurrentEmployee(e.status)).map((e) => (
+            <option key={e.uuid} value={e.uuid}>{e.full_name}{e.employee_code ? ` (${e.employee_code})` : ""}</option>
+          ))}
         </select>
-        {errors.employeeUuid ? (
-          <span className="block text-xs text-destructive">{errors.employeeUuid}</span>
-        ) : null}
+        {errors.employeeUuid ? <span className="block text-xs text-destructive">{errors.employeeUuid}</span> : null}
       </div>
 
-      {/* Row: Request Type + Last Working Day */}
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.requestTypeLabel")}</span>
-          <div className="flex h-9 items-center">
-            <Badge variant="outline">{t("offboarding.requestType.termination")}</Badge>
-          </div>
+          <div className="flex h-9 items-center"><Badge variant="outline">{t("offboarding.requestType.termination")}</Badge></div>
         </div>
-
         <div className="space-y-1">
           <label className="block space-y-1 text-sm">
             <span className="font-medium">{t("offboarding.lastWorkingDay")} *</span>
-            <input
-              type="date"
-              value={lastWorkingDay}
-              onChange={(e) => setLastWorkingDay(e.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            />
-            {errors.lastWorkingDay ? (
-              <span className="block text-xs text-destructive">{errors.lastWorkingDay}</span>
-            ) : null}
+            <input type="date" value={lastWorkingDay} onChange={(e) => setLastWorkingDay(e.target.value)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" />
+            {errors.lastWorkingDay ? <span className="block text-xs text-destructive">{errors.lastWorkingDay}</span> : null}
           </label>
-          {lastWorkingDay ? (
-            <p className="text-xs text-muted-foreground">
-              {t("offboarding.daysUntilLastWorkingDay")}: {t("offboarding.days", { count: calendarDaysUntil(lastWorkingDay) })}
-            </p>
-          ) : null}
+          {lastWorkingDay ? <p className="text-xs text-muted-foreground">{t("offboarding.daysUntilLastWorkingDay")}: {t("offboarding.days", { count: calendarDaysUntil(lastWorkingDay) })}</p> : null}
         </div>
       </div>
 
-      {/* Row: Reason + HR Notes side by side */}
       <div className="grid grid-cols-2 gap-3">
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.reason")} *</span>
-          <textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={3}
-            placeholder={t("offboarding.reasonPlaceholder")}
-            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm resize-none"
-          />
-          {errors.reason ? (
-            <span className="block text-xs text-destructive">{errors.reason}</span>
-          ) : null}
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder={t("offboarding.reasonPlaceholder")} className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm" />
+          {errors.reason ? <span className="block text-xs text-destructive">{errors.reason}</span> : null}
         </label>
-
         <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("offboarding.hrNotes")}</span>
-          <textarea
-            value={hrNotes}
-            onChange={(e) => setHrNotes(e.target.value)}
-            rows={3}
-            placeholder={t("offboarding.hrNotesPlaceholder")}
-            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm resize-none"
-          />
+          <textarea value={hrNotes} onChange={(e) => setHrNotes(e.target.value)} rows={3} placeholder={t("offboarding.hrNotesPlaceholder")} className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm" />
         </label>
       </div>
     </FormDialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// FnF settlement
-// ---------------------------------------------------------------------------
-
-/**
- * The Full & Final dialog.
- *
- * Preview on open, so nothing is written until someone has read the figures. The
- * cap on an asset deduction is called out explicitly: when a laptop is worth more
- * than the settlement, the number that cannot be recovered has to be visible on
- * screen, because it is a debt somebody will collect and not an adjustment
- * somebody made.
- */
-function SettlementDialog({
-  uuid,
-  onClose,
-  onSaved,
-}: {
-  uuid: string | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { t } = useTranslation();
-  const qc = useQueryClient();
-  const [reference, setReference] = useState("");
-
-  const preview = useQuery({
-    queryKey: ["exit-settlement", uuid],
-    queryFn: () => offboardingService.previewSettlement(uuid as UUID),
-    enabled: Boolean(uuid),
-  });
-
-  const draft = useMutation({
-    mutationFn: () => offboardingService.draftSettlement(uuid as UUID),
-    onSuccess: () => {
-      toast.success(t("offboarding.fnfDrafted"));
-      onSaved();
-      void qc.invalidateQueries({ queryKey: ["exit-settlement", uuid] });
-      onClose();
-    },
-    onError: (e: unknown) => toast.error(apiErrorMessage(e, t("offboarding.fnfFailed"))),
-  });
-
-  const advance = useMutation({
-    mutationFn: (target: "processed" | "paid") =>
-      offboardingService.advanceSettlement(uuid as UUID, target, reference || undefined),
-    onSuccess: () => {
-      toast.success(t("offboarding.fnfAdvanced"));
-      onSaved();
-      void qc.invalidateQueries({ queryKey: ["exit-settlement", uuid] });
-    },
-    onError: (e: unknown) => toast.error(apiErrorMessage(e, t("offboarding.fnfFailed"))),
-  });
-
-  const s = preview.data;
-  const blocked = s ? s.assets.count > 0 : false;
-
-  return (
-    <Dialog
-      open={Boolean(uuid)}
-      onOpenChange={(o) => {
-        if (!o) {
-          setReference("");
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{t("offboarding.fnf")}</DialogTitle>
-          <DialogDescription>
-            {t("offboarding.fnfDescription", {
-              name: s?.employee_name ?? "",
-              lastDay: s ? formatDate(s.last_working_day) : "",
-            })}
-          </DialogDescription>
-        </DialogHeader>
-
-        {preview.isError ? (
-          <p className="text-sm text-destructive">
-            {apiErrorMessage(preview.error, t("offboarding.fnfFailed"))}
-          </p>
-        ) : null}
-
-        {s ? <SettlementBreakdown s={s} /> : null}
-
-        {blocked && s ? (
-          <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-            {t("offboarding.fnfBlocked", { count: s.assets.count })}
-          </p>
-        ) : null}
-
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("offboarding.paymentReference")}</span>
-          <input
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button
-            onClick={() => draft.mutate()}
-            loading={draft.isPending}
-            disabled={preview.isLoading}
-          >
-            {t("offboarding.fnfSaveDraft")}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => advance.mutate("processed")}
-            loading={advance.isPending}
-            // Disabled up front rather than letting it 409: the guard refusing a
-            // settlement because a laptop is still out is important, but a button
-            // that fails on click teaches people the page is unreliable.
-            disabled={blocked || preview.isLoading}
-            title={
-              blocked ? t("offboarding.fnfBlocked", { count: s?.assets.count ?? 0 }) : undefined
-            }
-          >
-            {t("offboarding.fnfProcess")}
-          </Button>
-          <Button
-            onClick={() => advance.mutate("paid")}
-            loading={advance.isPending}
-            disabled={blocked || preview.isLoading}
-          >
-            {t("offboarding.fnfMarkPaid")}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * The arithmetic, shown as arithmetic.
- *
- * Every input is on screen next to its result, because a settlement is a document
- * someone will be asked to justify to the person receiving it. A single net
- * figure with no working shown is not defensible, and the person who cannot
- * defend it is usually not the person who can query the database.
- */
-function SettlementBreakdown({ s }: { s: SettlementCalc }) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-3 text-sm">
-      <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <Field label={t("offboarding.basicSalary")}>{formatCurrency(s.basic_salary)}</Field>
-        <Field label={t("offboarding.workingDays")}>{s.working_days_in_month}</Field>
-        <Field label={t("offboarding.perDayRate")}>{formatCurrency(s.per_day_rate)}</Field>
-        <Field label={t("offboarding.perHourRate")}>
-          {formatCurrency(Number(s.per_day_rate) / 8)}
-        </Field>
-      </dl>
-
-      <section className="rounded-md border p-3">
-        <h4 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-          {t("offboarding.leaveEncashment")}
-        </h4>
-        {s.leave.rows.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t("offboarding.noLeaveAllocated")}</p>
-        ) : (
-          <ul className="space-y-1 text-xs">
-            {s.leave.rows.map((r) => (
-              <li key={r.leave_type} className="flex justify-between gap-3">
-                <span>
-                  {r.leave_type}
-                  {r.is_paid === "no" ? (
-                    <span className="ml-1 text-muted-foreground">({t("offboarding.unpaid")})</span>
-                  ) : null}
-                </span>
-                <span className="font-mono">{r.encashable_days}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-2 flex justify-between border-t pt-2 text-xs font-medium">
-          <span>
-            {t("offboarding.encashableDays", { count: s.leave.encashable_days })} ×{" "}
-            {formatCurrency(s.per_day_rate)}
-          </span>
-          <span className="font-mono">{formatCurrency(s.leave.amount)}</span>
-        </p>
-      </section>
-
-      <section className="rounded-md border p-3">
-        <h4 className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-          {t("offboarding.assetDeduction")}
-        </h4>
-        {s.assets.count === 0 ? (
-          <p className="text-xs text-muted-foreground">{t("offboarding.noAssetsHeld")}</p>
-        ) : (
-          <>
-            <p className="flex justify-between text-xs">
-              <span>{t("offboarding.assetsHeld", { count: s.assets.count })}</span>
-              <span className="font-mono">{formatCurrency(s.assets.exposure)}</span>
-            </p>
-            <p className="mt-1 flex justify-between text-xs font-medium">
-              <span>{t("offboarding.deducted")}</span>
-              <span className="font-mono">−{formatCurrency(s.assets.applied)}</span>
-            </p>
-            {s.assets.capped ? (
-              // The cap limits the deduction; it does not erase the debt. Showing
-              // the shortfall is the difference between a settlement and a
-              // quietly written-off asset.
-              <p className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
-                {t("offboarding.assetCapNote", {
-                  amount: formatCurrency(s.assets.withheld_amount),
-                })}
-              </p>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      <div className="flex justify-between border-t pt-2 text-base font-semibold">
-        <span>{t("offboarding.netFnf")}</span>
-        <span className="font-mono">{formatCurrency(s.net_fnf_amount)}</span>
-      </div>
-    </div>
   );
 }
