@@ -443,12 +443,6 @@ router.post(
   recruitmentMgmt,
   asyncHandler(startOfferApplication),
 );
-router.post(
-  "/applications/:uuid/start-offer/override",
-  recruitmentMgmt,
-  requirePermission("override_failed_interview"),
-  asyncHandler(startOfferApplication),
-);
 
 // ---- Pipeline (Kanban) ----
 router.get("/pipeline", recruitmentMgmt, asyncHandler(getPipeline));
