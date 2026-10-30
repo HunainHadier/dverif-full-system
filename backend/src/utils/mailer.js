@@ -61,6 +61,9 @@ function esc(v) {
     .replace(/'/g, "&#39;");
 }
 
+let cachedTransporter = null;
+let cachedTransporterKey = null;
+
 export function getMailerTransport() {
   const host = process.env.SMTP_HOST;
   const port = Number(process.env.SMTP_PORT || 587);
@@ -69,7 +72,16 @@ export function getMailerTransport() {
 
   if (!host || !port || !user || !pass) return null;
 
-  return nodemailer.createTransport({
+  const currentKey = `${host}:${port}:${user}:${process.env.SMTP_SECURE}:${process.env.SMTP_EHLO_NAME}`;
+  if (cachedTransporter && cachedTransporterKey === currentKey) {
+    return cachedTransporter;
+  }
+
+  cachedTransporterKey = currentKey;
+  cachedTransporter = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
     host,
     port,
     secure: toBool(process.env.SMTP_SECURE, port === 465),
@@ -79,6 +91,8 @@ export function getMailerTransport() {
     name: process.env.SMTP_EHLO_NAME || user.split("@")[1] || undefined,
     hostname: process.env.SMTP_EHLO_NAME || user.split("@")[1] || undefined,
   });
+
+  return cachedTransporter;
 }
 
 function getFromAddress() {
