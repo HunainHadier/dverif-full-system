@@ -6,6 +6,7 @@ import {
   BadgeCheck,
   Building2,
   CalendarClock,
+  CalendarCheck,
   CalendarDays,
   ClipboardCheck,
   CreditCard,
@@ -117,6 +118,7 @@ export const userNavItems: NavItem[] = [
 
 /** Employee self-service. Staff reach these through the Personal ESS footer group. */
 export const memberNavItems: NavItem[] = [
+  { to: "/my-interviews", labelKey: "nav.myAssignedInterviews", icon: CalendarCheck, audience: "self-service" },
   { to: "/attendance", labelKey: "nav.attendance", icon: ClipboardCheck, audience: "self-service" },
   { to: "/my-letters", labelKey: "nav.myLetters", icon: FileSignature, audience: "self-service" },
   // Self-service, and NOT shown in a staff member's primary menu even though
