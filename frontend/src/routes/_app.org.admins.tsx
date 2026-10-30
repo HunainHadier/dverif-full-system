@@ -124,11 +124,6 @@ const ELEVATED_PERMISSIONS: { key: ElevatedKey; label: string; description: stri
     description:
       "Job openings, the candidate pipeline, interviews, and one-click hire. Hiring creates a real employee record.",
   },
-  {
-    key: "override_failed_interview",
-    label: "Failed Interview Exception",
-    description: "Allow a documented, audited offer exception after a failed final interview.",
-  },
 ];
 
 /**
