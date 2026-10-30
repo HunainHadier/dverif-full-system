@@ -286,6 +286,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
   // notice, and that person still can. An org_admin cannot — they have no employment
   // to resign from, so the page would be empty for them rather than forbidden, which
   // is the confusing version. See ON_ROSTER_ROLES.
+  "/my-interviews": { roles: ALL_ORG_ROLES },
+
   "/my-resignation": { roles: ON_ROSTER_ROLES },
 
   // --- Billing --------------------------------------------------------------

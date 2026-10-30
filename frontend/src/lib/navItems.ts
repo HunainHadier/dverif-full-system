@@ -6,6 +6,7 @@ import {
   BadgeCheck,
   Building2,
   CalendarClock,
+  CalendarCheck,
   CalendarDays,
   ClipboardCheck,
   CreditCard,
@@ -117,6 +118,7 @@ export const userNavItems: NavItem[] = [
 
 /** Employee self-service. Staff reach these through the Personal ESS footer group. */
 export const memberNavItems: NavItem[] = [
+  { to: "/my-interviews", labelKey: "nav.myAssignedInterviews", icon: CalendarCheck, audience: "self-service" },
   { to: "/attendance", labelKey: "nav.attendance", icon: ClipboardCheck, audience: "self-service" },
   { to: "/my-letters", labelKey: "nav.myLetters", icon: FileSignature, audience: "self-service" },
   // Self-service, and NOT shown in a staff member's primary menu even though
@@ -162,6 +164,7 @@ export const orgAdminNavItems: NavItem[] = [
   // twenty is the clutter this module's siblings were just cleaned up for, and a
   // recruiter's day is one pipeline, not four destinations.
   { to: "/org/recruitment/pipeline", labelKey: "nav.recruitment", icon: UserPlus },
+  { to: "/my-interviews", labelKey: "nav.myAssignedInterviews", icon: CalendarCheck },
   // /org/support and /payments are NOT here: both moved into the account group
   // (accountNavItems) — support because it is where a person raises a ticket rather
   // than a queue they work through, and payments because it is the org's subscription

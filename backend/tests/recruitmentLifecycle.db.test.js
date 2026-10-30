@@ -582,7 +582,7 @@ describe.runIf(HAS_DB)("interviews", () => {
         await scheduleInterview({
           orgId,
           candidateUuid: candidate.uuid,
-          interviewerUuid: "22222222-2222-4222-8222-222222222222",
+          interviewerUuid: adminUuid,
           scheduledAt: at,
           conn: db,
         }),
@@ -630,6 +630,7 @@ describe.runIf(HAS_DB)("interviews", () => {
       await scheduleInterview({
         orgId,
         candidateUuid: candidate.uuid,
+        interviewerUuid: adminUuid,
         scheduledAt: at,
         conn: db,
       });
@@ -653,6 +654,7 @@ describe.runIf(HAS_DB)("interviews", () => {
         orgId,
         candidateUuid: candidate.uuid,
         scheduledAt: "2026-12-01 10:00:00",
+        interviewerUuid: adminUuid,
         conn: db,
       }),
     ).rejects.toThrow(/interview stage/i);
@@ -667,7 +669,7 @@ describe.runIf(HAS_DB)("interviews", () => {
     const interview = await scheduleInterview({
       orgId,
       candidateUuid: candidate.uuid,
-      interviewerUuid: "11111111-1111-4111-8111-111111111111",
+      interviewerUuid: adminUuid,
       scheduledAt: "2026-12-01 10:00:00",
       mode: "video",
       conn: db,
@@ -682,7 +684,7 @@ describe.runIf(HAS_DB)("interviews", () => {
     const candidate = await apply(opening.uuid);
     await toInterview(candidate.uuid);
 
-    const interviewer = "22222222-2222-4222-8222-222222222222";
+    const interviewer = adminUuid;
     const when = "2026-12-05 14:00:00";
     await scheduleInterview({ orgId, candidateUuid: candidate.uuid, interviewerUuid: interviewer, scheduledAt: when, conn: db });
 
@@ -701,11 +703,13 @@ describe.runIf(HAS_DB)("interviews", () => {
       orgId,
       candidateUuid: candidate.uuid,
       scheduledAt: "2026-12-08 09:00:00",
+      interviewerUuid: adminUuid,
       conn: db,
     });
 
     const done = await recordInterviewFeedback({
       orgId,
+      actorUuid: adminUuid,
       interviewUuid: interview.uuid,
       status: "completed",
       outcome: "passed",
@@ -722,6 +726,7 @@ describe.runIf(HAS_DB)("interviews", () => {
     await expect(
       recordInterviewFeedback({
         orgId,
+        actorUuid: adminUuid,
         interviewUuid: interview.uuid,
         outcome: "failed",
         conn: db,
@@ -737,10 +742,12 @@ describe.runIf(HAS_DB)("interviews", () => {
       orgId,
       candidateUuid: candidate.uuid,
       scheduledAt: "2026-12-09 09:00:00",
+      interviewerUuid: adminUuid,
       conn: db,
     });
     await recordInterviewFeedback({
       orgId,
+      actorUuid: adminUuid,
       interviewUuid: interview.uuid,
       outcome: "passed",
       rating: 5,

@@ -73,6 +73,8 @@ export type Candidate = {
   opening_title?: string | null;
   full_name: string;
   email: string | null;
+  /** True when this email already belongs to another candidate or org account. */
+  email_duplicate?: boolean;
   phone: string | null;
   cnic: string | null;
   cover_letter?: string | null;
@@ -125,6 +127,9 @@ export type Interview = {
   candidate_uuid: UUID;
   candidate_name?: string | null;
   interviewer_uuid: string | null;
+  interviewer_name?: string | null;
+  interviewer_email?: string | null;
+  interviewer_designation?: string | null;
   scheduled_at: string;
   mode: InterviewMode | null;
   location: string | null;
@@ -398,6 +403,17 @@ export const candidatesService = {
 };
 
 export const interviewsService = {
+  interviewers: () =>
+    api.get<{ items: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers").then((r) => r.data.items),
+
+  myAssigned: (params: { page?: number; limit?: number } = {}) =>
+    api.get<Paginated<Interview>>("/org/my/interviews", { params: { ...params, limit: params.limit ?? 100 } }).then((r) => r.data.items ?? []),
+
+  recordMyFeedback: (
+    uuid: UUID,
+    data: { status?: "completed" | "cancelled"; outcome?: "pending" | "passed" | "failed"; rating?: number | null; feedback_notes?: string },
+  ) => api.post<{ interview: Interview }>(`/org/my/interviews/${uuid}/feedback`, data).then((r) => r.data.interview),
+
   /**
    * PAGINATED, and now genuinely necessary where it was not before.
    *
@@ -439,7 +455,7 @@ export const interviewsService = {
 
   schedule: (data: {
     candidate_uuid: UUID;
-    interviewer_uuid?: UUID;
+    interviewer_uuid: UUID;
     scheduled_at: string;
     mode?: InterviewMode;
     location?: string;

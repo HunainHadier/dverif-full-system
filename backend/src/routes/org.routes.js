@@ -65,6 +65,8 @@ import {
   hireOffer,
   getPipeline,
   listInterviews,
+  listInterviewers,
+  listMyInterviews,
   scheduleInterview,
   recordInterviewFeedback,
   listOffers,
@@ -453,9 +455,20 @@ router.get("/pipeline", recruitmentMgmt, asyncHandler(getPipeline));
 router.get("/pipeline/:uuid", recruitmentMgmt, asyncHandler(getPipeline));
 
 // ---- Interviews ----
+router.get("/interviewers", recruitmentMgmt, asyncHandler(listInterviewers));
 router.get("/interviews", recruitmentMgmt, asyncHandler(listInterviews));
 router.post("/interviews", recruitmentMgmt, asyncHandler(scheduleInterview));
 router.post("/interviews/:uuid/feedback", recruitmentMgmt, asyncHandler(recordInterviewFeedback));
+
+// Personal assignments: feedback is still checked against the assigned interviewer
+// in the service, so an employee cannot submit another person's interview.
+const assignedInterviewAccess = [
+  requireRole("org_admin", "sub_admin", "employee"),
+  requireActiveSubscription,
+  requireModuleFeature("recruitment_management"),
+];
+router.get("/my/interviews", assignedInterviewAccess, asyncHandler(listMyInterviews));
+router.post("/my/interviews/:uuid/feedback", assignedInterviewAccess, asyncHandler(recordInterviewFeedback));
 
 // ---- Offers ----
 router.get("/offers", recruitmentMgmt, asyncHandler(listOffers));

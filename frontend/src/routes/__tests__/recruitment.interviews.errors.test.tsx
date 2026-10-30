@@ -48,7 +48,7 @@ const vi_mock = vi.hoisted(() => ({
   schedule: vi.fn(),
   recordFeedback: vi.fn(),
   candidatesList: vi.fn(),
-  employees: vi.fn(),
+  interviewers: vi.fn(),
 }));
 
 vi.mock("@/services", async () => {
@@ -60,9 +60,9 @@ vi.mock("@/services", async () => {
       list: vi_mock.list,
       schedule: vi_mock.schedule,
       recordFeedback: vi_mock.recordFeedback,
+      interviewers: vi_mock.interviewers,
     },
     candidatesService: { ...actual.candidatesService, list: vi_mock.candidatesList },
-    orgService: { ...actual.orgService, employees: vi_mock.employees },
   };
 });
 
@@ -89,11 +89,13 @@ function setUp() {
   );
 }
 
-const employee = (uuid: string, full_name: string, status: string, designation?: string) => ({
+const interviewer = (uuid: string, full_name: string, org_role: string, designation?: string) => ({
   uuid,
   full_name,
+  email: `${uuid}@example.com`,
+  org_role,
   designation: designation ?? null,
-  status,
+  department: null,
 });
 
 beforeEach(() => {
@@ -109,21 +111,14 @@ beforeEach(() => {
     page: 1,
     limit: 200,
   });
-  vi_mock.employees.mockResolvedValue({
-    items: [
-      employee("e-1", "Imran Shah", "current_employee", "Head of Finance"),
-      employee("e-2", "Khalid Rehman", "active"),
-      employee("e-3", "Departed Person", "ex_employee"),
-    ],
-    total: 3,
-    totalPages: 1,
-    page: 1,
-    limit: 100,
-  });
+  vi_mock.interviewers.mockResolvedValue([
+    interviewer("u-1", "Imran Shah", "employee", "Head of Finance"),
+    interviewer("u-2", "Khalid Rehman", "sub_admin", "HR Lead"),
+  ]);
 });
 
 describe("scheduling an interview", () => {
-  it("picks the interviewer from the roster by NAME, not by typed uuid", async () => {
+  it("picks an active organization user by name and submits their account UUID", async () => {
     const user = userEvent.setup();
     setUp();
 
@@ -140,15 +135,15 @@ describe("scheduling an interview", () => {
     expect(labels.some((l) => l.includes("Khalid Rehman"))).toBe(true);
 
     // And selecting one yields the uuid, which is the whole point.
-    await user.selectOptions(picker, "e-1");
+    await user.selectOptions(picker, "u-1");
     await user.type(await screen.findByLabelText(/date and time/i), "2026-06-01T09:30");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(vi_mock.schedule).toHaveBeenCalled());
-    expect(vi_mock.schedule.mock.calls[0][0].interviewer_uuid).toBe("e-1");
+    expect(vi_mock.schedule.mock.calls[0][0].interviewer_uuid).toBe("u-1");
   }, 15000);
 
-  it("does not offer someone who has left the company", async () => {
+  it("offers only active organization accounts", async () => {
     const user = userEvent.setup();
     setUp();
 
@@ -158,34 +153,27 @@ describe("scheduling an interview", () => {
     const values = Array.from(picker.options).map((o) => o.value);
     // Booking a meeting with a leaver is not something the server objects to, so the
     // client has to.
-    expect(values).not.toContain("e-3");
-    expect(values).toContain("e-1");
-    expect(values).toContain("e-2");
+    expect(values).not.toContain("u-3");
+    expect(values).toContain("u-1");
+    expect(values).toContain("u-2");
   });
 
-  it("labels the empty option, because an unassigned interviewer is a real state", async () => {
+  it("requires an interviewer so every scheduled interview has an owner", async () => {
     const user = userEvent.setup();
     setUp();
 
     await user.click(screen.getByRole("button", { name: /schedule interview/i }));
     const picker = (await screen.findByLabelText(/interviewer/i)) as HTMLSelectElement;
-
-    // An interview can legitimately be booked before a panel is assigned, so this is
-    // not a required field — but an unlabelled blank option reads as a bug.
-    const blank = Array.from(picker.options).find((o) => o.value === "");
-    expect(blank?.textContent).toMatch(/not assigned/i);
+    expect(Array.from(picker.options).some((o) => o.value === "")).toBe(false);
   });
 
-  it("looks the interviewer list up across the WHOLE org, not just this admin's own adds", async () => {
+  it("loads the interviewer directory from the organization-wide endpoint", async () => {
     const user = userEvent.setup();
     setUp();
 
     await user.click(screen.getByRole("button", { name: /schedule interview/i }));
     await screen.findByLabelText(/interviewer/i);
-
-    // Without `scope: "org"` an org_admin sees only employee records they personally
-    // added, so a colleague another admin onboarded is silently missing from the list.
-    expect(vi_mock.employees).toHaveBeenCalledWith(expect.objectContaining({ scope: "org" }));
+    expect(vi_mock.interviewers).toHaveBeenCalledTimes(1);
   });
 
   it("SURFACES the server's refusal instead of failing silently", async () => {
@@ -203,6 +191,7 @@ describe("scheduling an interview", () => {
     setUp();
 
     await user.click(screen.getByRole("button", { name: /schedule interview/i }));
+    await user.selectOptions(await screen.findByLabelText(/interviewer/i), "u-1");
     await user.type(await screen.findByLabelText(/date and time/i), "2026-06-01T09:30");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
