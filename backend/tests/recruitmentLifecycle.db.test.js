@@ -7,6 +7,7 @@ import {
   getOpening,
   listOpenings,
   listInterviews,
+  listMyInterviews,
   createCandidate,
   getCandidate,
   listCandidates,
@@ -734,6 +735,33 @@ describe.runIf(HAS_DB)("interviews", () => {
         conn: db,
       }),
     ).rejects.toThrow(/already been recorded/i);
+  });
+
+  it("shows only interviews assigned to the current user and refuses another user's feedback", async () => {
+    const opening = await open();
+    const candidate = await apply(opening.uuid);
+    await toInterview(candidate.uuid);
+    const interview = await scheduleInterview({
+      orgId,
+      candidateUuid: candidate.uuid,
+      interviewerUuid: adminUuid,
+      scheduledAt: "2026-12-10 09:00:00",
+      conn: db,
+    });
+
+    const mine = await listMyInterviews({ orgId, userUuid: adminUuid, conn: db });
+    const approverMine = await listMyInterviews({ orgId, userUuid: approverUuid, conn: db });
+    expect(mine.items.some((item) => item.uuid === interview.uuid)).toBe(true);
+    expect(approverMine.items.some((item) => item.uuid === interview.uuid)).toBe(false);
+
+    await expect(recordInterviewFeedback({
+      orgId,
+      actorUuid: approverUuid,
+      interviewUuid: interview.uuid,
+      status: "completed",
+      outcome: "passed",
+      conn: db,
+    })).rejects.toThrow(/assigned interviewer/i);
   });
 
   it("keeps the interview rating separate from the candidate's overall rating", async () => {
