@@ -646,9 +646,6 @@ export async function updateCandidate({
   if (!nextEmail) throw new ApiError(400, "email is required");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new ApiError(400, "email is not a valid address");
 
-  if (email !== undefined && nextEmail !== candidate.email) {
-    await assertCandidateEmailAvailable({ orgId, candidateUuid, email: nextEmail, conn });
-  }
   const nextPhone = phone === undefined ? candidate.phone : (phone ? String(phone).trim() : null);
   if (cnic !== undefined && cnicError(cnic)) throw new ApiError(400, "CNIC must be 13 digits, e.g. 42101-2345678-9");
   const nextCnic = cnic === undefined ? candidate.cnic : (normalizeCnic(cnic) || null);
@@ -1380,7 +1377,8 @@ export async function sendOffer({ orgId, actorUuid, candidateUuid, conn = pool }
   try {
     if (own) await db.beginTransaction();
     const candidate = await loadCandidate({ orgId, candidateUuid, conn: db, forUpdate: true });
-    await assertCandidateEmailAvailable({ orgId, candidateUuid, email: candidate.email, conn: db });
+    // Sending an offer is allowed for legacy candidates whose email is already
+    // associated with a user, employee, or another application.
     await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn: db });
     if (!["selected", "offered"].includes(candidate.stage)) throw new ApiError(409, "Only a selected candidate can receive an offer");
     if (!candidate.email) throw new ApiError(409, "Add the candidate?s email address before sending the offer");
@@ -2111,7 +2109,9 @@ export async function startCandidateOffer({
 }) {
   assertUuid(candidateUuid, "Candidate UUID");
   const candidate = await loadCandidate({ orgId, candidateUuid, conn });
-  await assertCandidateEmailAvailable({ orgId, candidateUuid, email: candidate.email, conn });
+  // A candidate may share an email with an existing platform user/employee or
+  // have applied to another opening with the same address. That must not block
+  // preparing an offer; identity uniqueness is enforced when employment is created.
   if (!["selected", "offered"].includes(candidate.stage)) throw new ApiError(409, "Only a selected candidate can receive an offer");
   await assertInterviewFeedbackRecorded({ orgId, candidateUuid, conn });
   if (["sent", "hired"].includes(candidate.offer_status)) {
