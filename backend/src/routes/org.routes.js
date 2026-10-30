@@ -65,6 +65,8 @@ import {
   hireOffer,
   getPipeline,
   listInterviews,
+  listInterviewers,
+  listMyInterviews,
   scheduleInterview,
   recordInterviewFeedback,
   listOffers,
