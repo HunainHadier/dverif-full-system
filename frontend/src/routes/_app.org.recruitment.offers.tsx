@@ -149,7 +149,7 @@ export function OffersPage() {
 
   const confirmHire = () => {
     const problem = cnicError(hireCnic);
-    if (!hireEmail.trim() || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(hireEmail.trim())) {
+    if (!hireEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(hireEmail.trim())) {
       toast.error("Enter a valid email address");
       return;
     }
