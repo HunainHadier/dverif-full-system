@@ -164,6 +164,7 @@ export const orgAdminNavItems: NavItem[] = [
   // twenty is the clutter this module's siblings were just cleaned up for, and a
   // recruiter's day is one pipeline, not four destinations.
   { to: "/org/recruitment/pipeline", labelKey: "nav.recruitment", icon: UserPlus },
+  { to: "/my-interviews", labelKey: "nav.myAssignedInterviews", icon: CalendarCheck },
   // /org/support and /payments are NOT here: both moved into the account group
   // (accountNavItems) — support because it is where a person raises a ticket rather
   // than a queue they work through, and payments because it is the org's subscription
