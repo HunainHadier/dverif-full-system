@@ -145,6 +145,10 @@ import {
   draftSettlement,
   advanceSettlement,
   completeExitRequest,
+  listExitClearanceTemplates,
+  createExitClearanceTemplate,
+  updateExitClearanceTemplate,
+  deleteExitClearanceTemplate,
 } from "../controllers/org/offboarding.controller.js";
 import {
   orgDashboardAnalytics,
@@ -335,6 +339,11 @@ router.post("/overtime-requests/:uuid/decide", payrollMgmt, asyncHandler(decideO
 // the "/offboarding/:uuid" pattern so "clearances" cannot be read as a uuid.
 // Same defensive pattern used for "/employees/reference" and "/hr-letters".
 const separationMgmt = [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation")];
+
+router.get("/offboarding/clearance-templates", separationMgmt, asyncHandler(listExitClearanceTemplates));
+router.post("/offboarding/clearance-templates", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(createExitClearanceTemplate));
+router.put("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(updateExitClearanceTemplate));
+router.delete("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(deleteExitClearanceTemplate));
 
 router.get("/offboarding/clearances", separationMgmt, asyncHandler(listExitChecklistPending));
 router.get("/offboarding/exit-requests", separationMgmt, asyncHandler(listExitRequests));
