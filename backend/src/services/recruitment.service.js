@@ -1698,7 +1698,6 @@ export async function scheduleInterview({
       subject: `Interview scheduled — ${opening?.title || "your application"}`,
       title: "Your interview is scheduled",
       message: `Your interview for ${opening?.title || "the position"} is scheduled for ${dateLabel}${mode ? ` (${mode})` : ""}${location ? ` at ${location}` : ""}.`,
-      actionUrl,
     })];
     if (interviewer?.email || interviewer?.linked_user_uuid) {
       deliveries.push(queueNotificationEmail({
@@ -1709,7 +1708,7 @@ export async function scheduleInterview({
         subject: `Interview scheduled — ${candidate.full_name}`,
         title: "Interview added to your schedule",
         message: `You are scheduled to interview ${candidate.full_name} for ${opening?.title || "a position"} on ${dateLabel}.`,
-        actionUrl,
+        actionUrl: notificationActionUrl("/my-interviews"),
       }));
     }
     await Promise.allSettled(deliveries);
