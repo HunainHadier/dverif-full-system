@@ -47,4 +47,5 @@ export const ROUTE_MODULES: Readonly<Record<string, keyof ModuleFlags>> = {
   "/org/offboarding": "separation_management",
   "/my-resignation": "separation_management",
   "/org/recruitment/pipeline": "recruitment_management",
+  "/my-interviews": "recruitment_management",
 };
