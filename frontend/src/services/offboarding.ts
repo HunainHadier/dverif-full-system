@@ -294,6 +294,21 @@ export const offboardingService = {
       )
       .then((r) => r.data.exit_request),
 
+
+  listClearanceTemplates: () =>
+    api.get<{ items: ClearanceTemplateTask[] }>("/org/offboarding/clearance-templates").then((r) => r.data.items),
+
+  createClearanceTemplate: (data: { department: ClearanceDepartment; task_name: string }) =>
+    api.post<{ item: ClearanceTemplateTask }>("/org/offboarding/clearance-templates", data).then((r) => r.data.item),
+
+  updateClearanceTemplate: (uuid: UUID, data: { department: ClearanceDepartment; task_name: string; is_active: boolean }) =>
+    api.put<{ item: ClearanceTemplateTask }>(`/org/offboarding/clearance-templates/${uuid}`, {
+      department: data.department, task_name: data.task_name, is_active: data.is_active,
+    }).then((r) => r.data.item),
+
+  deleteClearanceTemplate: (uuid: UUID) =>
+    api.delete(`/org/offboarding/clearance-templates/${uuid}`).then((r) => r.data),
+
   clearanceQueue: () =>
     api
       .get<{ items: ClearanceQueueRow[]; count: number }>("/org/offboarding/clearances")
@@ -317,3 +332,13 @@ export const myResignationService = {
       .post<{ exit_request: ExitRequestDetail; _email_warning?: string | null }>("/my/resignation", data)
       .then((r) => r.data),
 };
+
+
+export type ClearanceTemplateTask = {
+  uuid: UUID;
+  department: ClearanceDepartment;
+  task_name: string;
+  is_active: boolean | number;
+  sort_order: number;
+};
+
