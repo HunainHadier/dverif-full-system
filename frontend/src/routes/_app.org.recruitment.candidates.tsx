@@ -573,11 +573,11 @@ function AddCandidateDialog({
     onSuccess: (result) => {
       onDone();
       onOpenChange(false);
-      if (result.resumeAttached === false) {
-        // Candidate saved, CV not attached. Both halves said out loud, so the
-        // recruiter knows to retry the CV on the candidate's row rather than
-        // assuming the whole save failed.
-        toast.warning(`${t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated")} ${t("recruitment.resumeAttachFailed")}`);
+      const savedMessage = t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreated");
+      if (result.candidate.email_duplicate) {
+        toast.warning(`${savedMessage} Email already exists in this organization. Update it to a unique email before preparing an offer.`);
+      } else if (result.resumeAttached === false) {
+        toast.warning(`${savedMessage} ${t("recruitment.resumeAttachFailed")}`);
       } else if (result.resumeAttached === null) {
         toast.success(t(editing ? "recruitment.candidateUpdated" : "recruitment.candidateCreatedWithoutResume"));
       } else {
