@@ -593,8 +593,7 @@ export function HireDialog({
         {preparation.isLoading ? <p className="text-sm text-muted-foreground">{t("common.loading", "Loading templates?")}</p> : null}
         {preparation.isError ? <p className="text-sm text-destructive">{t("recruitment.offerPrepareFailed", "Offer preparation data could not be loaded.")}</p> : null}
         {preparation.data?.candidate.final_interview_outcome === "failed" ? <div role="alert" className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-          <p>{t("recruitment.failedInterviewBlocked", "The final interview outcome is Failed. A normal offer is blocked.")}</p>
-          <p className="text-xs text-muted-foreground">{t("recruitment.failedInterviewBlocked", "A candidate who failed the final interview cannot receive an offer.")}</p>
+          <p>{t("recruitment.failedInterviewBlocked", "The final interview outcome is Failed. A candidate who failed the final interview cannot receive an offer.")}</p>
         </div> : null}
         <label className="block space-y-1.5 text-sm">
           <span className="font-medium">{t("letters.type", "Offer Letter template")}</span>
