@@ -15,6 +15,10 @@ import {
   processSettlement,
   completeExit,
   getMyExit,
+  listClearanceTemplates,
+  createClearanceTemplate,
+  updateClearanceTemplate,
+  deleteClearanceTemplate,
 } from "../../services/offboarding.service.js";
 import { isoDate } from "../../utils/dateRange.js";
 import { sendOffboardingUpdateEmail } from "../../utils/mailer.js";
@@ -369,6 +373,43 @@ export async function completeExitRequest(req, res) {
   });
 
   return ok(res, { exit_request: detail }, "Exit completed");
+}
+
+// ---------------------------------------------------------------------------
+// Organization clearance template settings
+// ---------------------------------------------------------------------------
+
+export async function listExitClearanceTemplates(req, res) {
+  const items = await listClearanceTemplates({ orgId: req.scopeOrgId });
+  return ok(res, { items }, "Clearance template tasks");
+}
+
+export async function createExitClearanceTemplate(req, res) {
+  const item = await createClearanceTemplate({
+    orgId: req.scopeOrgId,
+    department: req.body?.department,
+    taskName: req.body?.task_name,
+  });
+  logAudit({ ...getActorFromReq(req), action: "offboarding.clearance_template.create", entityType: "offboarding_clearance_template", entityId: item.uuid, details: { department: item.department, task_name: item.task_name }, req });
+  return created(res, { item }, "Clearance task created");
+}
+
+export async function updateExitClearanceTemplate(req, res) {
+  const item = await updateClearanceTemplate({
+    orgId: req.scopeOrgId,
+    uuid: req.params.uuid,
+    department: req.body?.department,
+    taskName: req.body?.task_name,
+    isActive: req.body?.is_active,
+  });
+  logAudit({ ...getActorFromReq(req), action: "offboarding.clearance_template.update", entityType: "offboarding_clearance_template", entityId: item.uuid, details: { department: item.department, task_name: item.task_name, is_active: item.is_active }, req });
+  return ok(res, { item }, "Clearance task updated");
+}
+
+export async function deleteExitClearanceTemplate(req, res) {
+  const result = await deleteClearanceTemplate({ orgId: req.scopeOrgId, uuid: req.params.uuid });
+  logAudit({ ...getActorFromReq(req), action: "offboarding.clearance_template.delete", entityType: "offboarding_clearance_template", entityId: result.uuid, req });
+  return ok(res, result, "Clearance task deleted");
 }
 
 // ---------------------------------------------------------------------------
