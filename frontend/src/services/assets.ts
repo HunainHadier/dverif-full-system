@@ -141,7 +141,6 @@ export const assetsService = {
   update: (
     uuid: UUID,
     data: {
-      category_uuid?: UUID;
       name?: string;
       /**
        * `string | null`, and the null is load-bearing.
