@@ -62,6 +62,7 @@ vi.mock("../src/config/db.js", () => ({
             {
               uuid: "55555555-5555-4555-8555-555555555555",
               assignment_uuid: "66666666-6666-4666-8666-666666666666",
+              asset_tag: "AST-0007",
               name: "testing",
               assigned_at: "2026-10-06 00:00:00",
             },
@@ -152,6 +153,6 @@ describe("GET /api/v1/my/assets is routed", () => {
   it("returns the assigned asset rather than an empty list", async () => {
     const res = await request(app).get("/api/v1/my/assets");
     expect(res.body.data.items).toHaveLength(1);
-    expect(res.body.data.items[0]).toMatchObject({ name: "testing" });
+    expect(res.body.data.items[0]).toMatchObject({ asset_tag: "AST-0007", name: "testing" });
   });
 });
