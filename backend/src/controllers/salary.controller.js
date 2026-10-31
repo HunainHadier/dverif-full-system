@@ -144,7 +144,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
   const expenseLine = expenses.expenseReimbursementLine(approvedClaims);
 
   const lines = [
-    { label: `Basic salary (${summary.policy.pay_frequency})`, type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
+    { label: "Basic monthly salary", type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
     ...componentLines,
     ...automatic.lines,
     // Reimbursement is money COMING to the employee, so it is an earning alongside
@@ -617,9 +617,11 @@ export async function previewPayroll(req, res) {
         hourly: computed.automatic.hourlyRate,
         skip_reason: computed.automatic.skipReason,
         divisor: computed.automatic.divisor,
-        daily_rate_basis: computed.summary.policy.daily_rate_basis,
+        salary_calculation_method: computed.summary.policy.salary_calculation_method,
+        expected_hours: computed.automatic.expectedHours,
+        worked_hours: computed.automatic.workedHours,
+        payable_ratio: computed.automatic.payableRatio,
         currency: computed.summary.policy.currency,
-        pay_frequency: computed.summary.policy.pay_frequency,
       },
       /**
        * Expense reimbursement, broken out rather than folded into the allowances
