@@ -278,7 +278,7 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     await approveLeave(uuid, paidTypeId, "2026-10-12", "2026-10-12", "paid"); // a Monday already worked
 
     const summary = await summarise(uuid);
-    expect(summary.paidLeaveDays).toBe(1);
+    expect(summary.paidLeaveDays).toBe(0);
 
     const after = compute(summary);
     // Charged as unpaid leave would be one day; charged as absence would be one
