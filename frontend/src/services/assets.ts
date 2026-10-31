@@ -5,14 +5,13 @@ import type { UUID } from "./core";
  * Asset management client.
  *
  * `status` is NOT settable from here. The server derives it from the open
- * assignment and maintenance rows, so there is deliberately no `status` field on
+ * assignment row, so there is deliberately no `status` field on
  * any create/update payload — offering one would invite a client to send a value
  * that is silently ignored, which is a worse failure than a missing field.
  */
 
-export type AssetStatus = "available" | "assigned" | "maintenance" | "retired";
-export type AssetReturnCondition = "good" | "damaged" | "needs_maintenance";
-export type MaintenanceStatus = "open" | "completed" | "cancelled";
+export type AssetStatus = "available" | "assigned" | "retired";
+export type AssetReturnCondition = "good" | "damaged";
 
 export type AssetAttachment = {
   uuid: string;
@@ -34,18 +33,6 @@ export type AssetAssignment = {
   return_notes: string | null;
 };
 
-export type AssetMaintenanceJob = {
-  uuid: string;
-  title: string;
-  description: string | null;
-  status: MaintenanceStatus;
-  vendor: string | null;
-  cost: number | null;
-  reported_at: string;
-  completed_at: string | null;
-  completion_notes: string | null;
-  invoices?: AssetAttachment[];
-};
 
 export type Asset = {
   uuid: UUID;
@@ -63,23 +50,20 @@ export type Asset = {
   updated_at?: string;
   /** Present on list rows only, so the table can answer "who has this". */
   holder_name?: string | null;
-  open_jobs?: number;
 };
 
 export type AssetDetail = Asset & {
   holder: AssetAssignment | null;
   assignments: AssetAssignment[];
-  maintenance: AssetMaintenanceJob[];
   receipts: AssetAttachment[];
 };
 
 export type AssetSummary = {
   by_status: Record<AssetStatus, number>;
   total_value: number;
-  maintenance_spend: number;
 };
 
-export const ASSET_STATUSES: AssetStatus[] = ["available", "assigned", "maintenance", "retired"];
+export const ASSET_STATUSES: AssetStatus[] = ["available", "assigned", "retired"];
 
 /**
  * Status -> badge variant. Retired is deliberately NOT destructive-red: a
@@ -92,7 +76,6 @@ export const ASSET_STATUS_VARIANT: Record<
 > = {
   available: "default",
   assigned: "secondary",
-  maintenance: "outline",
   retired: "secondary",
 };
 
@@ -186,29 +169,10 @@ export const assetsService = {
 
   return: (uuid: UUID, condition: AssetReturnCondition, notes?: string) =>
     api
-      .post<{ status: AssetStatus; opened_maintenance_uuid: string | null }>(
+      .post<{ status: AssetStatus }>(
         `/org/assets/${uuid}/return`,
         { condition, notes: notes || undefined },
       )
-      .then((r) => r.data),
-
-  reportMaintenance: (
-    uuid: UUID,
-    data: { title: string; description?: string; vendor?: string; cost?: number },
-  ) =>
-    api
-      .post<{ status: AssetStatus; maintenance_uuid: string }>(
-        `/org/assets/${uuid}/maintenance`,
-        data,
-      )
-      .then((r) => r.data),
-
-  completeMaintenance: (
-    jobUuid: UUID,
-    data: { status?: "completed" | "cancelled"; notes?: string },
-  ) =>
-    api
-      .post<{ status: AssetStatus }>(`/org/asset-maintenance/${jobUuid}/complete`, data)
       .then((r) => r.data),
 
   retire: (uuid: UUID, reason?: string) =>
@@ -216,11 +180,6 @@ export const assetsService = {
 
   reinstate: (uuid: UUID) =>
     api.post<{ status: AssetStatus }>(`/org/assets/${uuid}/reinstate`).then((r) => r.data),
-
-  listMaintenance: (params: { asset_uuid?: UUID; status?: MaintenanceStatus } = {}) =>
-    api
-      .get<{ items?: AssetMaintenanceJob[] }>("/org/asset-maintenance", { params })
-      .then((r) => (Array.isArray(r.data.items) ? r.data.items : [])),
 
   // ---- attachments -------------------------------------------------------
   // Files are uploaded as multipart and stored as attachment entities, never as
@@ -236,21 +195,6 @@ export const assetsService = {
     if (description) form.append("description", description);
     return api
       .post<{ items: AssetAttachment[] }>(`/org/assets/${uuid}/receipts`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      })
-      .then((r) => r.data.items ?? []);
-  },
-
-  listInvoices: (jobUuid: UUID) =>
-    api
-      .get<{ items?: AssetAttachment[] }>(`/org/asset-maintenance/${jobUuid}/invoices`)
-      .then((r) => (Array.isArray(r.data.items) ? r.data.items : [])),
-
-  uploadInvoices: (jobUuid: UUID, files: File[]) => {
-    const form = new FormData();
-    for (const f of files) form.append("files", f);
-    return api
-      .post<{ items: AssetAttachment[] }>(`/org/asset-maintenance/${jobUuid}/invoices`, form, {
         headers: { "Content-Type": "multipart/form-data" },
       })
       .then((r) => r.data.items ?? []);
