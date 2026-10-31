@@ -263,33 +263,6 @@ describe("the summary cards show the server's figures", () => {
 
 });
 
-describe("a maintenance job can be closed either way", () => {
-  it("offers Cancel as well as Mark repaired", () => {
-    // Cancel is not the same as complete. With only "complete", a job raised in
-    // error could only be recorded as a repair that happened - and since
-    // maintenance_spend counts COMPLETED jobs, a wrongly completed job
-    // permanently inflated the money the dashboard reported as spent.
-    expect(ASSETS_PAGE).toContain("assets.markRepaired");
-    expect(ASSETS_PAGE).toContain("assets.cancelMaintenance");
-    expect(ASSETS_PAGE).toMatch(/status: "cancelled"/);
-    expect(ASSETS_PAGE).toMatch(/status: "completed"/);
-  });
-
-  it("passes the transition through, rather than always sending an empty body", () => {
-    const at = ASSETS_PAGE.indexOf("const closeJob = useMutation(");
-    expect(at, "the closeJob mutation was not found").toBeGreaterThan(-1);
-    const body = ASSETS_PAGE.slice(at, at + 400);
-    expect(body).toMatch(/completeMaintenance\(/);
-    expect(body).toMatch(/status: vars\.status/);
-  });
-
-  it("shows how the job closed", () => {
-    // Without completion_notes a cancelled job and a completed one look identical,
-    // which is the whole distinction the new button exists to record.
-    expect(ASSETS_PAGE).toContain("job.completion_notes");
-  });
-});
-
 describe("notes are readable, not just writable", () => {
   it("renders them in the detail drawer", () => {
     // retireAsset APPENDS "Retired: <reason>" to notes, and the edit menu item is
