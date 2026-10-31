@@ -317,7 +317,7 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const asset = await loadAsset(orgId, assetUuid, conn, true);
+    await loadAsset(orgId, assetUuid, conn, true);
 
     const update = buildUpdateStrict(
       {
