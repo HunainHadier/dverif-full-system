@@ -37,11 +37,7 @@ function code(src: string): string {
 /**
  * One member of a NAMED service object.
  *
- * Scoping to the object matters: assets.ts defines both assetCategoriesService
- * and assetsService, and both have a `create`. An unscoped search finds the
- * categories one first, so the assertion quietly validated the wrong service and
- * passed no matter what assetsService did — a test that can never fail is worse
- * than no test.
+ * The simplified assets client now exposes only the inventory service.
  */
 function member(objSrc: string, name: string): string {
   const start = objSrc.search(new RegExp(`^  ${name}:`, "m"));
