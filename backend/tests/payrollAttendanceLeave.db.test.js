@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
-import { seedPayrollBaseline, seedPayrollSettings } from "./helpers/payrollPolicy.js";
+import { seedPayrollBaseline, seedPayrollSettings } from "./helpers/payrollSettings.js";
 
 import {
   createSalaryComponent,
