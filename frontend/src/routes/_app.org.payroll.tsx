@@ -1081,7 +1081,11 @@ function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
   });
   const [dayTypes, setDayTypes] = useState<Record<string, "working" | "off">>({});
   useEffect(() => {
-    if (settingsQ.data) setSettingsForm(settingsQ.data);
+    if (settingsQ.data) setSettingsForm({
+      ...settingsQ.data,
+      shift_start_time: String(settingsQ.data.shift_start_time).slice(0, 5),
+      shift_end_time: String(settingsQ.data.shift_end_time).slice(0, 5),
+    });
   }, [settingsQ.data]);
   useEffect(() => {
     if (!scheduleOpen) return;
