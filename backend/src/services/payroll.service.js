@@ -76,7 +76,7 @@ export const PAYROLL_RULES = {
 // three-letter code, and its absence here is the point: a currency is no longer
 // something an administrator confirms, so a NULL left over from before this
 // change must not keep blocking payroll. CURRENCY is applied below instead.
-export async function getConfiguredPayrollPolicy(orgId, conn = pool) {
+export async function getPayrollSettings(orgId, conn = pool) {
   const [rows] = await conn.query("SELECT * FROM organization_payroll_settings WHERE organization_id=?", [orgId]);
   if (!rows.length) throw new ApiError(409, "Payroll settings are not configured. Select a salary calculation method and configure the organization shift times.");
   const settings = rows[0];
@@ -342,7 +342,7 @@ export async function getApprovedOvertimeForMonth({ employeeUuid, month, year, c
  */
 export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, policy = null, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
-  const activePolicy = policy ?? await getConfiguredPayrollPolicy(orgId, conn);
+  const activePolicy = policy ?? await getPayrollSettings(orgId, conn);
   const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
 
   const leave = await getApprovedLeaveForMonth({
@@ -479,6 +479,6 @@ export async function insertSalaryRecordLines({ conn, recordUuid, orgId, employe
 
 function timeToMinutes(value) {
   const match = String(value ?? "").match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
-  if (!match) throw new ApiError(409, "Payroll policy has no valid shift start time. An organization administrator must configure it before payroll preview or generation.");
+  if (!match) throw new ApiError(409, "Organization settings have no valid shift start time. An organization administrator must configure it before payroll preview or generation.");
   return Number(match[1]) * 60 + Number(match[2]);
 }
