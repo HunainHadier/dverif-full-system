@@ -15,7 +15,7 @@ import {
 import { generatePayroll } from "../src/controllers/salary.controller.js";
 import { pool } from "../src/config/db.js";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
-import { seedPayrollBaseline } from "./helpers/payrollPolicy.js";
+import { seedPayrollBaseline } from "./helpers/payrollSettings.js";
 
 /**
  * THE INVARIANT THIS FILE EXISTS TO PROVE.
