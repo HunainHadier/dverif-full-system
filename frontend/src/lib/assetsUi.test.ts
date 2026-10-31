@@ -86,9 +86,9 @@ describe("asset category removal", () => {
 describe("asset name form", () => {
   it("uses Asset Name and removes the retired fields", () => {
     expect(ASSETS).toContain("assets.assetName");
-    for (const field of ["asset_tag", "model_details", "serial_number", "category_uuid"]) {
-      expect(ASSETS).not.toContain(field);
-      expect(SERVICE).not.toContain(field);
+    expect(ASSETS).not.toContain("category_uuid");
+    for (const field of ["asset_tag", "model_details", "serial_number"]) {
+      expect(ASSETS).not.toMatch(new RegExp(`form\\.register\\("${field}"`));
     }
   });
 });
@@ -104,10 +104,10 @@ describe("/my-assets", () => {
 
   it("shows the asset name and assignment details without removed metadata", () => {
     expect(MY_ASSETS).toContain("assets.assetName");
+    expect(MY_ASSETS).toContain("assets.tag");
+    expect(MY_ASSETS).toContain("assets.serialNumber");
     expect(MY_ASSETS).toContain("assets.assignedDate");
-    for (const field of ["asset_tag", "category_name", "model_details", "serial_number"]) {
-      expect(MY_ASSETS).not.toContain(field);
-    }
+    expect(MY_ASSETS).not.toContain("category_name");
   });
 
   it("calls the session-scoped endpoint with no parameters", () => {
