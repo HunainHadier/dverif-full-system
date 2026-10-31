@@ -8,14 +8,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *
  *   1. STATUS IS NEVER TAKEN FROM THE REQUEST. A client posting status:"assigned"
  *      on create must not be able to invent a holder. Status is derived from the
- *      assignment and maintenance rows, and only those two writes may move it.
+ *      active assignment rows, and only those writes may move it.
  *   2. TENANT ISOLATION. Every read and write carries organization_id, so a
  *      guessed uuid 404s instead of returning another org's inventory.
  *   3. ILLEGAL TRANSITIONS ARE REFUSED. Scrapping a held asset, assigning a
  *      retired one, closing a job twice — each must fail loudly rather than
  *      leaving the register contradicting itself.
  *
- * Database-enforced invariants (at most one open assignment / open job) are NOT
+ * Database-enforced invariants (at most one open assignment) are NOT
  * asserted here, because a mocked pool cannot reject anything. Those live in
  * assets.db.test.js, which runs against a real database.
  */
@@ -138,7 +138,6 @@ describe("assignment", () => {
     // read 1, otherwise syncStatus derives "available" and the derivation this
     // module is built around is never actually exercised.
     let assigned = false;
-    let openJobs = 0;
     conn.query = vi.fn(async (sql) => {
       const s = String(sql);
       if (s.includes("FROM assets a")) return [[assetRow({ status })], []];
@@ -150,13 +149,6 @@ describe("assignment", () => {
         return [{ insertId: 5 }, []];
       }
       if (s.includes("SELECT uuid FROM asset_assignments")) return [[{ uuid: "assign-1" }], []];
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) {
-        return [[{ n: openJobs }], []];
-      }
-      if (s.includes("INSERT INTO asset_maintenance")) {
-        openJobs = 1;
-        return [{ insertId: 3 }, []];
-      }
       if (s.includes("FROM asset_assignments WHERE asset_uuid")) {
         return [[{ n: assigned ? 1 : 0 }], []];
       }
@@ -208,7 +200,6 @@ describe("assignment", () => {
         return [{ insertId: 5 }, []];
       }
       if (s.includes("SELECT uuid FROM asset_assignments")) return [[{ uuid: "assign-1" }], []];
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: 0 }], []];
       if (s.includes("FROM asset_assignments WHERE asset_uuid")) {
         return [[{ n: assigned ? 1 : 0 }], []];
       }
@@ -250,13 +241,6 @@ describe("assignment", () => {
 
   it("refuses to assign a retired asset", async () => {
     await readyAsset("retired");
-    await expect(
-      assets.assignAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET, employeeUuid: EMPLOYEE }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  it("refuses to assign an asset that is in for repair", async () => {
-    await readyAsset("maintenance");
     await expect(
       assets.assignAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET, employeeUuid: EMPLOYEE }),
     ).rejects.toMatchObject({ statusCode: 409 });
@@ -304,10 +288,8 @@ describe("assignment", () => {
 describe("return", () => {
   async function readyAsset() {
     const conn = useConnection();
-    // Stateful for the same reason as the assign helper: an open job inserted on
-    // a damaged return must change what syncStatus derives.
+    // A return closes the active assignment and frees the asset.
     let assigned = true;
-    let openJobs = 0;
     conn.query = vi.fn(async (sql) => {
       const s = String(sql);
       if (s.includes("FROM assets a")) return [[assetRow({ status: "assigned" })], []];
@@ -315,12 +297,6 @@ describe("return", () => {
         assigned = false;
         return [{ affectedRows: 1 }, []];
       }
-      if (s.includes("INSERT INTO asset_maintenance")) {
-        openJobs = 1;
-        return [{ insertId: 3 }, []];
-      }
-      if (s.includes("SELECT uuid FROM asset_maintenance")) return [[{ uuid: "job-1" }], []];
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: openJobs }], []];
       if (s.includes("FROM asset_assignments WHERE asset_uuid")) return [[{ n: assigned ? 1 : 0 }], []];
       return [[], []];
     });
@@ -331,7 +307,6 @@ describe("return", () => {
     await readyAsset();
     const result = await assets.returnAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET });
     expect(result.status).toBe("available");
-    expect(result.opened_maintenance_uuid).toBeNull();
   });
 
   it("rejects an unknown condition rather than storing it", async () => {
@@ -340,7 +315,7 @@ describe("return", () => {
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
-  it("opens a maintenance job when it comes back damaged", async () => {
+  it("records a damaged condition without opening a repair workflow", async () => {
     const conn = await readyAsset();
     const result = await assets.returnAsset({
       orgId: ORG,
@@ -349,20 +324,10 @@ describe("return", () => {
       condition: "damaged",
       notes: "Cracked screen",
     });
-
-    expect(result.opened_maintenance_uuid).toBe("job-1");
-    // Damaged means it must NOT read as freely available.
-    expect(result.status).toBe("maintenance");
-    expect(
-      conn.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO asset_maintenance")),
-    ).toBe(true);
-  });
-
-  it("records the condition, since it is what decides whether repair follows", async () => {
-    const conn = await readyAsset();
-    await assets.returnAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET, condition: "needs_maintenance" });
+    expect(result.status).toBe("available");
     const update = conn.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE asset_assignments"));
-    expect(update[1]).toContain("needs_maintenance");
+    expect(update[1]).toContain("damaged");
+    expect(conn.query.mock.calls.some(([sql]) => String(sql).includes("asset_maintenance"))).toBe(false);
   });
 
   it("refuses to return an asset nobody holds", async () => {
@@ -386,123 +351,6 @@ describe("return", () => {
     });
     await expect(
       assets.returnAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Maintenance
-// ---------------------------------------------------------------------------
-
-describe("maintenance", () => {
-  async function readyAsset(status = "available") {
-    const conn = useConnection();
-    let openJobs = 0;
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM assets a")) return [[assetRow({ status })], []];
-      if (s.includes("INSERT INTO asset_maintenance")) {
-        openJobs = 1;
-        return [{ insertId: 3 }, []];
-      }
-      if (s.includes("SELECT uuid FROM asset_maintenance")) return [[{ uuid: JOB }], []];
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: openJobs }], []];
-      if (s.includes("FROM asset_assignments WHERE asset_uuid")) return [[{ n: 0 }], []];
-      return [[], []];
-    });
-    return conn;
-  }
-
-  it("sending an asset for repair moves it to maintenance", async () => {
-    await readyAsset("available");
-    const result = await assets.reportMaintenance({
-      orgId: ORG,
-      actorUuid: ADMIN,
-      assetUuid: ASSET,
-      data: { title: "Screen replacement", vendor: "FixIt", cost: 120 },
-    });
-    expect(result.status).toBe("maintenance");
-  });
-
-  it("stores the vendor and the cost actually paid", async () => {
-    const conn = await readyAsset("available");
-    await assets.reportMaintenance({
-      orgId: ORG,
-      actorUuid: ADMIN,
-      assetUuid: ASSET,
-      data: { title: "Battery", vendor: "FixIt", cost: 89.5 },
-    });
-    const insert = conn.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO asset_maintenance"));
-    expect(insert[1]).toContain("FixIt");
-    expect(insert[1]).toContain(89.5);
-  });
-
-  it("requires a title", async () => {
-    await readyAsset();
-    await expect(
-      assets.reportMaintenance({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET, data: {} }),
-    ).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it("refuses a second open job on the same asset", async () => {
-    const conn = await readyAsset("maintenance");
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM assets a")) return [[assetRow({ status: "maintenance" })], []];
-      if (s.includes("INSERT INTO asset_maintenance")) {
-        throw Object.assign(new Error("dup"), { code: "ER_DUP_ENTRY" });
-      }
-      return [[], []];
-    });
-    await expect(
-      assets.reportMaintenance({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET, data: { title: "Again" } }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  it("completing a job returns the asset to available", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM asset_maintenance WHERE uuid")) {
-        return [[{ uuid: JOB, asset_uuid: ASSET, status: "open" }], []];
-      }
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: 0 }], []];
-      if (s.includes("FROM asset_assignments WHERE asset_uuid")) return [[{ n: 0 }], []];
-      return [[], []];
-    });
-
-    const result = await assets.completeMaintenance({ orgId: ORG, actorUuid: ADMIN, jobUuid: JOB });
-    expect(result.status).toBe("available");
-  });
-
-  it("returns a still-held asset to assigned, not to available", async () => {
-    // A borrowed company laptop sent for servicing is real. Forcing
-    // "available" would strip a live assignment.
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM asset_maintenance WHERE uuid")) {
-        return [[{ uuid: JOB, asset_uuid: ASSET, status: "open" }], []];
-      }
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: 0 }], []];
-      if (s.includes("FROM asset_assignments WHERE asset_uuid")) return [[{ n: 1 }], []];
-      return [[], []];
-    });
-
-    const result = await assets.completeMaintenance({ orgId: ORG, actorUuid: ADMIN, jobUuid: JOB });
-    expect(result.status).toBe("assigned");
-  });
-
-  it("refuses to close a job that is already closed", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      if (String(sql).includes("FROM asset_maintenance WHERE uuid")) {
-        return [[{ uuid: JOB, asset_uuid: ASSET, status: "completed" }], []];
-      }
-      return [[], []];
-    });
-    await expect(
-      assets.completeMaintenance({ orgId: ORG, actorUuid: ADMIN, jobUuid: JOB }),
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 });
@@ -533,17 +381,6 @@ describe("retirement", () => {
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 
-  it("refuses to scrap an asset that is in for repair", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      if (String(sql).includes("FROM assets a")) return [[assetRow({ status: "maintenance" })], []];
-      return [[], []];
-    });
-    await expect(
-      assets.retireAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
   it("is idempotent-refusing, so a double click cannot silently succeed", async () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
@@ -566,18 +403,6 @@ describe("retirement", () => {
     expect(String(update[1])).toContain("Written off");
   });
 
-  it("reinstate derives the status from the rows rather than assuming available", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM assets a")) return [[assetRow({ status: "retired" })], []];
-      if (s.includes("FROM asset_maintenance WHERE asset_uuid")) return [[{ n: 1 }], []];
-      if (s.includes("FROM asset_assignments WHERE asset_uuid")) return [[{ n: 0 }], []];
-      return [[], []];
-    });
-    const result = await assets.reinstateAsset({ orgId: ORG, actorUuid: ADMIN, assetUuid: ASSET });
-    expect(result.status).toBe("maintenance");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -608,7 +433,7 @@ describe("listing", () => {
 
   it("shows the current holder inline, so the list answers 'who has this' without a click", async () => {
     pool.query.mockResolvedValueOnce([[{ total: 1 }], []]).mockResolvedValueOnce([
-      [{ uuid: ASSET, status: "assigned", holder_name: "Kinza", open_jobs: 0 }],
+      [{ uuid: ASSET, status: "assigned", holder_name: "Kinza" }],
       [],
     ]);
     const page = await assets.listAssets({ orgId: ORG, page: 1, limit: 20, offset: 0 });
@@ -624,12 +449,11 @@ describe("listing", () => {
         ],
         [],
       ])
-      .mockResolvedValueOnce([[{ n: "150.00" }], []]);
+      ;
 
     const summary = await assets.assetSummary({ orgId: ORG });
     expect(summary.by_status.available).toBe(2);
     // A scrapped laptop is not part of what the company still owns.
     expect(summary.total_value).toBe(1000);
-    expect(summary.maintenance_spend).toBe(150);
   });
 });
