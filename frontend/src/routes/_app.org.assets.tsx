@@ -379,13 +379,7 @@ function RowActions({
           </DropdownMenuItem>
         ) : null}
 
-        {/* Retire is available-only, and that is the server's rule, not a UI
-            preference: retireAsset refuses an `assigned` asset ("Return this
-            asset before retiring it") and a `maintenance` one ("Close the open
-            maintenance job first"). Offering it on those rows was a menu item
-            whose only possible outcome was a 409 - which teaches people the page
-            is broken. The two ways out are already above: Return for assigned,
-            and the drawer's "mark repaired" for maintenance. */}
+        {/* Retire is available-only: return assigned assets first. */}
         {row.status === "available" ? (
           <DropdownMenuItem onSelect={() => onDialog("retire")}>
             <Trash2 className="mr-2 h-4 w-4" />
