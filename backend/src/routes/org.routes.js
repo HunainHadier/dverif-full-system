@@ -498,11 +498,8 @@ router.get("/assets/:uuid", assetMgmt, asyncHandler(getAsset));
 router.put("/assets/:uuid", assetMgmt, asyncHandler(updateAsset));
 router.post("/assets/:uuid/assign", assetMgmt, asyncHandler(assignAsset));
 router.post("/assets/:uuid/return", assetMgmt, asyncHandler(returnAsset));
-router.post("/assets/:uuid/maintenance", assetMgmt, asyncHandler(reportMaintenance));
 router.post("/assets/:uuid/retire", assetMgmt, asyncHandler(retireAsset));
 router.post("/assets/:uuid/reinstate", assetMgmt, asyncHandler(reinstateAsset));
-router.get("/asset-maintenance", assetMgmt, asyncHandler(listMaintenance));
-router.post("/asset-maintenance/:jobUuid/complete", assetMgmt, asyncHandler(completeMaintenance));
 // Files go through the polymorphic attachments table, never a path column. See
 // 20261103_create_attachments.sql: a module keeps its own row and never grows a
 // file column, because attachments is what supplies tenant scoping, the
@@ -513,13 +510,6 @@ router.post(
   assetMgmt,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadReceipts),
-);
-router.get("/asset-maintenance/:jobUuid/invoices", assetMgmt, asyncHandler(listInvoices));
-router.post(
-  "/asset-maintenance/:jobUuid/invoices",
-  assetMgmt,
-  uploadAttachments.array("files", 10),
-  asyncHandler(uploadInvoices),
 );
 router.delete("/asset-attachments/:attachmentUuid", assetMgmt, asyncHandler(removeAttachment));
 router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandler(downloadAttachment));
@@ -573,8 +563,6 @@ router.get("/dashboard/analytics", staff, asyncHandler(orgDashboardAnalytics));
 import {
   uploadReceipts,
   listReceipts,
-  uploadInvoices,
-  listInvoices,
   removeAttachment,
   downloadAttachment,
   listAssets,
@@ -584,9 +572,6 @@ import {
   summary,
   assignAsset,
   returnAsset,
-  listMaintenance,
-  reportMaintenance,
-  completeMaintenance,
   retireAsset,
   reinstateAsset,
 } from "../controllers/org/assets.controller.js";
