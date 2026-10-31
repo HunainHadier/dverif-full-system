@@ -657,6 +657,12 @@ export async function autoApproveClaim({
     return fail("A claim cannot be auto-approved by the person it reimburses; it must be reviewed by another approver");
   }
 
+  const [claimRows] = await conn.query(
+    "SELECT amount FROM expense_claims WHERE uuid=? AND organization_id=?",
+    [claimUuid, orgId],
+  );
+  if (!claimRows.length) throw new ApiError(404, "Expense claim not found");
+
   /*
    * THE AUDIT TRAIL.
    *
