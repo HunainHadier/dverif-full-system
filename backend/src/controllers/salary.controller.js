@@ -5,7 +5,6 @@ import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { generatePayslipPdf } from "../utils/payslipPdf.js";
-import { CURRENCY } from "../utils/currency.js";
 import { randomUUID } from "node:crypto";
 import * as payrollService from "../services/payroll.service.js";
 const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalaryRecordLines } =
