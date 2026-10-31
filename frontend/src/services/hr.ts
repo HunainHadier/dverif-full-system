@@ -186,6 +186,7 @@ export type PayrollPreviewItem = {
   attendance: {
     working_days: number;
     attended_days: number;
+    worked_hours: number;
     absent_days: number;
     late_count: number;
     paid_leave_days: number;
@@ -197,9 +198,11 @@ export type PayrollPreviewItem = {
     per_day: number;
     hourly: number;
     divisor: number;
-    daily_rate_basis: "actual_working_days" | "calendar_days" | "fixed_30";
+    salary_calculation_method: "hours" | "days";
+    expected_hours: number;
+    worked_hours: number;
+    payable_ratio: number;
     currency: string;
-    pay_frequency: "weekly" | "biweekly" | "semi_monthly" | "monthly";
     /**
      * Why there are no automatic lines: "no_working_days" or "no_basic_salary".
      * Surfaced rather than left as an unexplained empty list, which reads as
