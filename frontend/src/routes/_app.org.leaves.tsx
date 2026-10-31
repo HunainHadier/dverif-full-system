@@ -402,7 +402,7 @@ function OrgLeavesContent() {
       </Dialog>
       <ConfirmDialog
         open={!!confirming && !(decideAction === "approved" && confirming.requested_treatment === "paid")}
-        onOpenChange={(o) => !o && setConfirming(null)
+        onOpenChange={(o) => !o && setConfirming(null)}
         title={
           decideAction === "approved" ? t("orgLeaves.approveTitle") : t("orgLeaves.rejectTitle")
         }
