@@ -340,6 +340,7 @@ function OrgLeavesContent() {
                                       className="h-7 text-xs"
                                       disabled={isLocked}
                                       onClick={() => {
+                                        setApprovalTreatment("unpaid");
                                         setDecideAction("approved");
                                         setConfirming(r);
                                       }}
