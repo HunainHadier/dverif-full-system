@@ -76,7 +76,7 @@ describe("asset detail panel is a real side panel", () => {
 
 describe("asset category removal", () => {
   it("removes category APIs and category controls from the asset screens", () => {
-    expect(ASSETS).not.toMatch(/assetCategoriesService|category_uuid|assets\\.category/);
+    expect(ASSETS).not.toMatch(/assetCategoriesService|category_uuid|assets\.category/);
     expect(SERVICE).not.toContain("asset-categories");
     expect(NAV).not.toContain("/org/asset-categories");
     expect(ACCESS).not.toContain("/org/asset-categories");
