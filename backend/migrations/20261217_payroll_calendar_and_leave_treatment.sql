@@ -35,3 +35,8 @@ CREATE TABLE IF NOT EXISTS organization_monthly_work_schedules (
   UNIQUE KEY uq_org_schedule_date (organization_id, schedule_date),
   KEY idx_org_schedule_month (organization_id, schedule_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- These legacy tables are replaced by organization_payroll_settings and the
+-- per-date organization_monthly_work_schedules calendar.
+DROP TABLE IF EXISTS organization_payroll_policies;
+DROP TABLE IF EXISTS work_week_config;
