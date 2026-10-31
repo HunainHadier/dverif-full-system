@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { randomUUID } from "node:crypto";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
-import { seedPayrollBaseline } from "./helpers/payrollPolicy.js";
+import { seedPayrollBaseline } from "./helpers/payrollSettings.js";
 import {
   createExitRequest,
   getExitRequest,
