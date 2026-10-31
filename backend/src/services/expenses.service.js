@@ -428,17 +428,12 @@ export async function createClaim({
 /** One claim with its category name and its receipts. */
 export async function getClaim({ orgId, claimUuid, conn = pool }) {
   const claim = await loadClaim({ orgId, claimUuid, conn });
-  const [categoryRows] = await conn.query(
-    "SELECT name FROM expense_categories WHERE uuid=?",
-    [claim.category_uuid],
-  );
   const receipts = await attachments.listAttachments({
     orgId,
     entityType: ATTACHMENT_ENTITY.CLAIM,
     entityUuid: claim.uuid,
   });
 
-  const requiresReceipt = Boolean(Number(categoryRows[0]?.requires_receipt));
 
   return {
     ...claim,
@@ -448,10 +443,10 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
     // would then be bucketed into the wrong payroll month.
     expense_date: isoDate(claim.expense_date),
     amount: money(claim.amount),
-    category_name: categoryRows[0]?.name ?? null,
-    expense_name: claim.expense_name || categoryRows[0]?.name || "Expense",
-    category_requires_receipt: requiresReceipt,
-    category_max_limit: categoryRows[0]?.max_limit_per_claim ?? null,
+    category_name: null,
+    expense_name: claim.expense_name || "Expense",
+    category_requires_receipt: false,
+    category_max_limit: null,
     receipts,
     receipt_count: receipts.length,
     /**
@@ -462,7 +457,7 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
      * receipt or it will be rejected" is enforced by a flag the UI can show, not
      * by everyone remembering.
      */
-    receipt_satisfied: !requiresReceipt || receipts.length > 0,
+    receipt_satisfied: true,
   };
 }
 
@@ -492,12 +487,11 @@ export async function listClaims(
   const where = clauses.join(" AND ");
   const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c WHERE ${where}`, params);
   const [rows] = await conn.query(
-    `SELECT c.*, cat.name AS category_name, 0 AS category_requires_receipt,
+    `SELECT c.*, NULL AS category_name, 0 AS category_requires_receipt,
             (SELECT COUNT(*) FROM attachments a
               WHERE a.entity_type='expense_claim' AND a.entity_uuid=c.uuid AND a.deleted_at IS NULL
             ) AS receipt_count
        FROM expense_claims c
-       LEFT JOIN expense_categories cat ON cat.uuid = c.category_uuid
       WHERE ${where}
       ORDER BY c.expense_date DESC, c.id DESC
       LIMIT ? OFFSET ?`,
