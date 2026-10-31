@@ -343,7 +343,7 @@ export async function submitMyExpenseClaim(req, res) {
     orgId,
     actorUuid: req.user?.uuid ?? null,
     employeeUuid: employee.uuid,
-    categoryUuid: req.body?.category_uuid,
+    expenseName: req.body?.expense_name,
     amount: req.body?.amount,
     expenseDate: req.body?.expense_date,
     description: req.body?.description,
@@ -369,7 +369,6 @@ export async function submitMyExpenseClaim(req, res) {
     actorUuid: req.user?.uuid ?? null,
     employeeUuid: employee.uuid,
     claimUuid: claim.uuid,
-    categoryUuid: claim.category_uuid ?? req.body?.category_uuid,
     // Read from the request, never from the body. An account that cannot approve
     // claims must not be able to word itself into being able to by sending a flag.
     canApproveExpenses: Boolean(req.canApproveExpenses),
