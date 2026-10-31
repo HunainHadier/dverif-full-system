@@ -3,6 +3,15 @@ ALTER TABLE leave_requests
   ADD COLUMN requested_treatment ENUM('paid','unpaid') NOT NULL DEFAULT 'unpaid',
   ADD COLUMN approved_treatment ENUM('paid','unpaid') NULL;
 
+-- Preserve the treatment of existing requests before leave types become name-only.
+UPDATE leave_requests lr
+JOIN leave_types lt ON lt.id = lr.leave_type_id
+SET lr.requested_treatment = CASE WHEN lt.is_paid='no' THEN 'unpaid' ELSE 'paid' END;
+UPDATE leave_requests lr
+JOIN leave_types lt ON lt.id = lr.leave_type_id
+SET lr.approved_treatment = CASE WHEN lt.is_paid='no' THEN 'unpaid' ELSE 'paid' END
+WHERE lr.status='approved';
+
 CREATE TABLE IF NOT EXISTS organization_payroll_settings (
   organization_id INT NOT NULL,
   salary_calculation_method ENUM('hours','days') NOT NULL DEFAULT 'days',
