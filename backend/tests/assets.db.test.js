@@ -107,8 +107,8 @@ for (const a of created.assets) {
 
 async function makeAsset(name = `Asset ${Date.now()}`) {
   const [r] = await db.query(
-    "INSERT INTO assets (organization_id, name, status) VALUES (?, ?, 'available')",
-    [orgId, name],
+    "INSERT INTO assets (organization_id, asset_tag, name, status) VALUES (?, ?, ?, 'available')",
+    [orgId, tag(name), name],
   );
   const [[row]] = await db.query("SELECT uuid FROM assets WHERE id=?", [r.insertId]);
   created.assets.push(row.uuid);
@@ -229,6 +229,20 @@ describe.skipIf(!HAS_DB)("assets schema constraints (real database)", () => {
     expect(n).toBe(3);
   });
 
+  it("keeps asset_tag unique per organization", async () => {
+    const shared = tag("shared");
+    await db.query(
+      "INSERT INTO assets (organization_id, asset_tag, name, status) VALUES (?, ?, ?, 'available')",
+      [orgId, shared, "Original"],
+    );
+    await expect(
+      db.query(
+        "INSERT INTO assets (organization_id, asset_tag, name, status) VALUES (?, ?, ?, 'available')",
+        [orgId, shared, "Duplicate"],
+      ),
+    ).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
+  });
+
   it("cascades an organization's assets away with it", async () => {
     // CASCADE is the intended behaviour for organization_id: deleting a tenant
     // must not leave its inventory orphaned, since no other organization has any
@@ -241,8 +255,8 @@ describe.skipIf(!HAS_DB)("assets schema constraints (real database)", () => {
     // them; the afterAll sweep reclaims them regardless.
     seededOrgs.track(tmpOrg);
     await db.query(
-      "INSERT INTO assets (organization_id, name, status) VALUES (?, ?, 'available')",
-      [tmpOrg, "tmp"],
+      "INSERT INTO assets (organization_id, asset_tag, name, status) VALUES (?, ?, ?, 'available')",
+      [tmpOrg, tag("tmp"), "tmp"],
     );
 
     const [[before]] = await db.query("SELECT COUNT(*) AS n FROM assets WHERE organization_id=?", [tmpOrg]);
