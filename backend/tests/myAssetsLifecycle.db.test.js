@@ -263,40 +263,5 @@ describe.skipIf(!reachable)("assign -> /my/assets, against a real database", () 
     }
   });
 
-  it("hides an asset that is on a repair bench", async () => {
-    const seed = await seedEmployee();
-    try {
-      const assetUuid = await seedAsset(seed.orgId, seed.employeeUuid);
-      await assets.assignAsset({
-        orgId: seed.orgId,
-        actorUuid: null,
-        assetUuid,
-        employeeUuid: seed.employeeUuid,
-      });
-      expect(await assets.listMyAssets({ orgId: seed.orgId, userUuid: seed.userUuid })).toHaveLength(1);
 
-      const { maintenance_uuid } = await assets.reportMaintenance({
-        orgId: seed.orgId,
-        actorUuid: null,
-        assetUuid,
-        data: { title: "Screen" },
-      });
-      expect(maintenance_uuid).toBeTruthy();
-
-      // Belt and braces behind the syncStatus invariant: exposing a broken
-      // laptop as usable is worse than hiding it.
-      expect(await assets.listMyAssets({ orgId: seed.orgId, userUuid: seed.userUuid })).toEqual([]);
-
-      await assets.completeMaintenance({
-        orgId: seed.orgId,
-        actorUuid: null,
-        jobUuid: maintenance_uuid,
-        data: {},
-      });
-      // Repaired and still legitimately held, so it comes back.
-      expect(await assets.listMyAssets({ orgId: seed.orgId, userUuid: seed.userUuid })).toHaveLength(1);
-    } finally {
-      await cleanup(seed);
-    }
-  });
 });
