@@ -103,7 +103,9 @@ export type ExitRequestListRow = {
 
 export type OutstandingAsset = {
   asset_uuid: UUID;
+  asset_tag: string;
   name: string;
+  serial_number: string | null;
   asset_status: string;
   purchase_cost: number | string | null;
   assigned_at: string;
