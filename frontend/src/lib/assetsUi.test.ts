@@ -74,17 +74,22 @@ describe("asset detail panel is a real side panel", () => {
   });
 });
 
-describe("interpolation reaches the screen", () => {
-
-  it("the detail-description key uses double braces", () => {
-    const en = JSON.parse(readFileSync("src/i18n/locales/en.json", "utf8"));
-    expect(en.assets.detailDescription).toBe("Category: {{category}}");
+describe("asset category removal", () => {
+  it("removes category APIs and category controls from the asset screens", () => {
+    expect(ASSETS).not.toMatch(/assetCategoriesService|category_uuid|assets\\.category/);
+    expect(SERVICE).not.toContain("asset-categories");
+    expect(NAV).not.toContain("/org/asset-categories");
+    expect(ACCESS).not.toContain("/org/asset-categories");
   });
+});
 
-  it("the caller passes the variable the template names", () => {
-    // A template saying {{category}} fed with { asset } renders the literal.
-    expect(ASSETS).toMatch(/t\("assets\.detailDescription",\s*\{\s*category:/);
-    expect(CATEGORIES).toMatch(/t\("assets\.deleteCategoryWarning",\s*\{\s*name:/);
+describe("asset name form", () => {
+  it("uses Asset Name and removes the retired fields", () => {
+    expect(ASSETS).toContain("assets.assetName");
+    for (const field of ["asset_tag", "model_details", "serial_number", "category_uuid"]) {
+      expect(ASSETS).not.toContain(field);
+      expect(SERVICE).not.toContain(field);
+    }
   });
 });
 
@@ -97,17 +102,12 @@ describe("/my-assets", () => {
     }
   });
 
-  it("shows the five fields the employee needs", () => {
-    for (const header of [
-      "assets.tag",
-      "assets.category",
-      "assets.serialNumber",
-      "assets.assignedDate",
-    ]) {
-      expect(MY_ASSETS, `column header ${header} missing`).toContain(header);
+  it("shows the asset name and assignment details without removed metadata", () => {
+    expect(MY_ASSETS).toContain("assets.assetName");
+    expect(MY_ASSETS).toContain("assets.assignedDate");
+    for (const field of ["asset_tag", "category_name", "model_details", "serial_number"]) {
+      expect(MY_ASSETS).not.toContain(field);
     }
-    // Model details render in the name cell.
-    expect(MY_ASSETS).not.toContain("model_details");
   });
 
   it("calls the session-scoped endpoint with no parameters", () => {
