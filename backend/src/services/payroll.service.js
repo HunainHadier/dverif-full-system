@@ -13,15 +13,9 @@ import { CURRENCY } from "../utils/currency.js";
  * leave, never clock in, and work overtime and still be paid identically to a
  * colleague who did none of it. This module is the join.
  *
- * Every deduction rate uses an organization-selected divisor. Working-day counts
- * use the configured week and holiday table; calendar-day and fixed-30 bases are
- * explicit alternatives selected in payroll policy rather than implicit defaults.
+ * Monthly payroll uses the organization's explicit per-date working/off-day calendar,
+ * actual attendance timestamps, shift timings, and final approved leave treatment.
  */
-
-const WEEK_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-
-/** JS getDay(): 0=Sunday. Maps onto the work_week_config column names. */
-const DAY_KEY = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 /**
  * Late arrival cutoff is configured per organization. Payroll never assumes a
@@ -111,23 +105,6 @@ function money(n) {
 }
 
 /**
- * This organization's explicitly configured working week. No calendar is
- * inferred: payroll must stop until an administrator confirms the schedule.
- */
-export async function getWorkWeek(orgId, conn = pool) {
-  const [rows] = await conn.query(
-    "SELECT mon,tue,wed,thu,fri,sat,sun FROM work_week_config WHERE organization_id=?",
-    [orgId],
-  );
-  if (!rows.length) throw new ApiError(409, "Payroll work week is not configured. Set the organization's working days before payroll calculation.");
-  if (!WEEK_KEYS.some((k) => Number(rows[0][k]) === 1)) throw new ApiError(409, "Payroll work week has no working days. Configure at least one working day.");
-  const row = rows[0];
-  const week = {};
-  for (const k of WEEK_KEYS) week[k] = row[k] ? 1 : 0;
-  return week;
-}
-
-/**
  * Working days in a month: the org's configured weekdays, minus holidays.
  *
  * Returned with the set of non-working dates so callers can subtract leave and
@@ -184,7 +161,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
 
   const [rows] = await conn.query(
     `SELECT lr.start_date, lr.end_date, lt.name AS leave_type,
-            COALESCE(lr.approved_treatment, lr.requested_treatment, CASE WHEN lt.is_paid='no' THEN 'unpaid' ELSE 'paid' END) AS treatment
+            COALESCE(lr.approved_treatment, lr.requested_treatment, 'unpaid') AS treatment
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_uuid=?
