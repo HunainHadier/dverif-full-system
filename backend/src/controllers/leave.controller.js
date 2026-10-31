@@ -37,7 +37,7 @@ async function resolveScopeOrgId(req) {
 export async function listLeaveTypes(req, res) {
   const orgId = await resolveScopeOrgId(req);
   const [rows] = await pool.query(
-    `SELECT lt.id, lt.name, lt.days_allowed_per_year, lt.is_paid, lt.created_at,
+    `SELECT lt.id, lt.name, lt.days_allowed_per_year, lt.created_at,
             o.uuid AS organization_uuid, o.name AS organization_name
      FROM leave_types lt
      JOIN organizations o ON o.id = lt.organization_id
@@ -66,9 +66,8 @@ function paidFlag(value) {
 
 export async function createLeaveType(req, res) {
   const orgId = await resolveScopeOrgId(req);
-  const { name, days_allowed_per_year, is_paid } = req.body;
+  const { name, days_allowed_per_year } = req.body;
   if (!name || !String(name).trim()) throw new ApiError(400, "name is required");
-  if (is_paid === undefined || is_paid === null || is_paid === "") throw new ApiError(400, "Choose whether this leave type is paid or unpaid.");
   // Leave types are now name-only definitions (allocations are assigned
   // individually per employee). The legacy days column is kept but no longer
   // drives employee balances — it defaults to 0.
@@ -78,8 +77,8 @@ export async function createLeaveType(req, res) {
   let result;
   try {
     [result] = await pool.query(
-      "INSERT INTO leave_types (organization_id, name, days_allowed_per_year, is_paid) VALUES (?, ?, ?, ?)",
-      [orgId, String(name).trim(), days, paidFlag(is_paid)]
+      "INSERT INTO leave_types (organization_id, name, days_allowed_per_year) VALUES (?, ?, ?)",
+      [orgId, String(name).trim(), days]
     );
   } catch (e) {
     if (String(e.message).includes("Duplicate")) {
@@ -89,7 +88,7 @@ export async function createLeaveType(req, res) {
   }
 
   const [rows] = await pool.query(
-    "SELECT id, name, days_allowed_per_year, is_paid FROM leave_types WHERE id=?",
+    "SELECT id, name, days_allowed_per_year FROM leave_types WHERE id=?",
     [result.insertId]
   );
   logAudit({
@@ -114,7 +113,7 @@ export async function updateLeaveType(req, res) {
   );
   if (!exists.length) throw new ApiError(404, "Leave type not found");
 
-  const { name, days_allowed_per_year, is_paid } = req.body;
+  const { name, days_allowed_per_year } = req.body;
   const updates = {};
   if (name !== undefined) {
     if (!String(name).trim()) throw new ApiError(400, "name cannot be empty");
@@ -124,9 +123,6 @@ export async function updateLeaveType(req, res) {
     const days = parseInt(days_allowed_per_year, 10);
     if (isNaN(days) || days < 0) throw new ApiError(400, "days_allowed_per_year must be a non-negative integer");
     updates.days_allowed_per_year = days;
-  }
-  if (is_paid !== undefined) {
-    updates.is_paid = paidFlag(is_paid);
   }
   if (!Object.keys(updates).length) throw new ApiError(400, "Nothing to update");
 
@@ -283,6 +279,8 @@ export async function createLeave(req, res) {
     );
   }
   const { leave_type_id, start_date, end_date, reason } = req.body;
+  const requestedTreatment = String(req.body?.requested_treatment ?? "unpaid").toLowerCase();
+  if (!["paid", "unpaid"].includes(requestedTreatment)) throw new ApiError(400, "requested_treatment must be paid or unpaid");
   if (!leave_type_id) throw new ApiError(400, "leave_type_id is required");
   if (!start_date || !end_date) throw new ApiError(400, "start_date and end_date are required");
   if (String(start_date) > String(end_date)) throw new ApiError(400, "start_date must be before or equal to end_date");
@@ -318,9 +316,9 @@ export async function createLeave(req, res) {
   }
   const [result] = await pool.query(
     `INSERT INTO leave_requests
-       (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, status)
-     VALUES (UUID(), ?, ?, ?, ?, ?, 'pending')`,
-    [emp.uuid, typeId, start_date, end_date, reason || null]
+       (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, requested_treatment, status)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'pending')`,
+    [emp.uuid, typeId, start_date, end_date, reason || null, requestedTreatment]
   );
 
   const [rows] = await pool.query("SELECT * FROM leave_requests WHERE id=?", [result.insertId]);
@@ -419,6 +417,7 @@ export async function listOrgLeaves(req, res) {
 export async function decideLeave(req, res) {
   const { uuid } = req.params;
   const { status } = req.body;
+  const requestedTreatment = String(req.body?.approved_treatment ?? "").toLowerCase();
   assertUuid(uuid, "Leave request UUID");
   if (!["approved", "rejected"].includes(status)) {
     throw new ApiError(400, "status must be approved or rejected");
@@ -449,6 +448,13 @@ export async function decideLeave(req, res) {
     }
   }
 
+  const finalTreatment = status === "approved"
+    ? (String(lr.requested_treatment || "unpaid") === "paid" ? requestedTreatment : "unpaid")
+    : null;
+  if (status === "approved" && String(lr.requested_treatment || "unpaid") === "paid" && !["paid", "unpaid"].includes(finalTreatment)) {
+    throw new ApiError(400, "Choose whether this paid leave request is approved as paid or unpaid.");
+  }
+
   if (status === "approved") {
     const days = countLeaveDays(lr.start_date, lr.end_date);
     const year = yearOfDate(lr.start_date);
@@ -475,8 +481,8 @@ export async function decideLeave(req, res) {
         [days, days, alloc.id]
       );
       const [decision] = await conn.query(
-        "UPDATE leave_requests SET status='approved', approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
-        [actorUuid, uuid]
+        "UPDATE leave_requests SET status='approved', approved_treatment=?, approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
+        [finalTreatment, actorUuid, uuid]
       );
       // Guard against two concurrent approvals of the same request: if the
       // row was already decided between our read and this update, undo the
@@ -530,7 +536,7 @@ export async function decideLeave(req, res) {
     action: status === "approved" ? "leave.approve" : "leave.reject",
     entityType: "leave_request",
     entityId: uuid,
-    details: { status },
+    details: { status, requested_treatment: lr.requested_treatment || "unpaid", approved_treatment: finalTreatment },
     req,
   });
 
