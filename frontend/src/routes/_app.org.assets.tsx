@@ -797,13 +797,11 @@ type AssetForm = {
 function AssetDialog({
   kind,
   asset,
-  categories,
   onClose,
   onSaved,
 }: {
   kind: string | null;
   asset: Asset | null;
-  categories: { uuid: string; name: string }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -820,7 +818,7 @@ function AssetDialog({
       notes: "",
     },
   });
-  const { reset, setValue } = form;
+  const { reset } = form;
   const wasOpen = useRef(false);
 
   // Seed on open only. Re-seeding on every render would discard whatever the
@@ -830,7 +828,7 @@ function AssetDialog({
       if (kind === "edit" && asset) {
         reset({
           name: asset.name,
-undefined          purchase_date: asset.purchase_date ?? "",
+          purchase_date: asset.purchase_date ?? "",
           purchase_cost: asset.purchase_cost == null ? "" : String(asset.purchase_cost),
           vendor: asset.vendor ?? "",
           warranty_expires_at: asset.warranty_expires_at ?? "",
@@ -839,9 +837,6 @@ undefined          purchase_date: asset.purchase_date ?? "",
       } else if (kind === "create") {
         reset({
           name: "",
-          asset_tag: "",
-          model_details: "",
-          serial_number: "",
           purchase_date: "",
           purchase_cost: "",
           vendor: "",
@@ -851,7 +846,7 @@ undefined          purchase_date: asset.purchase_date ?? "",
       }
     }
     wasOpen.current = open;
-  }, [open, kind, asset, categories, reset]);
+  }, [open, kind, asset, reset]);
 
   const save = useMutation({
     mutationFn: async (values: AssetForm) => {
