@@ -338,6 +338,20 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
  * when it is on a bench. Retired is terminal and never overwritten here, because
  * a scrapped asset stays scrapped regardless of stray rows.
  */
+async function syncStatus(conn, orgId, assetUuid) {
+  const [[a]] = await conn.query(
+    "SELECT COUNT(*) AS n FROM asset_assignments WHERE asset_uuid=? AND returned_at IS NULL",
+    [assetUuid],
+  );
+  const next = a.n > 0 ? "assigned" : "available";
+  await conn.query("UPDATE assets SET status=? WHERE uuid=? AND organization_id=? AND status<>'retired'", [
+    next,
+    assetUuid,
+    orgId,
+  ]);
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // Assignment / return
 // ---------------------------------------------------------------------------
@@ -402,14 +416,7 @@ export async function assignAsset({ orgId, actorUuid, assetUuid, employeeUuid })
   }
 }
 
-/**
- * Take an asset back.
- *
- * `return_condition` is not cosmetic. "needs_maintenance" opens a maintenance
- * job in the same transaction, because an asset coming back broken and then
- * sitting in "available" until somebody notices is exactly how broken equipment
- * gets handed to the next person.
- */
+/** Take an asset back and record its condition in the custody history. */
 export async function returnAsset({ orgId, actorUuid, assetUuid, condition = "good", notes }) {
   if (!RETURN_CONDITIONS.includes(condition)) {
     throw new ApiError(400, `condition must be one of: ${RETURN_CONDITIONS.join(", ")}`);
@@ -437,7 +444,7 @@ export async function returnAsset({ orgId, actorUuid, assetUuid, condition = "go
     const status = await syncStatus(conn, orgId, assetUuid);
     await conn.commit();
 
-    audit(actorUuid, "asset.return", "asset", assetUuid, orgId, { condition, notes: notes ?? null, opened_job: openedJob });
+    audit(actorUuid, "asset.return", "asset", assetUuid, orgId, { condition, notes: notes ?? null });
     return { status };
   } catch (e) {
     await conn.rollback();
@@ -491,10 +498,6 @@ export async function listMyAssets({ orgId, userUuid }) {
        FROM asset_assignments g
        JOIN assets a ON a.uuid = g.asset_uuid
       WHERE g.employee_uuid=? AND g.organization_id=? AND g.returned_at IS NULL
-        -- Defence in depth. An asset on a repair bench is not "currently
-        -- assigned to" anybody in any sense an employee should act on, and the
-        -- syncStatus invariant should already prevent it. Belt and braces,
-        -- because exposing a broken laptop as usable is worse than hiding it.
         AND a.status = 'assigned'
       ORDER BY g.assigned_at DESC`,
     [employee.uuid, orgId],
@@ -513,7 +516,7 @@ export async function listMyAssets({ orgId, userUuid }) {
 }
 
 // ---------------------------------------------------------------------------
-// Attachments: purchase receipts and maintenance invoices
+// Attachments: purchase receipts
 // ---------------------------------------------------------------------------
 
 /**
@@ -570,6 +573,7 @@ export async function removeAssetAttachment({ orgId, actorUuid, attachmentUuid }
   if (rows[0].entity_type !== ATTACHMENT_ENTITY.ASSET) {
     throw new ApiError(400, "That file does not belong to an asset");
   }
+  await loadAsset(orgId, rows[0].entity_uuid);
   return attachments.removeAttachment({ orgId, attachmentUuid, actorUuid });
 }
 
@@ -583,15 +587,9 @@ export function resolveAssetAttachment({ orgId, attachmentUuid }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Scrapping an asset.
- *
- * Terminal by design: a scrapped asset cannot be assigned, returned, or sent for
- * maintenance, because its purchase history has to stay readable for the years
- * an auditor asks for it. That is why this is `retired` and not a DELETE — the
- * row is the record.
- *
- * Refuses while the asset is held or in the shop, since scrapping something an
- * employee is using would make the custody history contradict the asset record.
+ * Scrapping an asset. Retired assets remain in the register for audit history.
+ * Refuses while the asset is assigned, since scrapping equipment an employee is
+ * using would make the custody history contradict the asset record.
  */
 export async function retireAsset({ orgId, actorUuid, assetUuid, reason }) {
   assertUuid(assetUuid, "Asset UUID");
@@ -660,23 +658,5 @@ export async function assetSummary({ orgId }) {
     byStatus[r.status] = r.n;
     if (r.status !== "retired") totalValue += Number(r.value);
   }
-}]] = await pool.query(
-    "SELECT COALESCE(SUM(cost),0) AS n FROM asset_maintenance WHERE organization_id=? AND status='completed'",
-    [orgId],
-  );
   return { by_status: byStatus, total_value: totalValue };
-async function syncStatus(conn, orgId, assetUuid) {
-  const [[a]] = await conn.query(
-    "SELECT COUNT(*) AS n FROM asset_assignments WHERE asset_uuid=? AND returned_at IS NULL",
-    [assetUuid],
-  );
-  const next = a.n > 0 ? "assigned" : "available";
-  await conn.query("UPDATE assets SET status=? WHERE uuid=? AND organization_id=? AND status<>'retired'", [
-    next,
-    assetUuid,
-    orgId,
-  ]);
-  return next;
-}
-
 }
