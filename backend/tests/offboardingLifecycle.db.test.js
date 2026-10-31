@@ -159,9 +159,9 @@ async function allocateLeave(employeeUuid, { typeId, allocated, used }) {
 /** Create an asset and hand it to the employee, open (never returned). */
 async function assignAsset(employeeUuid, { cost, name }) {
   await db.query(
-    `INSERT INTO assets (uuid, organization_id, name, purchase_cost, status, created_at)
-     VALUES (UUID(), ?, ?, ?, 'assigned', NOW())`,
-    [orgId, name ?? `Test Asset ${randomUUID()}`, cost],
+    `INSERT INTO assets (uuid, organization_id, asset_tag, name, purchase_cost, status, created_at)
+     VALUES (UUID(), ?, ?, ?, ?, 'assigned', NOW())`,
+    [orgId, name ?? `AST-${randomUUID()}`, name ?? `Test Asset ${randomUUID()}`, cost],
   );
   const assetUuid = (
     await db.query("SELECT uuid FROM assets WHERE organization_id=? AND name=?", [orgId, name])
