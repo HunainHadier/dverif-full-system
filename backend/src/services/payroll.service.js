@@ -178,7 +178,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
     unpaidLeaveDays: unpaidDays.size,
     paidDates: [...paidDays].sort(),
     unpaidDates: [...unpaidDays].sort(),
-    requests: rows.length,
+    requests: rows,
   };
 }
 
@@ -211,6 +211,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   let lateCount = 0;
   let workedHours = 0;
   let actualOvertimeHours = 0;
+  const actualOvertimeByDate = {};
 
   for (const r of rows) {
     const iso = isoDate(r.date);
@@ -227,7 +228,11 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
     workedHours += (end - start) / 3600000;
     if (overtimeCutoffMinutes !== null) {
       const checkout = minutesPastMidnight(r.check_out_at);
-      if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) actualOvertimeHours += (checkout - Number(overtimeCutoffMinutes)) / 60;
+      if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) {
+        const extra = (checkout - Number(overtimeCutoffMinutes)) / 60;
+        actualOvertimeHours += extra;
+        actualOvertimeByDate[iso] = extra;
+      }
     }
     if (lateCutoffMinutes !== null && minutesPastMidnight(r.check_in_at) > Number(lateCutoffMinutes)) lateCount += 1;
   }
@@ -243,6 +248,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
     attendedDays: presentDates.size,
     workedHours: Math.round(workedHours * 100) / 100,
     actualOvertimeHours: Math.round(actualOvertimeHours * 100) / 100,
+    actualOvertimeByDate,
     absentDays,
     lateCount,
     presentDates: [...presentDates].sort(),
@@ -345,10 +351,13 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     lateCount: attendance.lateCount,
     paidLeaveDays: leave.paidDates.filter((date) => !attendance.presentDates.includes(date)).length,
     unpaidLeaveDays: leave.unpaidDates.filter((date) => !attendance.presentDates.includes(date)).length,
-    approvedOvertimeHours: Math.min(overtime.approvedOvertimeHours, attendance.actualOvertimeHours),
+    approvedOvertimeHours: money(overtime.requests.reduce((sum, request) => {
+      const date = isoDate(request.work_date);
+      return sum + Math.min(Number(request.approved_hours) || 0, Number(attendance.actualOvertimeByDate[date]) || 0);
+    }, 0)),
     actualOvertimeHours: attendance.actualOvertimeHours,
     requestedOvertimeHours: overtime.requestedOvertimeHours,
-    overtimeRequests: overtime.requests,
+    overtimeRequests: overtime.requests.length,
   };
 }
 
