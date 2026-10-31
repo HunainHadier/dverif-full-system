@@ -921,7 +921,7 @@ function OrgPayrollPage() {
                   {/* The four figures the deduction is actually made of. Shown as
                       counts rather than only as money, because "2 unpaid leave
                       days" is an explanation and "2818.18" is not. */}
-                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-6">
                     <div>
                       <span className="text-muted-foreground">
                         {t("payroll.previewAttended", "Attended")}
@@ -942,6 +942,14 @@ function OrgPayrollPage() {
                           </span>
                         ) : null}
                       </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Worked hours</span>
+                      <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Overtime from check-out</span>
+                      <p className="font-medium">{a.actual_overtime_hours}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground">
