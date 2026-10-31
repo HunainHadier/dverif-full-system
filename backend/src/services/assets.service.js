@@ -9,21 +9,13 @@ import * as attachments from "./attachments.service.js";
 /**
  * Asset management: inventory and custody.
  *
- * FILES ARE ATTACHMENTS, NOT COLUMNS. Purchase receipts and maintenance
- * invoices go through the polymorphic attachments table (entity_type 'asset' and
- * 'asset_maintenance') rather than a receipt_path column. That is the house design
- * — see 20261103_create_attachments.sql — and it is also the only version that
- * gets tenant isolation (attachments filters organization_id), path-traversal
- * defence (resolveAttachmentPath re-anchors against ATTACHMENTS_DIR), soft
- * delete and an audit entry per upload. A bare path column had none of those.
+ * FILES ARE ATTACHMENTS, NOT COLUMNS. Purchase receipts go through the
+ * polymorphic attachments table (entity_type 'asset') rather than a receipt_path
+ * column. This is also the only version that gets tenant isolation, path-traversal
+ * defence, soft delete and an audit entry per upload.
  *
- * THE ONE RULE THAT SHAPES THIS WHOLE MODULE. An asset's status is never set by a
- * client. It is DERIVED from whether the asset currently has an open assignment
- * or an open maintenance job:
- *
- *   open maintenance job            -> maintenance
- *   else open assignment            -> assigned
- *   else                            -> available   (or retired, if scrapped)
+ * Asset status is derived from its active custody assignment: assigned or
+ * available. Retired is a terminal state until reinstated.
  *
  * Every mutation below recomputes it from the rows rather than trusting a
  * supplied value. The alternative — a `status` column a form posts — is the
@@ -167,7 +159,7 @@ export async function listAssets({ orgId, page, limit, offset, search, status })
     `SELECT a.*,
             (SELECT e.full_name FROM asset_assignments g
                JOIN employees e ON e.uuid = g.employee_uuid
-              WHERE g.asset_uuid = a.uuid AND g.returned_at IS NULL LIMIT 1) AS holder_name,
+              WHERE g.asset_uuid = a.uuid AND g.returned_at IS NULL LIMIT 1) AS holder_name
        FROM assets a
       WHERE ${where}
       ORDER BY a.asset_tag
