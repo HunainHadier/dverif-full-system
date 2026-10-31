@@ -57,7 +57,6 @@ import {
   type SalaryRecord,
   type EmployeeRecord,
   type PayrollSettings,
-  type MonthlyWorkDay,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
