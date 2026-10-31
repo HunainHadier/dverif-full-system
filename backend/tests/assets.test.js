@@ -41,7 +41,10 @@ const assetRow = (over = {}) => ({
   id: 1,
   uuid: ASSET,
   organization_id: ORG,
+  asset_tag: "AST-0001",
   name: "ThinkPad",
+  model_details: null,
+  serial_number: null,
   status: "available",
   notes: null,
   ...over,
@@ -75,6 +78,8 @@ describe("asset creation", () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
       const statement = String(sql);
+      if (statement.includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
+      if (statement.includes("SELECT 1 AS x")) return [[], []];
       if (statement.includes("INSERT INTO assets")) return [{ insertId: 9 }, []];
       if (statement.includes("SELECT uuid FROM assets")) return [[{ uuid: ASSET }], []];
       return [[], []];
@@ -89,7 +94,8 @@ describe("asset creation", () => {
 
     const insert = conn.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO assets"));
     expect(insert).toBeTruthy();
-    expect(String(insert[0])).not.toMatch(/category_uuid|asset_tag|model_details|serial_number/);
+    expect(String(insert[0])).not.toContain("category_uuid");
+    expect(insert[1]).toContain("AST-0001");
     expect(insert[1]).toContain("available");
     expect(insert[1]).not.toContain("assigned");
   });
@@ -97,6 +103,8 @@ describe("asset creation", () => {
   it("rolls back when the asset insert fails", async () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
+      if (String(sql).includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
+      if (String(sql).includes("SELECT 1 AS x")) return [[], []];
       if (String(sql).includes("INSERT INTO assets")) {
         throw Object.assign(new Error("insert failed"), { code: "ER_DUP_ENTRY" });
       }
@@ -105,7 +113,7 @@ describe("asset creation", () => {
 
     await expect(
       assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad" } }),
-    ).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
+    ).rejects.toMatchObject({ statusCode: 409 });
     expect(conn.rollback).toHaveBeenCalled();
     expect(conn.commit).not.toHaveBeenCalled();
     expect(conn.release).toHaveBeenCalled();
