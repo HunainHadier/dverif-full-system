@@ -240,15 +240,17 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
     // they worked, so it counts as present — otherwise the day is deducted as
     // unpaid leave AND counted as an absence.
     if (excused.has(iso)) continue;
+    // A workday is complete only when both clock-in and clock-out exist.
+    // A check-in-only row must not be treated as a full paid day in days mode.
+    if (!r.check_in_at || !r.check_out_at) continue;
+    const start = new Date(r.check_in_at).getTime();
+    const end = new Date(r.check_out_at).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
     presentDates.add(iso);
-    if (r.check_in_at && r.check_out_at) {
-      const start = new Date(r.check_in_at).getTime();
-      const end = new Date(r.check_out_at).getTime();
-      if (Number.isFinite(start) && Number.isFinite(end) && end > start) workedHours += (end - start) / 3600000;
-      if (overtimeCutoffMinutes !== null && Number.isFinite(end)) {
-        const checkout = minutesPastMidnight(r.check_out_at);
-        if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) actualOvertimeHours += (checkout - Number(overtimeCutoffMinutes)) / 60;
-      }
+    workedHours += (end - start) / 3600000;
+    if (overtimeCutoffMinutes !== null) {
+      const checkout = minutesPastMidnight(r.check_out_at);
+      if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) actualOvertimeHours += (checkout - Number(overtimeCutoffMinutes)) / 60;
     }
     if (lateCutoffMinutes !== null && minutesPastMidnight(r.check_in_at) > Number(lateCutoffMinutes)) lateCount += 1;
   }
