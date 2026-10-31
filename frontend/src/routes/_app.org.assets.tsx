@@ -49,6 +49,7 @@ import {
   type AssetAttachment,
   type AssetDetail,
   type AssetStatus,
+  type AssetReturnCondition,
 } from "@/services";
 import {
   apiErrorMessage,
@@ -452,7 +453,7 @@ function AssetDetailDrawer({
     // corner. That is the shape this was always meant to be.
     <Sheet
       open={open}
-      onOpenChange={(v) => {
+      onOpenChange={() => {
         // onChanged is deliberately NOT called on close: closing a panel is not
         // a mutation, and refreshing the table behind it made the list flicker
         // every time someone glanced at an asset.
@@ -840,7 +841,7 @@ function ActionDialog({
 }) {
   const { t } = useTranslation();
   const [employee, setEmployee] = useState("");
-  const [condition, setCondition] = useState("good");
+  const [condition, setCondition] = useState<AssetReturnCondition>("good");
   const [notes, setNotes] = useState("");
   const [reason, setReason] = useState("");
   const wasOpen = useRef(false);
@@ -926,7 +927,7 @@ function ActionDialog({
         return assetsService.assign(asset.uuid, employee);
       }
       if (kind === "return") {
-        return assetsService.return(asset.uuid, condition as "good", notes || undefined);
+        return assetsService.return(asset.uuid, condition, notes || undefined);
       }
       return assetsService.retire(asset.uuid, reason || undefined);
     },

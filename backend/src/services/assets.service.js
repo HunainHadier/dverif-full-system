@@ -39,7 +39,7 @@ export const ATTACHMENT_ENTITY = {
   ASSET: "asset",
 };
 
-/** Sub-categories, so receipts and invoices stay distinguishable on one entity. */
+/** Attachment category for a purchase receipt. */
 export const ATTACHMENT_CATEGORY = {
   RECEIPT: "purchase_receipt",
 };
