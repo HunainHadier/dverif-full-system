@@ -1005,8 +1005,8 @@ function OrgPayrollPage() {
                       perDay: `${item.rates.currency} ${money(item.rates.per_day)}`,
                       hourly: `${item.rates.currency} ${money(item.rates.hourly)}`,
                       divisor: item.rates.divisor,
-                      basis: item.rates.daily_rate_basis,
-                      defaultValue: "Daily rate {{perDay}} (basic salary ÷ {{divisor}} {{basis}}) · hourly rate {{hourly}}",
+                      basis: item.rates.salary_calculation_method === "hours" ? "scheduled hours" : "working days",
+                      defaultValue: "Salary basis: {{divisor}} {{basis}} · hourly rate {{hourly}}",
                     })}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
@@ -1060,20 +1060,6 @@ function OrgPayrollPage() {
 }
 
 
-type PolicyFieldForm = {
-  pay_frequency: string; daily_rate_basis: string; shift_start_time: string; hours_per_workday: string;
-  late_grace_minutes: string; late_arrivals_per_penalty: string; late_penalty_days: string;
-  overtime_multiplier: string; deduct_unpaid_leave: string; deduct_absences: string;
-  deduct_late_arrivals: string; pay_approved_overtime: string;
-  work_week: Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", string>;
-};
-const EMPTY_POLICY_FORM: PolicyFieldForm = {
-  pay_frequency: "", daily_rate_basis: "", shift_start_time: "", hours_per_workday: "",
-  late_grace_minutes: "", late_arrivals_per_penalty: "", late_penalty_days: "",
-  overtime_multiplier: "", deduct_unpaid_leave: "", deduct_absences: "",
-  deduct_late_arrivals: "", pay_approved_overtime: "",
-  work_week: { mon: "", tue: "", wed: "", thu: "", fri: "", sat: "", sun: "" },
-};
 function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const [scheduleOpen, setScheduleOpen] = useState(false);
