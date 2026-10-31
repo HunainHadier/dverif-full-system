@@ -79,7 +79,6 @@ let db;
 let orgId;
 let paidTypeId;
 let unpaidTypeId;
-let categoryId;
 const employeeUuids = [];
 
 beforeAll(async () => {
@@ -108,11 +107,6 @@ beforeAll(async () => {
   );
   unpaidTypeId = unpaid.insertId;
 
-  const [cat] = await db.query(
-    "INSERT INTO asset_categories (uuid, organization_id, name) VALUES (UUID(), ?, 'Laptops')",
-    [orgId],
-  );
-  categoryId = (await db.query("SELECT uuid FROM asset_categories WHERE id=?", [cat.insertId]))[0][0].uuid;
 });
 
 afterAll(async () => {
@@ -163,14 +157,14 @@ async function allocateLeave(employeeUuid, { typeId, allocated, used }) {
 }
 
 /** Create an asset and hand it to the employee, open (never returned). */
-async function assignAsset(employeeUuid, { cost, tag }) {
+async function assignAsset(employeeUuid, { cost, name }) {
   await db.query(
-    `INSERT INTO assets (uuid, organization_id, category_uuid, asset_tag, name, purchase_cost, status, created_at)
-     VALUES (UUID(), ?, ?, ?, 'Test Asset', ?, 'assigned', NOW())`,
-    [orgId, categoryId, tag ?? `AST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, cost],
+    `INSERT INTO assets (uuid, organization_id, name, purchase_cost, status, created_at)
+     VALUES (UUID(), ?, ?, ?, 'assigned', NOW())`,
+    [orgId, name ?? `Test Asset ${randomUUID()}`, cost],
   );
   const assetUuid = (
-    await db.query("SELECT uuid FROM assets WHERE organization_id=? AND asset_tag=?", [orgId, tag])
+    await db.query("SELECT uuid FROM assets WHERE organization_id=? AND name=?", [orgId, name])
   )[0][0].uuid;
   await db.query(
     `INSERT INTO asset_assignments (uuid, organization_id, asset_uuid, employee_uuid, assigned_at, created_at)
@@ -368,18 +362,18 @@ describe.runIf(HAS_DB)("HR review", () => {
 describe.runIf(HAS_DB)("asset clearance reads the same rows the asset register does", () => {
   it("finds assets still held, with their recovery value", async () => {
     const uuid = await newEmployee("HoldsLaptop");
-    await assignAsset(uuid, { cost: 250000, tag: "AST-CLEAR-1" });
+    await assignAsset(uuid, { cost: 250000, name: "AST-CLEAR-1" });
 
     const assets = await getOutstandingAssets({ orgId, employeeUuid: uuid });
     expect(assets.count).toBe(1);
     expect(assets.exposure).toBe(250000);
-    expect(assets.items[0].asset_tag).toBe("AST-CLEAR-1");
+    expect(assets.items[0].name).toBe("AST-CLEAR-1");
     expect(assets.items[0].purchase_cost).toBe(250000);
   });
 
   it("does not report an asset that has been returned", async () => {
     const uuid = await newEmployee("Returned");
-    const assetUuid = await assignAsset(uuid, { cost: 5000, tag: "AST-CLEAR-2" });
+    const assetUuid = await assignAsset(uuid, { cost: 5000, name: "AST-CLEAR-2" });
     await db.query(
       "UPDATE asset_assignments SET returned_at=NOW(), return_condition='good' WHERE asset_uuid=?",
       [assetUuid],
@@ -613,7 +607,7 @@ describe.runIf(HAS_DB)("the guards that make this module worth having", () => {
 
     // Returning the asset releases it.
     await db.query(
-      "UPDATE asset_assignments SET returned_at=NOW(), return_condition='good' WHERE asset_uuid=(SELECT uuid FROM assets WHERE asset_tag='AST-GUARD-1')",
+      "UPDATE asset_assignments SET returned_at=NOW(), return_condition='good' WHERE asset_uuid=(SELECT uuid FROM assets WHERE name='AST-GUARD-1')",
     );
     const done = await processSettlement({ orgId, actorUuid: null, exitUuid: exit.uuid, target: "processed" });
     expect(done.status).toBe("processed");
