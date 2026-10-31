@@ -183,7 +183,6 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
   "/org/admins": { roles: ["org_admin"] },
   "/org/leaves": { roles: STAFF_ROLES, feature: "leave", always: ["org_admin"] },
   "/org/attendance": { roles: STAFF_ROLES, feature: "attendance", always: ["org_admin"] },
-  "/org/salary-components": { roles: STAFF_ROLES, feature: "payroll", always: ["org_admin"] },
   "/org/payroll": { roles: STAFF_ROLES, feature: "payroll", always: ["org_admin"] },
 
   // --- HR letters ------------------------------------------------------------

@@ -137,7 +137,6 @@ export const orgAdminNavItems: NavItem[] = [
   { to: "/org/admins", labelKey: "nav.orgAdmins", icon: ShieldCheck },
   { to: "/org/leaves", labelKey: "nav.leaveRequests", icon: CalendarClock },
   { to: "/org/attendance", labelKey: "nav.attendance", icon: ClipboardCheck },
-  { to: "/org/salary-components", labelKey: "nav.payrollComponents", icon: Wallet },
   { to: "/org/payroll", labelKey: "nav.payroll", icon: Wallet },
   { to: "/org/letter-templates", labelKey: "nav.letterTemplates", icon: FileText },
   // Expense claims sit after payroll and before assets, because the money ops

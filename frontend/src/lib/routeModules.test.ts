@@ -31,7 +31,6 @@ function routeFilesFor(path: string): string[] {
  * file itself. Salary components is the one page built that way today.
  */
 const COMPONENT_GATES: Record<string, string[]> = {
-  "/org/salary-components": ["src/components/salary/SalaryComponentsManager.tsx"],
 };
 
 function gatedModulesFor(path: string): Set<keyof ModuleFlags> {

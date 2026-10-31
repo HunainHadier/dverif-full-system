@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users } from "lucide-react";
+import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users, CalendarDays, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
@@ -56,11 +56,13 @@ import {
   type PayrollPreview,
   type SalaryRecord,
   type EmployeeRecord,
-  type PayrollPolicy,
-  type PayrollPolicyInput,
+  type PayrollSettings,
+  type MonthlyWorkDay,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { SalaryComponentsManager } from "@/components/salary/SalaryComponentsManager";
 
 export const Route = createFileRoute("/_app/org/payroll")({
   beforeLoad: () => {
@@ -95,8 +97,7 @@ function OrgPayrollPage() {
   const { user } = useAuth();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
 
-  const [tab, setTab] = useState<"employees" | "records" | "settings">("employees");
-  const payrollPolicy = useQuery({ queryKey: ["orgPayrollPolicy"], queryFn: () => orgSalaryService.policy() });
+  const [tab, setTab] = useState<"employees" | "records" | "components">("employees");
 
   // Records (history) filters
   const [page, setPage] = useState(1);
@@ -421,7 +422,7 @@ function OrgPayrollPage() {
               </span>
               <Button
                 className="shrink-0 justify-center"
-                disabled={isLocked || validSelected.size === 0 || !payrollPolicy.data?.configured}
+                disabled={isLocked || validSelected.size === 0}
                 onClick={() => setPeriodOpen(true)}
               >
                 {isLocked ? (
@@ -436,12 +437,12 @@ function OrgPayrollPage() {
         }
       />
 
-      {!payrollPolicy.isLoading && !payrollPolicy.data?.configured ? <div className="mt-3 flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"><span>Payroll is blocked until your organization confirms working days, pay frequency and deduction rules.</span><Button size="sm" variant="outline" onClick={() => setTab("settings")}>Configure payroll policy</Button></div> : null}
-
+      <div className="mt-3 grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <PayrollConfigurationSidebar canManage={perms.isOrgAdmin} />
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as "employees" | "records" | "settings")}
-        className="mt-2"
+        onValueChange={(v) => setTab(v as "employees" | "records" | "components")}
+        className="mt-0 min-w-0"
       >
         <TabsList>
           <TabsTrigger value="employees">
@@ -452,7 +453,7 @@ function OrgPayrollPage() {
             <FileText className="mr-1.5 h-4 w-4" />
             {t("payroll.recordsTab", "Payroll Records")}
           </TabsTrigger>
-          <TabsTrigger value="settings" disabled={!perms.isOrgAdmin}>Payroll Policy</TabsTrigger>
+          <TabsTrigger value="components">Salary Components</TabsTrigger>
         </TabsList>
 
         {/* ---------------- Employee selection table ---------------- */}
@@ -765,8 +766,9 @@ function OrgPayrollPage() {
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="settings"><PayrollPolicySettings /></TabsContent>
+        <TabsContent value="components"><SalaryComponentsManager /></TabsContent>
       </Tabs>
+      </div>
 
       {/* ---------- Period-only modal (Year + Month) ---------- */}
       <Dialog
@@ -919,7 +921,7 @@ function OrgPayrollPage() {
                   {/* The four figures the deduction is actually made of. Shown as
                       counts rather than only as money, because "2 unpaid leave
                       days" is an explanation and "2818.18" is not. */}
-                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-6">
                     <div>
                       <span className="text-muted-foreground">
                         {t("payroll.previewAttended", "Attended")}
@@ -940,6 +942,14 @@ function OrgPayrollPage() {
                           </span>
                         ) : null}
                       </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Worked hours</span>
+                      <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Overtime from check-out</span>
+                      <p className="font-medium">{a.actual_overtime_hours}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground">
@@ -1003,8 +1013,8 @@ function OrgPayrollPage() {
                       perDay: `${item.rates.currency} ${money(item.rates.per_day)}`,
                       hourly: `${item.rates.currency} ${money(item.rates.hourly)}`,
                       divisor: item.rates.divisor,
-                      basis: item.rates.daily_rate_basis,
-                      defaultValue: "Daily rate {{perDay}} (basic salary ÷ {{divisor}} {{basis}}) · hourly rate {{hourly}}",
+                      basis: item.rates.salary_calculation_method === "hours" ? "scheduled hours" : "working days",
+                      defaultValue: "Salary basis: {{divisor}} {{basis}} · hourly rate {{hourly}}",
                     })}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
@@ -1058,75 +1068,114 @@ function OrgPayrollPage() {
 }
 
 
-type PolicyFieldForm = {
-  pay_frequency: string; daily_rate_basis: string; shift_start_time: string; hours_per_workday: string;
-  late_grace_minutes: string; late_arrivals_per_penalty: string; late_penalty_days: string;
-  overtime_multiplier: string; deduct_unpaid_leave: string; deduct_absences: string;
-  deduct_late_arrivals: string; pay_approved_overtime: string;
-  work_week: Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", string>;
-};
-const EMPTY_POLICY_FORM: PolicyFieldForm = {
-  pay_frequency: "", daily_rate_basis: "", shift_start_time: "", hours_per_workday: "",
-  late_grace_minutes: "", late_arrivals_per_penalty: "", late_penalty_days: "",
-  overtime_multiplier: "", deduct_unpaid_leave: "", deduct_absences: "",
-  deduct_late_arrivals: "", pay_approved_overtime: "",
-  work_week: { mon: "", tue: "", wed: "", thu: "", fri: "", sat: "", sun: "" },
-};
-const PAYROLL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
-
-function PayrollPolicySettings() {
+function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
-  const policyQ = useQuery({ queryKey: ["orgPayrollPolicy"], queryFn: () => orgSalaryService.policy() });
-  const [form, setForm] = useState<PolicyFieldForm>(EMPTY_POLICY_FORM);
-  const [validation, setValidation] = useState("");
-  useEffect(() => {
-    const result = policyQ.data;
-    if (!result?.configured || !result.policy || !result.work_week) return;
-    const policy = result.policy as PayrollPolicy;
-    setForm({
-      pay_frequency: policy.pay_frequency ?? "", daily_rate_basis: policy.daily_rate_basis ?? "",
-      shift_start_time: String(policy.shift_start_time ?? "").slice(0, 5),
-      hours_per_workday: String(policy.hours_per_workday ?? ""), late_grace_minutes: String(policy.late_grace_minutes ?? ""),
-      late_arrivals_per_penalty: String(policy.late_arrivals_per_penalty ?? ""), late_penalty_days: String(policy.late_penalty_days ?? ""),
-      overtime_multiplier: String(policy.overtime_multiplier ?? ""),
-      deduct_unpaid_leave: policy.deduct_unpaid_leave ? "on" : "off", deduct_absences: policy.deduct_absences ? "on" : "off",
-      deduct_late_arrivals: policy.deduct_late_arrivals ? "on" : "off", pay_approved_overtime: policy.pay_approved_overtime ? "on" : "off",
-      work_week: Object.fromEntries(PAYROLL_DAYS.map((day) => [day, Number(result.work_week?.[day]) === 1 ? "on" : "off"])) as PolicyFieldForm["work_week"],
-    });
-  }, [policyQ.data]);
-  const save = useMutation({
-    mutationFn: (data: PayrollPolicyInput) => orgSalaryService.savePolicy(data),
-    onSuccess: () => { toast.success("Payroll policy saved and confirmed"); qc.invalidateQueries({ queryKey: ["orgPayrollPolicy"] }); setValidation(""); },
-    onError: (e) => toast.error(apiErrorMessage(e, "Could not save payroll policy")),
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [settingsForm, setSettingsForm] = useState<PayrollSettings>({
+    salary_calculation_method: "days",
+    calculate_overtime: false,
+    shift_start_time: "09:00",
+    shift_end_time: "17:00",
+    overtime_multiplier: 1.5,
   });
-  const setField = (key: keyof Omit<PolicyFieldForm, "work_week">, value: string) => setForm((old) => ({ ...old, [key]: value }));
-  const submit = () => {
-    const values = [form.pay_frequency, form.daily_rate_basis, form.shift_start_time, form.hours_per_workday, form.late_grace_minutes, form.late_arrivals_per_penalty, form.late_penalty_days, form.overtime_multiplier, form.deduct_unpaid_leave, form.deduct_absences, form.deduct_late_arrivals, form.pay_approved_overtime, ...PAYROLL_DAYS.map((day) => form.work_week[day])];
-    if (values.some((value) => value === "")) { setValidation("Complete every policy field. Choose on/off for each payroll rule and workday; blank is not treated as company policy."); return; }
-    if (!PAYROLL_DAYS.some((day) => form.work_week[day] === "on")) { setValidation("Select at least one working day."); return; }
-    save.mutate({
-      pay_frequency: form.pay_frequency as PayrollPolicy["pay_frequency"], daily_rate_basis: form.daily_rate_basis as PayrollPolicy["daily_rate_basis"],
-      shift_start_time: form.shift_start_time, hours_per_workday: Number(form.hours_per_workday), late_grace_minutes: Number(form.late_grace_minutes), late_arrivals_per_penalty: Number(form.late_arrivals_per_penalty),
-      late_penalty_days: Number(form.late_penalty_days), overtime_multiplier: Number(form.overtime_multiplier),
-      deduct_unpaid_leave: form.deduct_unpaid_leave === "on", deduct_absences: form.deduct_absences === "on", deduct_late_arrivals: form.deduct_late_arrivals === "on", pay_approved_overtime: form.pay_approved_overtime === "on",
-      work_week: Object.fromEntries(PAYROLL_DAYS.map((day) => [day, form.work_week[day] === "on"])) as PayrollPolicy["work_week"],
+  const settingsQ = useQuery({ queryKey: ["orgPayrollSettings"], queryFn: () => orgSalaryService.settings() });
+  const scheduleQ = useQuery({
+    queryKey: ["orgPayrollSchedule", month, year],
+    queryFn: () => orgSalaryService.schedule(month, year),
+    enabled: scheduleOpen,
+  });
+  const [dayTypes, setDayTypes] = useState<Record<string, "working" | "off">>({});
+  useEffect(() => {
+    if (settingsQ.data) setSettingsForm({
+      ...settingsQ.data,
+      shift_start_time: String(settingsQ.data.shift_start_time).slice(0, 5),
+      shift_end_time: String(settingsQ.data.shift_end_time).slice(0, 5),
     });
-  };
-  const selectField = (label: string, key: keyof Omit<PolicyFieldForm, "work_week">, options: [string, string][]) => <label className="space-y-1 text-sm"><span className="font-medium">{label}</span><select className="h-9 w-full rounded-md border border-input bg-background px-2" value={form[key]} onChange={(e) => setField(key, e.target.value)}><option value="">Choose?</option>{options.map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>;
-  const numberField = (label: string, key: keyof Omit<PolicyFieldForm, "work_week">, min = "0", step = "1") => <label className="space-y-1 text-sm"><span className="font-medium">{label}</span><Input type="number" min={min} step={step} value={form[key]} onChange={(e) => setField(key, e.target.value)} /></label>;
-  const toggleField = (label: string, key: keyof Omit<PolicyFieldForm, "work_week">) => selectField(label, key, [["on", "Enabled"], ["off", "Disabled"]]);
-  return <Card className="border-border/70 shadow-none"><CardContent className="space-y-5 p-4">
-    <div><h2 className="font-semibold">Organization payroll policy</h2><p className="text-sm text-muted-foreground">No attendance or leave deduction rule is assumed. Payroll preview and finalization stay blocked until an administrator explicitly confirms this policy.</p></div>
-    {policyQ.isLoading ? <p className="text-sm">Loading payroll policy?</p> : null}
-    {policyQ.data?.configured ? <p className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-sm">Policy confirmed. Changes apply to future payroll previews and runs.</p> : <p className="rounded border border-amber-500/30 bg-amber-500/5 p-2 text-sm">Setup required. Legacy organizations must review the work week and every deduction rule before payroll can be finalized.</p>}
-    <div className="grid gap-3 sm:grid-cols-2">
-      {selectField("Pay frequency", "pay_frequency", [["weekly", "Weekly"], ["biweekly", "Biweekly"], ["semi_monthly", "Semi-monthly"], ["monthly", "Monthly"]])}
-      {selectField("Daily rate divisor", "daily_rate_basis", [["actual_working_days", "Configured working days in period"], ["calendar_days", "Calendar days in period"], ["fixed_30", "Fixed 30-day divisor"]])}
-    </div>
-    <fieldset className="space-y-2"><legend className="text-sm font-medium">Working days</legend><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{PAYROLL_DAYS.map((day) => <label key={day} className="flex items-center justify-between rounded border px-2 py-1.5 text-sm"><span>{({mon:"Monday",tue:"Tuesday",wed:"Wednesday",thu:"Thursday",fri:"Friday",sat:"Saturday",sun:"Sunday"})[day]}</span><select aria-label={`${day} working day`} className="h-8 rounded border bg-background px-1" value={form.work_week[day]} onChange={(e) => setForm((old) => ({ ...old, work_week: { ...old.work_week, [day]: e.target.value } }))}><option value="">Choose?</option><option value="on">Work</option><option value="off">Off</option></select></label>)}</div></fieldset>
-    <div className="grid gap-3 sm:grid-cols-3"><label className="space-y-1 text-sm"><span className="font-medium">Organization shift start</span><Input type="time" value={form.shift_start_time} onChange={(e) => setField("shift_start_time", e.target.value)} /></label>{numberField("Hours per workday", "hours_per_workday", "0.01", "0.25")}{numberField("Late grace period (minutes)", "late_grace_minutes")}{numberField("Late arrivals per penalty", "late_arrivals_per_penalty", "1")}{numberField("Penalty days per threshold", "late_penalty_days", "0", "0.05")}{numberField("Approved overtime multiplier", "overtime_multiplier", "0", "0.05")}</div>
-    <div className="grid gap-3 sm:grid-cols-2">{toggleField("Deduct approved unpaid leave", "deduct_unpaid_leave")}{toggleField("Deduct unexplained absences", "deduct_absences")}{toggleField("Apply late-arrival deduction", "deduct_late_arrivals")}{toggleField("Pay approved overtime", "pay_approved_overtime")}</div>
-    {validation ? <p role="alert" className="text-sm text-destructive">{validation}</p> : null}
-    <div className="flex justify-end"><Button onClick={submit} disabled={save.isPending || policyQ.isLoading}>Save and confirm payroll policy</Button></div>
-  </CardContent></Card>;
+  }, [settingsQ.data]);
+  useEffect(() => {
+    if (!scheduleOpen) return;
+    const total = new Date(year, month, 0).getDate();
+    const next: Record<string, "working" | "off"> = {};
+    for (let day = 1; day <= total; day++) {
+      const date = new Date(year, month - 1, day);
+      const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      next[key] = date.getDay() === 0 || date.getDay() === 6 ? "off" : "working";
+    }
+    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date ?? item.date).slice(0, 10)] = item.day_type;
+    setDayTypes(next);
+  }, [scheduleOpen, scheduleQ.data, month, year]);
+  const saveSettings = useMutation({
+    mutationFn: () => orgSalaryService.saveSettings(settingsForm),
+    onSuccess: () => { toast.success("Payroll settings saved"); qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] }); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save payroll settings"),
+  });
+  const saveSchedule = useMutation({
+    mutationFn: () => orgSalaryService.saveSchedule({
+      month, year,
+      days: Object.entries(dayTypes).map(([date, day_type]) => ({ date, day_type })),
+    }),
+    onSuccess: () => { toast.success("Monthly working schedule saved"); qc.invalidateQueries({ queryKey: ["orgPayrollSchedule", month, year] }); setScheduleOpen(false); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save monthly schedule"),
+  });
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return (
+    <>
+      <Card className="h-fit border-border/70 shadow-none">
+        <CardContent className="space-y-4 p-4">
+          <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose one salary calculation method.</p></div>
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Checkbox checked={settingsForm.salary_calculation_method === "hours"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "hours" }))} />
+              <span>Calculate salary according to working hours</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Checkbox checked={settingsForm.calculate_overtime} disabled={!canManage} onCheckedChange={(v) => setSettingsForm((s) => ({ ...s, calculate_overtime: v === true }))} />
+              <span>Calculate overtime according to the working hours</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Checkbox checked={settingsForm.salary_calculation_method === "days"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "days" }))} />
+              <span>Calculate salary according to working days</span>
+            </label>
+          </div>
+          <div className="space-y-2 border-t pt-3">
+            <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
+              <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
+            </div>
+          </div>
+          {canManage ? <Button className="w-full" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}
+          <div className="border-t pt-3">
+            <Button className="w-full" variant="outline" disabled={!canManage} onClick={() => setScheduleOpen(true)}><CalendarDays className="mr-2 h-4 w-4" /> Set Working Days</Button>
+            <p className="mt-2 text-xs text-muted-foreground">Set every date as a working day or an off day separately for each month.</p>
+          </div>
+        </CardContent>
+      </Card>
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>Monthly Working Schedule</DialogTitle><DialogDescription>Choose working days and off days for the selected month.</DialogDescription></DialogHeader>
+          <div className="grid grid-cols-2 gap-2">
+            <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{monthNames.map((name,i)=><SelectItem key={name} value={String(i+1)}>{name}</SelectItem>)}</SelectContent></Select>
+            <Input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(Number(e.target.value))} />
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d)=><div key={d} className="py-1">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({length:firstWeekday},(_,i)=><div key={"blank"+i} />)}
+            {Array.from({length:daysInMonth},(_,i)=>{
+              const day=i+1; const date=`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+              const type=dayTypes[date] ?? "off";
+              return <button key={date} type="button" disabled={!canManage} onClick={()=>setDayTypes((s)=>({...s,[date]:s[date]==="working"?"off":"working"}))} className={`rounded-md border p-2 text-sm ${type==="working"?"border-primary bg-primary/10":"border-border bg-muted"}`}><span className="block font-medium">{day}</span><span className="block text-[9px]">{type==="working"?"Working":"Off"}</span></button>;
+            })}
+          </div>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span>Working days: {Object.values(dayTypes).filter((v)=>v==="working").length}</span><span>Off days: {Object.values(dayTypes).filter((v)=>v==="off").length}</span></div>
+          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || saveSchedule.isPending || Object.keys(dayTypes).length!==daysInMonth}>Save Monthly Schedule</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }

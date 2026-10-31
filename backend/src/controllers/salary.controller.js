@@ -5,7 +5,6 @@ import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { generatePayslipPdf } from "../utils/payslipPdf.js";
-import { CURRENCY } from "../utils/currency.js";
 import { randomUUID } from "node:crypto";
 import * as payrollService from "../services/payroll.service.js";
 const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalaryRecordLines } =
@@ -144,7 +143,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
   const expenseLine = expenses.expenseReimbursementLine(approvedClaims);
 
   const lines = [
-    { label: `Basic salary (${summary.policy.pay_frequency})`, type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
+    { label: "Basic monthly salary", type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
     ...componentLines,
     ...automatic.lines,
     // Reimbursement is money COMING to the employee, so it is an earning alongside
@@ -605,6 +604,9 @@ export async function previewPayroll(req, res) {
       attendance: {
         working_days: computed.summary.workingDays,
         attended_days: computed.summary.attendedDays,
+        worked_hours: computed.summary.workedHours,
+        expected_working_hours: computed.automatic.expectedHours,
+        actual_overtime_hours: computed.summary.actualOvertimeHours,
         absent_days: computed.summary.absentDays,
         late_count: computed.summary.lateCount,
         paid_leave_days: computed.summary.paidLeaveDays,
@@ -617,9 +619,11 @@ export async function previewPayroll(req, res) {
         hourly: computed.automatic.hourlyRate,
         skip_reason: computed.automatic.skipReason,
         divisor: computed.automatic.divisor,
-        daily_rate_basis: computed.summary.policy.daily_rate_basis,
+        salary_calculation_method: computed.summary.policy.salary_calculation_method,
+        expected_hours: computed.automatic.expectedHours,
+        worked_hours: computed.automatic.workedHours,
+        payable_ratio: computed.automatic.payableRatio,
         currency: computed.summary.policy.currency,
-        pay_frequency: computed.summary.policy.pay_frequency,
       },
       /**
        * Expense reimbursement, broken out rather than folded into the allowances
@@ -661,85 +665,80 @@ export async function previewPayroll(req, res) {
   return ok(res, { month: m, year: y, items, totals, count: items.length }, "Payroll preview");
 }
 
-/** Read the explicitly configured organization payroll policy without exposing other tenants. */
-export async function getPayrollPolicy(req, res) {
-  const orgId = req.scopeOrgId;
-  const [policies] = await pool.query("SELECT * FROM organization_payroll_policies WHERE organization_id=?", [orgId]);
-  const [weeks] = policies.length ? await pool.query("SELECT mon,tue,wed,thu,fri,sat,sun FROM work_week_config WHERE organization_id=?", [orgId]) : [[]];
-  // Normalized on the way out for the same reason getConfiguredPayrollPolicy does
-  // it: a row written before the currency was fixed may still hold NULL or a
-  // stale code, and the client must never see one.
-  const policy = policies[0] ? { ...policies[0], currency: CURRENCY } : null;
-  return ok(res, {
-    configured: policies[0]?.is_configured === 1 || policies[0]?.is_configured === true,
-    policy,
-    work_week: weeks[0] ?? null,
-  }, "Payroll policy");
+/** Payroll settings and monthly working/off-day calendar. */
+export async function getPayrollSettings(req, res) {
+  const [rows] = await pool.query("SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?", [req.scopeOrgId]);
+  const settings = rows[0] ? { ...rows[0], calculate_overtime: Number(rows[0].calculate_overtime) === 1 } : null;
+  return ok(res, { settings }, "Payroll settings");
 }
 
-/** Save and explicitly confirm the org's payroll assumptions and work calendar. */
-export async function updatePayrollPolicy(req, res) {
-  const orgId = req.scopeOrgId;
+export async function updatePayrollSettings(req, res) {
   const body = req.body ?? {};
-  const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  const week = body.work_week ?? {};
-  if (!dayKeys.every((day) => typeof week[day] === "boolean") || !dayKeys.some((day) => week[day])) {
-    throw new ApiError(400, "Choose at least one working day; each weekday must be explicitly set on or off.");
+  const method = String(body.salary_calculation_method ?? "");
+  if (!["hours", "days"].includes(method)) throw new ApiError(400, "Choose either working-hours or working-days salary calculation.");
+  if (typeof body.calculate_overtime !== "boolean") throw new ApiError(400, "calculate_overtime must be true or false.");
+  const validTime = (v) => typeof v === "string" && /^([01]\\d|2[0-3]):[0-5]\\d$/.test(v);
+  if (!validTime(body.shift_start_time) || !validTime(body.shift_end_time) || body.shift_end_time <= body.shift_start_time) {
+    throw new ApiError(400, "Enter valid organization shift start and check-out times; check-out must be later.");
   }
-  // Currency is no longer an input. Anything a client sends in `currency` is
-  // ignored rather than rejected, so an older client (or a stale saved form)
-  // keeps working and cannot reintroduce a second currency; the value written
-  // below is always the single application currency.
-  const currency = CURRENCY;
-  const payFrequency = String(body.pay_frequency ?? "");
-  if (!["weekly", "biweekly", "semi_monthly", "monthly"].includes(payFrequency)) throw new ApiError(400, "Select a supported pay frequency.");
-  const basis = String(body.daily_rate_basis ?? "");
-  if (!["actual_working_days", "calendar_days", "fixed_30"].includes(basis)) throw new ApiError(400, "Select a daily-rate divisor policy.");
-  const shiftStartTime = String(body.shift_start_time ?? "");
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(shiftStartTime)) throw new ApiError(400, "Enter the organization shift start time in HH:MM format.");
-  const numeric = (key, min, max, allowZero = true) => {
-    const n = Number(body[key]);
-    if (!Number.isFinite(n) || n < (allowZero ? min : Math.max(min, Number.EPSILON)) || n > max) throw new ApiError(400, `${key} must be between ${min} and ${max}.`);
-    return n;
-  };
-  const flag = (key) => {
-    if (typeof body[key] !== "boolean") throw new ApiError(400, `${key} must be explicitly enabled or disabled.`);
-    return body[key] ? 1 : 0;
-  };
-  const values = {
-    currency, pay_frequency: payFrequency, daily_rate_basis: basis, shift_start_time: shiftStartTime,
-    hours_per_workday: numeric("hours_per_workday", 1, 24, false),
-    late_grace_minutes: numeric("late_grace_minutes", 0, 720),
-    late_arrivals_per_penalty: numeric("late_arrivals_per_penalty", 1, 100, false),
-    late_penalty_days: numeric("late_penalty_days", 0, 1),
-    overtime_multiplier: numeric("overtime_multiplier", 0, 10),
-    deduct_unpaid_leave: flag("deduct_unpaid_leave"), deduct_absences: flag("deduct_absences"),
-    deduct_late_arrivals: flag("deduct_late_arrivals"), pay_approved_overtime: flag("pay_approved_overtime"),
-  };
+  const multiplier = Number(body.overtime_multiplier ?? 1.5);
+  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 5) throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
+  await pool.query(
+    `INSERT INTO organization_payroll_settings
+       (organization_id, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, updated_by_uuid)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE salary_calculation_method=VALUES(salary_calculation_method),
+       calculate_overtime=VALUES(calculate_overtime), shift_start_time=VALUES(shift_start_time),
+       shift_end_time=VALUES(shift_end_time), overtime_multiplier=VALUES(overtime_multiplier),
+       updated_by_uuid=VALUES(updated_by_uuid)`,
+    [req.scopeOrgId, method, body.calculate_overtime ? 1 : 0, body.shift_start_time, body.shift_end_time, multiplier, req.user?.uuid ?? null],
+  );
+  return getPayrollSettings(req, res);
+}
+
+export async function getMonthlyWorkSchedule(req, res) {
+  const month = Number(req.query.month);
+  const year = Number(req.query.year);
+  const { m, y } = payrollService.assertMonthYear(month, year);
+  const [rows] = await pool.query(
+    "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND MONTH(schedule_date)=? AND YEAR(schedule_date)=? ORDER BY schedule_date",
+    [req.scopeOrgId, m, y],
+  );
+  return ok(res, { month: m, year: y, days: rows }, "Monthly working schedule");
+}
+
+export async function saveMonthlyWorkSchedule(req, res) {
+  const month = Number(req.body?.month);
+  const year = Number(req.body?.year);
+  const { m, y } = payrollService.assertMonthYear(month, year);
+  const days = req.body?.days;
+  const total = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (!Array.isArray(days) || days.length !== total) throw new ApiError(400, "Select every date in the month as either a working day or an off day.");
+  const seen = new Set();
+  for (const item of days) {
+    if (!item || !/^\\d{4}-\\d{2}-\\d{2}$/.test(String(item.date)) || !["working", "off"].includes(item.day_type)) throw new ApiError(400, "Each schedule day needs a valid date and working/off selection.");
+    const date = String(item.date);
+    if (date.slice(0, 7) !== `${y}-${String(m).padStart(2, "0")}` || seen.has(date)) throw new ApiError(400, "Schedule dates must be unique and belong to the selected month.");
+    seen.add(date);
+  }
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.query(
-      `INSERT INTO work_week_config (organization_id,mon,tue,wed,thu,fri,sat,sun)
-       VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE mon=VALUES(mon),tue=VALUES(tue),wed=VALUES(wed),thu=VALUES(thu),fri=VALUES(fri),sat=VALUES(sat),sun=VALUES(sun),updated_at=NOW()`,
-      [orgId, ...dayKeys.map((day) => week[day] ? 1 : 0)],
-    );
-    await conn.query(
-      `INSERT INTO organization_payroll_policies
-       (organization_id,currency,pay_frequency,daily_rate_basis,shift_start_time,hours_per_workday,late_grace_minutes,late_arrivals_per_penalty,late_penalty_days,overtime_multiplier,deduct_unpaid_leave,deduct_absences,deduct_late_arrivals,pay_approved_overtime,is_configured,configured_by_uuid,configured_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,NOW())
-       ON DUPLICATE KEY UPDATE currency=VALUES(currency),pay_frequency=VALUES(pay_frequency),daily_rate_basis=VALUES(daily_rate_basis),shift_start_time=VALUES(shift_start_time),hours_per_workday=VALUES(hours_per_workday),late_grace_minutes=VALUES(late_grace_minutes),late_arrivals_per_penalty=VALUES(late_arrivals_per_penalty),late_penalty_days=VALUES(late_penalty_days),overtime_multiplier=VALUES(overtime_multiplier),deduct_unpaid_leave=VALUES(deduct_unpaid_leave),deduct_absences=VALUES(deduct_absences),deduct_late_arrivals=VALUES(deduct_late_arrivals),pay_approved_overtime=VALUES(pay_approved_overtime),is_configured=1,configured_by_uuid=VALUES(configured_by_uuid),configured_at=NOW()`,
-      [orgId, values.currency, values.pay_frequency, values.daily_rate_basis, values.shift_start_time, values.hours_per_workday, values.late_grace_minutes, values.late_arrivals_per_penalty, values.late_penalty_days, values.overtime_multiplier, values.deduct_unpaid_leave, values.deduct_absences, values.deduct_late_arrivals, values.pay_approved_overtime, req.user?.uuid ?? null],
-    );
+    await conn.query("DELETE FROM organization_monthly_work_schedules WHERE organization_id=? AND YEAR(schedule_date)=? AND MONTH(schedule_date)=?", [req.scopeOrgId, y, m]);
+    for (const item of days) {
+      await conn.query(
+        "INSERT INTO organization_monthly_work_schedules (organization_id, schedule_date, day_type, updated_by_uuid) VALUES (?, ?, ?, ?)",
+        [req.scopeOrgId, item.date, item.day_type, req.user?.uuid ?? null],
+      );
+    }
     await conn.commit();
   } catch (error) {
     await conn.rollback();
     throw error;
-  } finally { conn.release(); }
-  logAudit({ ...getActorFromReq(req), action: "payroll.policy.configure", entityType: "payroll_policy", entityId: String(orgId), details: values, req });
-  const [policy] = await pool.query("SELECT * FROM organization_payroll_policies WHERE organization_id=?", [orgId]);
-  const [workWeek] = await pool.query("SELECT mon,tue,wed,thu,fri,sat,sun FROM work_week_config WHERE organization_id=?", [orgId]);
-  return ok(res, { configured: true, policy: policy[0], work_week: workWeek[0] }, "Payroll policy saved");
+  } finally {
+    conn.release();
+  }
+  return getMonthlyWorkSchedule({ ...req, query: { month: m, year: y } }, res);
 }
 
 // ---------------------------------------------------------------------------

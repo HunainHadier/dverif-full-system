@@ -23,7 +23,6 @@ export const ROUTE_MODULES: Readonly<Record<string, keyof ModuleFlags>> = {
   "/org/admins": "user_management",
   "/org/leaves": "leave_management",
   "/org/attendance": "attendance_management",
-  "/org/salary-components": "payroll_management",
   "/org/payroll": "payroll_management",
   "/leaves": "leave_management",
   "/attendance": "attendance_management",

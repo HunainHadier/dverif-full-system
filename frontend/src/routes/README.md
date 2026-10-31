@@ -88,7 +88,6 @@ holds the **single** navigation guard in `beforeLoad`: no token ⇒ `/login`, el
 | `_app.org.admins.tsx` | `/org/admins` |
 | `_app.org.leaves.tsx` | `/org/leaves` |
 | `_app.org.attendance.tsx` | `/org/attendance` |
-| `_app.org.salary-components.tsx` | `/org/salary-components` |
 | `_app.org.payroll.tsx` | `/org/payroll` |
 | `_app.org.letter-templates.tsx` | `/org/letter-templates` |
 | `_app.org.hr-letters.tsx` | `/org/hr-letters` |

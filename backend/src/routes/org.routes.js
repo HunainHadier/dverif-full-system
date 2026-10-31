@@ -118,8 +118,10 @@ import {
 import {
   generatePayroll,
   previewPayroll,
-  getPayrollPolicy,
-  updatePayrollPolicy,
+  getPayrollSettings,
+  updatePayrollSettings,
+  getMonthlyWorkSchedule,
+  saveMonthlyWorkSchedule,
   downloadPayslip,
   exportOrgSalaryRecords,
   listOrgSalaryRecords,
@@ -277,6 +279,12 @@ router.post("/attendance/ips", attendanceMgmt, asyncHandler(addAllowedIp));
 router.delete("/attendance/ips/:id", attendanceMgmtOwner, asyncHandler(removeAllowedIp));
 router.post("/attendance/manual-entry", attendanceMgmt, asyncHandler(manualEntry));
 
+// ---- Payroll settings and monthly work calendar ----
+router.get("/payroll-settings", payrollMgmt, asyncHandler(getPayrollSettings));
+router.put("/payroll-settings", payrollMgmtOwner, asyncHandler(updatePayrollSettings));
+router.get("/payroll-schedule", payrollMgmt, asyncHandler(getMonthlyWorkSchedule));
+router.put("/payroll-schedule", payrollMgmtOwner, asyncHandler(saveMonthlyWorkSchedule));
+
 // ---- Salary records / payroll ledger (staff view+export+build; delete period = org_admin) ----
 router.get("/salary-records", payrollMgmt, asyncHandler(listOrgSalaryRecords));
 router.get("/salary-records/export", payrollMgmt, asyncHandler(exportOrgSalaryRecords));
@@ -310,8 +318,6 @@ router.get("/approval-policy", staff, asyncHandler(getApprovalPolicyHandler));
 router.put("/approval-policy", orgAdminsOnly, asyncHandler(updateApprovalPolicyHandler));
 
 // ---- Payroll auto-generation (staff) ----
-router.get("/payroll-policy", payrollMgmt, asyncHandler(getPayrollPolicy));
-router.put("/payroll-policy", payrollMgmtOwner, asyncHandler(updatePayrollPolicy));
 // Preview is registered before generate and, more importantly, is POST because it
 // carries month/year/selection in the body. It writes NOTHING - no record, no
 // line, no audit entry - so it is safe to call as often as anyone likes while

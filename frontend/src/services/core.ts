@@ -920,7 +920,6 @@ export type LeaveType = {
   id: number;
   name: string;
   days_allowed_per_year: number;
-  is_paid: "yes" | "no";
   organization_uuid?: UUID | null;
   organization_name?: string | null;
   created_at?: string;
@@ -938,6 +937,8 @@ export type LeaveRequest = {
   end_date: string;
   reason?: string | null;
   status: "pending" | "approved" | "rejected";
+  requested_treatment?: "paid" | "unpaid";
+  approved_treatment?: "paid" | "unpaid" | null;
   approved_by?: string | null;
   approved_at?: string | null;
   created_at: string;

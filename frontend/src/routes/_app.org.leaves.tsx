@@ -111,6 +111,7 @@ function OrgLeavesContent() {
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [confirming, setConfirming] = useState<LeaveRequest | null>(null);
   const [decideAction, setDecideAction] = useState<"approved" | "rejected">("approved");
+  const [approvalTreatment, setApprovalTreatment] = useState<"paid" | "unpaid">("unpaid");
   const [typeDialog, setTypeDialog] = useState<{ open: boolean; editing: LeaveType | null }>({
     open: false,
     editing: null,
@@ -128,8 +129,8 @@ function OrgLeavesContent() {
   });
 
   const decide = useMutation({
-    mutationFn: ({ uuid, decision }: { uuid: string; decision: "approved" | "rejected" }) =>
-      orgLeavesService.decide(uuid, { status: decision }),
+    mutationFn: ({ uuid, decision, treatment }: { uuid: string; decision: "approved" | "rejected"; treatment?: "paid" | "unpaid" }) =>
+      orgLeavesService.decide(uuid, { status: decision, approved_treatment: treatment }),
     onSuccess: (_data, vars) => {
       toast.success(
         vars.decision === "approved" ? t("orgLeaves.leaveApproved") : t("orgLeaves.leaveRejected"),
@@ -190,7 +191,7 @@ function OrgLeavesContent() {
                   {(types.data ?? []).map((lt) => (
                     <div key={lt.id} className="flex items-center justify-between px-3 py-2">
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium text-foreground">{lt.name}</span><span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{lt.is_paid === "no" ? "Unpaid" : "Paid"}</span>
+                        <span className="font-medium text-foreground">{lt.name}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Button
@@ -389,9 +390,19 @@ function OrgLeavesContent() {
         </TabsContent>
       </Tabs>
 
+      <Dialog open={!!confirming && decideAction === "approved" && confirming.requested_treatment === "paid"} onOpenChange={(o) => !o && setConfirming(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Approve paid leave request</DialogTitle><DialogDescription>Choose the final payroll treatment for this request.</DialogDescription></DialogHeader>
+          <div className="space-y-2">
+            <Button className="w-full" variant={approvalTreatment === "unpaid" ? "default" : "outline"} onClick={() => setApprovalTreatment("unpaid")}>Approved as Unpaid</Button>
+            <Button className="w-full" variant={approvalTreatment === "paid" ? "default" : "outline"} onClick={() => setApprovalTreatment("paid")}>Approved as Paid</Button>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button><Button onClick={() => confirming && decide.mutate({ uuid: confirming.uuid, decision: "approved", treatment: approvalTreatment })} disabled={decide.isPending}>Confirm Approval</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
-        open={!!confirming}
-        onOpenChange={(o) => !o && setConfirming(null)}
+        open={!!confirming && !(decideAction === "approved" && confirming.requested_treatment === "paid")}
+        onOpenChange={(o) => !o && setConfirming(null)
         title={
           decideAction === "approved" ? t("orgLeaves.approveTitle") : t("orgLeaves.rejectTitle")
         }
@@ -417,7 +428,7 @@ function OrgLeavesContent() {
         confirmLabel={decideAction === "approved" ? t("common.approve") : t("common.reject")}
         destructive={decideAction === "rejected"}
         onConfirm={() =>
-          confirming && decide.mutate({ uuid: confirming.uuid, decision: decideAction })
+          confirming && decide.mutate({ uuid: confirming.uuid, decision: decideAction, treatment: "unpaid" })
         }
       />
 
@@ -882,17 +893,16 @@ function LeaveTypeDialog({
   const qc = useQueryClient();
   const { t } = useTranslation();
   const [name, setName] = useState("");
-  const [isPaid, setIsPaid] = useState<"" | "yes" | "no">("");
 
   useEffect(() => {
-    if (open) { setName(editing?.name ?? ""); setIsPaid(editing?.is_paid ?? ""); }
+    if (open) setName(editing?.name ?? "");
   }, [open, editing]);
 
   const save = useMutation({
     mutationFn: () =>
       editing
-        ? orgLeavesService.updateType(editing.id, { name, is_paid: isPaid as "yes" | "no" })
-        : orgLeavesService.createType({ name, is_paid: isPaid as "yes" | "no" }),
+        ? orgLeavesService.updateType(editing.id, { name })
+        : orgLeavesService.createType({ name }),
     onSuccess: () => {
       toast.success(editing ? t("orgLeaves.leaveTypeUpdated") : t("orgLeaves.leaveTypeCreated"));
       qc.invalidateQueries({ queryKey: ["orgLeaveTypes"] });
@@ -903,7 +913,6 @@ function LeaveTypeDialog({
 
   const submit = () => {
     if (!name.trim()) return toast.error(t("orgLeaves.nameRequired"));
-    if (!isPaid) return toast.error("Select whether this leave is paid or unpaid.");
     save.mutate();
   };
 
@@ -925,13 +934,6 @@ function LeaveTypeDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder={t("orgLeaves.namePlaceholder")}
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="lt-paid-status">Payroll treatment</Label>
-            <Select value={isPaid} onValueChange={(v) => setIsPaid(v as "yes" | "no")}>
-              <SelectTrigger id="lt-paid-status"><SelectValue placeholder="Choose paid or unpaid" /></SelectTrigger>
-              <SelectContent><SelectItem value="yes">Paid leave ? does not reduce base salary</SelectItem><SelectItem value="no">Unpaid leave ? eligible for policy-based deduction</SelectItem></SelectContent>
-            </Select>
           </div>
         </div>
         <DialogFooter>
