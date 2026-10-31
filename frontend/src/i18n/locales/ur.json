@@ -1191,7 +1191,8 @@
     },
     "condition": {
       "good": "ٹھیک",
-      "damaged": "خراب"
+      "damaged": "خراب",
+      "needs_maintenance": "مرمت درکار"
     },
     "assignedDate": "دیا گیا",
     "attachmentView": "دیکھیں",
