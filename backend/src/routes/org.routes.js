@@ -387,13 +387,6 @@ router.get("/hr-letters/:uuid/pdf", hrLettersMgmt, asyncHandler(downloadLetterPd
 // ---- Assets ----
 // Gated on asset_management, which the plan flags already carry.
 //
-// Reading the category list is NOT administration, and it has to be available to
-// sub-admins: the asset form's category field is `required`, so a sub-admin who
-// cannot list categories cannot create or edit an asset at all, and the page
-// fails by rendering an empty dropdown against a 403 it never shows. Only
-// redefining what classes of asset exist is org_admin-only, because that changes
-// what the register reports on. So the GET joins the staff-level gate and only
-// the writes stay behind orgAdminsOnly.
 const assetMgmt = [...staff, requireModuleFeature("asset_management"), requirePermission("manage_assets")];
 
 // ---- Recruitment ----------------------------------------------------------
@@ -495,21 +488,7 @@ router.get(
   recruitmentMgmt,
   asyncHandler(downloadResume),
 );
-// Asset categories: staff define the org's asset taxonomy behind the asset
-// module. Redefining what classes of asset exist stays org_admin-only.
-const assetCategoryMgmt = [...orgAdminsOnly, requireModuleFeature("asset_management")];
-
-// Expense claims are reviewed behind the staff gate plus the delegated
-// "approve_expenses" permission: an employee must never reach the review queue,
-// and an org_admin passes the permission on ROLE alone. Built from `staff` rather
-// than repeating requireRole here, so the role and subscription gates cannot drift
-// out of order — requirePermission reads req.user, which only exists after them.
 const expenseReviewMgmt = [...staff, requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
-
-router.get("/asset-categories", assetMgmt, asyncHandler(listCategories));
-router.post("/asset-categories", assetCategoryMgmt, asyncHandler(createCategory));
-router.put("/asset-categories/:uuid", assetCategoryMgmt, asyncHandler(updateCategory));
-router.delete("/asset-categories/:uuid", assetCategoryMgmt, asyncHandler(deleteCategory));
 
 router.get("/assets", assetMgmt, asyncHandler(listAssets));
 router.post("/assets", assetMgmt, asyncHandler(createAsset));
@@ -592,10 +571,6 @@ router.get(
 router.get("/dashboard/analytics", staff, asyncHandler(orgDashboardAnalytics));
 
 import {
-  listCategories,
-  createCategory,
-  updateCategory,
-  deleteCategory,
   uploadReceipts,
   listReceipts,
   uploadInvoices,
