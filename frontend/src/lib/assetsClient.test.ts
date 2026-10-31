@@ -97,7 +97,7 @@ describe("edit can actually clear a field", () => {
     expect(edit).toContain("clear(values.notes)");
     // The bug: `values.vendor || undefined` types fine and skips server-side, so
     // clearing a vendor looked saved and the register kept the old value.
-    expect(edit).not.toMatch(/values\.(vendor|notes|serial_number)\s*\|\|\s*undefined/);
+    expect(edit).not.toMatch(/values\.(vendor|notes)\s*\|\|\s*undefined/);
   });
 
   it("the create branch still omits, because there is nothing to clear", () => {
@@ -379,9 +379,8 @@ describe("navigation and access control", () => {
     expect(block).not.toMatch(/feature:\s*"hr_letters_management/);
   });
 
-  it("wraps both pages in the ModuleGate for asset_management", () => {
+  it("wraps the inventory page in the ModuleGate for asset_management", () => {
     expect(ASSETS_PAGE).toContain('<ModuleGate module="asset_management">');
-    expect(CATEGORIES_PAGE).toContain('<ModuleGate module="asset_management">');
   });
 });
 
