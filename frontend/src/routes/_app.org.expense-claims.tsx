@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -403,21 +403,7 @@ function ExpenseClaimsPage() {
   return (
     <ModuleGate module="expense_management">
       <div className="space-y-4">
-        <PageHeader
-          title={t("expenses.title")}
-          description={t("expenses.description")}
-          actions={
-            <Button
-              onClick={() => {
-                setEditingCategory(null);
-                setCategoryDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              {t("expenses.newCategory")}
-            </Button>
-          }
-        />
+        <PageHeader title={t("expenses.title")} description={t("expenses.description")} />
 
         <DataTable
           columns={columns}
@@ -462,15 +448,6 @@ function ExpenseClaimsPage() {
         onOpenChange={(v) => !v && setPaying(null)}
       />
 
-      <CategoryDialog
-        key={categoryDialogOpen ? (editingCategory?.uuid ?? "new") : "closed"}
-        open={categoryDialogOpen}
-        onOpenChange={(v) => {
-          setCategoryDialogOpen(v);
-          if (!v) setEditingCategory(null);
-        }}
-        category={editingCategory}
-      />
 
 
     </ModuleGate>
@@ -540,7 +517,7 @@ function ClaimDetailSheet({
           </SheetTitle>
           <SheetDescription>
             {claim
-              ? `${claim.category_name ?? "—"} · ${formatDate(claim.expense_date)}`
+              ? `${claim.expense_name ?? claim.category_name ?? "—"} · ${formatDate(claim.expense_date)}`
               : t("loading")}
           </SheetDescription>
         </SheetHeader>
@@ -605,20 +582,9 @@ function ClaimDetailSheet({
               </div>
             ) : null}
 
-            {claim.category_max_limit ? (
-              <p className="text-xs text-muted-foreground">
-                {t("expenses.categoryLimit", { amount: formatCurrency(claim.category_max_limit) })}
-              </p>
-            ) : null}
-
             <div className="space-y-2">
               <p className="text-sm font-medium">
                 {t("expenses.receipts")}
-                {claim.category_requires_receipt ? (
-                  <span className="ml-1 text-xs text-muted-foreground">
-                    {t("expenses.receiptRequired")}
-                  </span>
-                ) : null}
               </p>
 
               {receipts.map((r) => (
