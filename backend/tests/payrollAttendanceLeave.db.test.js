@@ -305,9 +305,9 @@ async function attendAll(uuid, skip = []) {
     if (skipped.has(date)) continue;
     await db.query(
       `INSERT INTO attendance_records
-         (uuid, employee_uuid, organization_id, date, check_in_at, status, is_manual, created_at)
-       VALUES (UUID(), ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
-      [uuid, orgId, date, `${date} 08:55:00`],
+         (uuid, employee_uuid, organization_id, date, check_in_at, check_out_at, status, is_manual, created_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
+      [uuid, orgId, date, `${date} 08:55:00`, `${date} 17:00:00`],
     );
   }
 }
@@ -315,9 +315,9 @@ async function attendAll(uuid, skip = []) {
 async function approveLeaveDirect(uuid, leaveTypeId, startDate, endDate) {
   await db.query(
     `INSERT INTO leave_requests
-       (uuid, employee_uuid, leave_type_id, start_date, end_date, status, approved_at)
-     VALUES (UUID(), ?, ?, ?, ?, 'approved', NOW())`,
-    [uuid, leaveTypeId, startDate, endDate],
+       (uuid, employee_uuid, leave_type_id, start_date, end_date, requested_treatment, approved_treatment, status, approved_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'approved', NOW())`,
+    [uuid, leaveTypeId, startDate, endDate, "unpaid", "unpaid"],
   );
 }
 
