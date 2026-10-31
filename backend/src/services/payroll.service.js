@@ -235,7 +235,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
  * as unpaid absence. An employee on approved leave has no attendance row either,
  * which is the other half of the same double-count.
  */
-export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, lateCutoffMinutes = null, conn = pool }) {
+export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, lateCutoffMinutes = null, overtimeCutoffMinutes = null, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
   assertUuid(employeeUuid, "Employee UUID");
@@ -253,6 +253,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   const presentDates = new Set();
   let lateCount = 0;
   let workedHours = 0;
+  let actualOvertimeHours = 0;
 
   for (const r of rows) {
     const iso = isoDate(r.date);
@@ -267,6 +268,10 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
       const start = new Date(r.check_in_at).getTime();
       const end = new Date(r.check_out_at).getTime();
       if (Number.isFinite(start) && Number.isFinite(end) && end > start) workedHours += (end - start) / 3600000;
+      if (overtimeCutoffMinutes !== null && Number.isFinite(end)) {
+        const checkout = minutesPastMidnight(r.check_out_at);
+        if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) actualOvertimeHours += (checkout - Number(overtimeCutoffMinutes)) / 60;
+      }
     }
     if (lateCutoffMinutes !== null && minutesPastMidnight(r.check_in_at) > Number(lateCutoffMinutes)) lateCount += 1;
   }
@@ -281,6 +286,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   return {
     attendedDays: presentDates.size,
     workedHours: Math.round(workedHours * 100) / 100,
+    actualOvertimeHours: Math.round(actualOvertimeHours * 100) / 100,
     absentDays,
     lateCount,
     presentDates: [...presentDates].sort(),
@@ -363,6 +369,7 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     // counted as an absence and docked. That is the bug this argument prevents.
     excludedDates: [...leave.paidDates, ...leave.unpaidDates],
     lateCutoffMinutes: timeToMinutes(activePolicy.shift_start_time),
+    overtimeCutoffMinutes: timeToMinutes(activePolicy.shift_end_time),
     conn,
   });
 
@@ -382,7 +389,8 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     lateCount: attendance.lateCount,
     paidLeaveDays: leave.paidLeaveDays,
     unpaidLeaveDays: leave.unpaidLeaveDays,
-    approvedOvertimeHours: overtime.approvedOvertimeHours,
+    approvedOvertimeHours: Math.min(overtime.approvedOvertimeHours, attendance.actualOvertimeHours),
+    actualOvertimeHours: attendance.actualOvertimeHours,
     requestedOvertimeHours: overtime.requestedOvertimeHours,
     overtimeRequests: overtime.requests,
   };
