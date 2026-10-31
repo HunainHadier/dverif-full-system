@@ -1191,7 +1191,8 @@
     },
     "condition": {
       "good": "Good",
-      "damaged": "Damaged"
+      "damaged": "Damaged",
+      "needs_maintenance": "Needs maintenance"
     },
     "assignedDate": "Assigned on",
     "attachmentView": "View",
