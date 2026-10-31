@@ -243,6 +243,7 @@ function NewClaimDialog({
    * cannot approve gets a pending claim even if it posts the flag by hand.
    */
   const [autoApprove, setAutoApprove] = useState(false);
+  const canManageCategories = perms.isOrgAdmin || perms.approve_expenses === true;
 
   // Reset on the closed -> open transition, so a claim started and abandoned does
   // not leave stale amounts behind for the next one.
@@ -354,11 +355,7 @@ function NewClaimDialog({
           inputMode="decimal"
           className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
         />
-        {overLimit ? (
-          <span className="block text-xs text-destructive">
-            {t("expenses.overLimit", { amount: formatCurrency(limit!) })}
-          </span>
-        ) : null}
+}
       </label>
 
       <label className="block space-y-1 text-sm">
