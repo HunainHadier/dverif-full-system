@@ -187,6 +187,9 @@ export type PayrollPreviewItem = {
     working_days: number;
     attended_days: number;
     worked_hours: number;
+    expected_working_hours: number;
+    actual_overtime_hours: number;
+    worked_hours: number;
     absent_days: number;
     late_count: number;
     paid_leave_days: number;
