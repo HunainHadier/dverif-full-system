@@ -38,10 +38,6 @@ import {
   updateLeaveType,
 } from "../controllers/leave.controller.js";
 import {
-  listExpenseCategories,
-  createExpenseCategory,
-  updateExpenseCategory,
-  deleteExpenseCategory,
   listExpenseClaims,
   getExpenseClaim,
   reviewExpenseClaim,
@@ -502,7 +498,7 @@ router.get(
 // Aliased: expense and asset categories are separate tables with separate
 // lifecycles, and both modules export a listCategories/createCategory pair. Same
 // name, different register - importing both unaliased would silently shadow one.
-const expenseCategoryMgmt = [...staff, requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
+const expenseCategoryMgmt = [requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
 const assetCategoryMgmt = [...orgAdminsOnly, requireModuleFeature("asset_management")];
 
 router.get("/asset-categories", assetMgmt, asyncHandler(listCategories));
@@ -561,14 +557,6 @@ router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandle
 // route is a disabled feature with a working URL, and the next person to add a
 // create button finds it answers instead of finding it refused. See
 // tests/expenseClaimCreationRestricted.test.js, which fails if this comes back.
-router.get("/expense-categories", expenseCategoryMgmt, asyncHandler(listExpenseCategories));
-router.post("/expense-categories", expenseCategoryMgmt, asyncHandler(createExpenseCategory));
-// Same gate as create: defining what may be claimed is the org admin's job, and it
-// is a decision about POLICY. Withholding it from someone granted
-// approve_expenses would leave them able to approve claims against limits and
-// receipt rules they cannot see or change.
-router.put("/expense-categories/:uuid", expenseCategoryMgmt, asyncHandler(updateExpenseCategory));
-router.delete("/expense-categories/:uuid", expenseCategoryMgmt, asyncHandler(deleteExpenseCategory));
 router.get("/expense-claims", expenseCategoryMgmt, asyncHandler(listExpenseClaims));
 router.get("/expense-claims/:uuid", expenseCategoryMgmt, asyncHandler(getExpenseClaim));
 // Registered BEFORE the /:uuid routes deliberately. Express matches in

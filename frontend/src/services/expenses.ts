@@ -56,8 +56,9 @@ export type ExpenseClaim = {
   uuid: UUID;
   employee_uuid: UUID;
   employee_name: string;
-  category_uuid: UUID;
+  category_uuid: UUID | null;
   category_name: string | null;
+  expense_name: string;
   amount: number;
   /** YYYY-MM-DD. The day the money was spent, not the day it was claimed. */
   expense_date: string;
@@ -330,24 +331,6 @@ export const myExpensesService = {
       })
       .then((r) => r.data),
 
-  /**
-   * The categories I may file against, through MY OWN route.
-   *
-   * NOT `expenseCategoriesService.list`. That one calls /org/expense-categories,
-   * which is gated on org_admin/sub_admin PLUS approve_expenses, so an employee
-   * got a 403 — and because a rejected query leaves `data` undefined, the claim
-   * form fell through to its empty state and told the employee "No categories
-   * found. Create a new category first." A message that is both false (categories
-   * exist) and unactionable (they cannot create one).
-   *
-   * Read-only by design: an employee sees what they may claim and cannot manage
-   * the category list itself.
-   */
-  categories: () =>
-    api
-      .get<{ items?: ExpenseCategory[] }>("/my/expenses/categories")
-      .then((r) => (Array.isArray(r.data.items) ? r.data.items : [])),
-
   get: (uuid: UUID) =>
     api.get<{ claim: ExpenseClaimDetail }>(`/my/expenses/${uuid}`).then((r) => r.data.claim),
 
@@ -362,11 +345,10 @@ export const myExpensesService = {
    * filed either way.
    */
   create: (data: {
-    category_uuid: UUID;
+    expense_name: string;
     amount: number;
     expense_date: string;
     description?: string;
-    payment_mode?: PaymentMode;
     auto_approve?: boolean;
   }) =>
     api

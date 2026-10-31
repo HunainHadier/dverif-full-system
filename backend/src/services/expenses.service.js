@@ -355,7 +355,7 @@ export async function createClaim({
   orgId,
   actorUuid,
   employeeUuid,
-  categoryUuid,
+  expenseName,
   amount,
   expenseDate,
   description,
@@ -366,6 +366,9 @@ export async function createClaim({
     throw new ApiError(400, "payment_mode must be payroll or direct");
   }
   if (!isValidDate(expenseDate)) throw new ApiError(400, "expense_date must be a valid YYYY-MM-DD date");
+
+  if (!expenseName || !String(expenseName).trim()) throw new ApiError(400, "expense_name is required");
+  if (String(expenseName).trim().length > 160) throw new ApiError(400, "expense_name must be 160 characters or fewer");
 
   const value = Number(amount);
   if (!Number.isFinite(value) || value <= 0) {
@@ -386,28 +389,22 @@ export async function createClaim({
     );
   }
 
-  const category = await loadCategory({ orgId, categoryUuid, conn });
-  if (category.max_limit_per_claim !== null && value > Number(category.max_limit_per_claim)) {
-    throw new ApiError(
-      400,
-      `This claim exceeds the ${category.name} limit of ${money(category.max_limit_per_claim)} per claim`,
-    );
-  }
+
 
   const employee = await employeeOnRoster(orgId, employeeUuid, conn);
   const uuid = randomUUID();
 
   await conn.query(
     `INSERT INTO expense_claims
-       (uuid, organization_id, employee_uuid, employee_name, category_uuid, amount,
+       (uuid, organization_id, employee_uuid, employee_name, expense_name, category_uuid, amount,
         expense_date, description, status, payment_mode, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NOW(), NOW())`,
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'pending', ?, ?, NOW(), NOW())`,
     [
       uuid,
       orgId,
       employee.uuid,
       employee.full_name,
-      category.uuid,
+      String(expenseName ?? "").trim(),
       money(value),
       expenseDate,
       description ? String(description).trim() : null,
@@ -431,17 +428,12 @@ export async function createClaim({
 /** One claim with its category name and its receipts. */
 export async function getClaim({ orgId, claimUuid, conn = pool }) {
   const claim = await loadClaim({ orgId, claimUuid, conn });
-  const [categoryRows] = await conn.query(
-    "SELECT name, requires_receipt, max_limit_per_claim FROM expense_categories WHERE uuid=?",
-    [claim.category_uuid],
-  );
   const receipts = await attachments.listAttachments({
     orgId,
     entityType: ATTACHMENT_ENTITY.CLAIM,
     entityUuid: claim.uuid,
   });
 
-  const requiresReceipt = Boolean(Number(categoryRows[0]?.requires_receipt));
 
   return {
     ...claim,
@@ -451,9 +443,10 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
     // would then be bucketed into the wrong payroll month.
     expense_date: isoDate(claim.expense_date),
     amount: money(claim.amount),
-    category_name: categoryRows[0]?.name ?? null,
-    category_requires_receipt: requiresReceipt,
-    category_max_limit: categoryRows[0]?.max_limit_per_claim ?? null,
+    category_name: null,
+    expense_name: claim.expense_name || "Expense",
+    category_requires_receipt: false,
+    category_max_limit: null,
     receipts,
     receipt_count: receipts.length,
     /**
@@ -464,7 +457,7 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
      * receipt or it will be rejected" is enforced by a flag the UI can show, not
      * by everyone remembering.
      */
-    receipt_satisfied: !requiresReceipt || receipts.length > 0,
+    receipt_satisfied: true,
   };
 }
 
@@ -494,12 +487,11 @@ export async function listClaims(
   const where = clauses.join(" AND ");
   const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c WHERE ${where}`, params);
   const [rows] = await conn.query(
-    `SELECT c.*, cat.name AS category_name, cat.requires_receipt AS category_requires_receipt,
+    `SELECT c.*, NULL AS category_name, 0 AS category_requires_receipt,
             (SELECT COUNT(*) FROM attachments a
               WHERE a.entity_type='expense_claim' AND a.entity_uuid=c.uuid AND a.deleted_at IS NULL
             ) AS receipt_count
        FROM expense_claims c
-       LEFT JOIN expense_categories cat ON cat.uuid = c.category_uuid
       WHERE ${where}
       ORDER BY c.expense_date DESC, c.id DESC
       LIMIT ? OFFSET ?`,
@@ -514,7 +506,7 @@ export async function listClaims(
       receipt_count: Number(r.receipt_count ?? 0),
       category_requires_receipt: Boolean(Number(r.category_requires_receipt)),
       receipt_satisfied:
-        !Number(r.category_requires_receipt) || Number(r.receipt_count ?? 0) > 0,
+        true,
     })),
     total: Number(total),
     page,
@@ -634,7 +626,6 @@ export async function autoApproveClaim({
   actorUuid,
   employeeUuid,
   claimUuid,
-  categoryUuid,
   canApproveExpenses,
   conn = pool,
 }) {
@@ -666,39 +657,11 @@ export async function autoApproveClaim({
     return fail("A claim cannot be auto-approved by the person it reimburses; it must be reviewed by another approver");
   }
 
-  // 3. THE SAME RECEIPT RULE reviewClaim enforces. A shortcut that skips the
-  //    proof-of-purchase check is not a shortcut, it is a hole.
-  const [categoryRows] = await conn.query(
-    "SELECT name, requires_receipt FROM expense_categories WHERE uuid=? AND organization_id=?",
-    [categoryUuid, orgId],
+  const [claimRows] = await conn.query(
+    "SELECT amount FROM expense_claims WHERE uuid=? AND organization_id=?",
+    [claimUuid, orgId],
   );
-  if (Number(categoryRows[0]?.requires_receipt) === 1) {
-    const [receipts] = await conn.query(
-      `SELECT COUNT(*) AS n FROM attachments
-        WHERE organization_id=? AND entity_type=? AND entity_uuid=? AND deleted_at IS NULL`,
-      [orgId, ATTACHMENT_ENTITY.CLAIM, claimUuid],
-    );
-    if (Number(receipts[0].n) === 0) {
-      return fail(
-        `${categoryRows[0].name} claims require a receipt, so this one cannot be auto-approved without one`,
-      );
-    }
-  }
-
-  // 4. THE SAME LIMIT reviewClaim re-checks, because a category can be tightened
-  //    between the two and approving against a stale policy reimburses what the
-  //    org's own rules now forbid.
-  const [claimRows] = await conn.query("SELECT amount FROM expense_claims WHERE uuid=?", [claimUuid]);
-  const [limitRows] = await conn.query(
-    "SELECT name, max_limit_per_claim FROM expense_categories WHERE uuid=?",
-    [categoryUuid],
-  );
-  const limit = limitRows[0]?.max_limit_per_claim ?? null;
-  if (limit !== null && Number(claimRows[0].amount) > Number(limit)) {
-    return fail(
-      `This claim exceeds the current ${limitRows[0].name} limit of ${money(limit)} per claim`,
-    );
-  }
+  if (!claimRows.length) throw new ApiError(404, "Expense claim not found");
 
   /*
    * THE AUDIT TRAIL.
@@ -780,34 +743,7 @@ export async function reviewClaim({
     throw new ApiError(400, "A rejection needs a reason the employee can act on");
   }
 
-  if (decision === "approved") {
-    const category = await loadCategory({ orgId, categoryUuid: claim.category_uuid, conn });
-    // Written as a plain null test to match the submission-side check. The previous
-    // `Number(limit) !== null` guard was always true - Number(null) is 0, not null -
-    // so it read as a deliberate special case while being a no-op.
-    if (category.max_limit_per_claim !== null && Number(claim.amount) > Number(category.max_limit_per_claim)) {
-      throw new ApiError(
-        409,
-        `This claim of ${money(claim.amount)} exceeds the current ${category.name} limit of ${money(
-          category.max_limit_per_claim,
-        )}`,
-      );
-    }
 
-    if (Number(category.requires_receipt)) {
-      const [receipts] = await conn.query(
-        `SELECT COUNT(*) AS n FROM attachments
-          WHERE organization_id=? AND entity_type=? AND entity_uuid=? AND deleted_at IS NULL`,
-        [orgId, ATTACHMENT_ENTITY.CLAIM, claim.uuid],
-      );
-      if (Number(receipts[0].n) === 0) {
-        throw new ApiError(
-          409,
-          `${category.name} claims require a receipt, and this one has none attached`,
-        );
-      }
-    }
-  }
 
   // The status='pending' in the WHERE is the real guard against a double decision,
   // and it is load-bearing under concurrency: two reviewers clicking approve at the
@@ -946,9 +882,8 @@ export async function getApprovedClaimsForPeriod({
 
   const [rows] = await conn.query(
     `SELECT c.uuid, c.amount, c.expense_date, c.description, c.payment_mode,
-            cat.name AS category_name
+            c.expense_name AS category_name
        FROM expense_claims c
-       LEFT JOIN expense_categories cat ON cat.uuid = c.category_uuid
       WHERE c.organization_id = ?
         AND c.employee_uuid = ?
         AND c.status = 'approved'

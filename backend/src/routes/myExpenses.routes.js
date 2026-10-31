@@ -6,7 +6,6 @@ import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
 import { hasPermission } from "../utils/permissions.js";
 import {
-  myExpenseCategories,
   myExpenseClaims,
   submitMyExpenseClaim,
   myExpenseClaimDetail,
@@ -71,7 +70,6 @@ const resolveExpenseApprovalAuthority = (req, _res, next) => {
  * Registered second, "categories" reaches myExpenseClaimDetail and 404s as a
  * missing claim.
  */
-router.get("/categories", selfService, asyncHandler(myExpenseCategories));
 router.get("/", selfService, asyncHandler(myExpenseClaims));
 router.get("/:uuid", selfService, asyncHandler(myExpenseClaimDetail));
 router.post("/", selfService, resolveExpenseApprovalAuthority, asyncHandler(submitMyExpenseClaim));
