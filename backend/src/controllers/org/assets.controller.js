@@ -1,5 +1,4 @@
 import * as assets from "../../services/assets.service.js";
-import ApiError from "../../utils/ApiError.js";
 import { ok } from "../../utils/response.js";
 import { parsePagination } from "../../utils/pagination.js";
 
@@ -86,40 +85,6 @@ export async function returnAsset(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// Maintenance
-// ---------------------------------------------------------------------------
-
-export async function listMaintenance(req, res) {
-  const rows = await assets.listMaintenance({
-    orgId: req.scopeOrgId,
-    assetUuid: typeof req.query.asset_uuid === "string" ? req.query.asset_uuid : undefined,
-    status: typeof req.query.status === "string" ? req.query.status : undefined,
-  });
-  return ok(res, { items: rows }, "Maintenance");
-}
-
-export async function reportMaintenance(req, res) {
-  const result = await assets.reportMaintenance({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    assetUuid: req.params.uuid,
-    data: req.body ?? {},
-  });
-  return ok(res, result, "Maintenance reported");
-}
-
-export async function completeMaintenance(req, res) {
-  if (!req.params.jobUuid) throw new ApiError(400, "A maintenance job uuid is required");
-  const result = await assets.completeMaintenance({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    jobUuid: req.params.jobUuid,
-    data: req.body ?? {},
-  });
-  return ok(res, result, "Maintenance closed");
-}
-
-// ---------------------------------------------------------------------------
 // Employee self-service
 // ---------------------------------------------------------------------------
 
@@ -141,7 +106,7 @@ export async function listMyAssets(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// Attachments: purchase receipts and repair invoices
+// Attachments: purchase receipts
 // ---------------------------------------------------------------------------
 
 export async function uploadReceipts(req, res) {
@@ -159,22 +124,6 @@ export async function uploadReceipts(req, res) {
 export async function listReceipts(req, res) {
   const rows = await assets.listReceipts({ orgId: req.scopeOrgId, assetUuid: req.params.uuid });
   return ok(res, { items: rows }, "Receipts");
-}
-
-export async function uploadInvoices(req, res) {
-  const rows = await assets.attachInvoice({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    jobUuid: req.params.jobUuid,
-    files: req.files ?? [],
-    description: req.body?.description ?? null,
-  });
-  return ok(res, { items: rows }, "Invoices uploaded");
-}
-
-export async function listInvoices(req, res) {
-  const rows = await assets.listInvoices({ orgId: req.scopeOrgId, jobUuid: req.params.jobUuid });
-  return ok(res, { items: rows }, "Invoices");
 }
 
 export async function removeAttachment(req, res) {

@@ -15,7 +15,6 @@ import {
   Send,
   Trash2,
   Undo2,
-  Wrench,
 } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
@@ -70,8 +69,8 @@ const PAGE_SIZE = 20;
  * Asset inventory.
  *
  * STATUS IS NEVER SENT FROM HERE. There is no status field on any create or
- * update payload: the server derives it from the open assignment and maintenance
- * rows, so offering one would produce a control whose value is silently ignored.
+ * update payload: the server derives it from the open assignment
+ * row, so offering one would produce a control whose value is silently ignored.
  * The menu only offers the transitions the server actually implements.
  *
  * The action menu is driven by the SAME status map the backend enforces, because
@@ -86,7 +85,7 @@ function AssetsPage() {
   const [status, setStatus] = useState<AssetStatus | "">("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [dialog, setDialog] = useState<
-    null | "create" | "edit" | "assign" | "return" | "maintenance" | "retire"
+    null | "create" | "edit" | "assign" | "return" | "retire"
   >(null);
   const [active, setActive] = useState<Asset | null>(null);
 
@@ -133,19 +132,7 @@ function AssetsPage() {
       key: "status",
       header: t("common.status"),
       render: (r) => (
-        // open_jobs is the server's count of unfinished repair jobs, and it is
-        // only meaningful next to the status it explains: a badge that says
-        // "Maintenance" for two separate faults is one problem on a dashboard and
-        // two problems on a worklist, and the count is what stops the asset being
-        // closed out after the first repair.
-        <span className="flex items-center gap-1.5">
-          <Badge variant={ASSET_STATUS_VARIANT[r.status]}>{t(`assets.status.${r.status}`)}</Badge>
-          {(r.open_jobs ?? 0) > 0 ? (
-            <span className="text-xs text-muted-foreground">
-              {t("assets.openJobs", { count: r.open_jobs ?? 0 })}
-            </span>
-          ) : null}
-        </span>
+        <Badge variant={ASSET_STATUS_VARIANT[r.status]}>{t(`assets.status.${r.status}`)}</Badge>
       ),
     },
     {
@@ -204,32 +191,17 @@ function AssetsPage() {
           }
         />
 
-        {/* Counts, because "12 assigned" is the number an administrator is
-            actually asked for and it should not require a filter click.
-
-            total_value and maintenance_spend are the server's figures, not a
-            client-side sum of the page: the register is paginated, so summing the
-            rows on screen would silently report only the first page's worth.
-            maintenance_spend also only counts COMPLETED jobs, which is the money
-            actually spent - an open job has a cost attached but has not been paid,
-            and showing it as spend makes the number move before anything is paid. */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Stat label={t("assets.status.available")} value={s?.available ?? 0} />
           <Stat label={t("assets.status.assigned")} value={s?.assigned ?? 0} />
-          <Stat label={t("assets.status.maintenance")} value={s?.maintenance ?? 0} />
           <Stat label={t("assets.status.retired")} value={s?.retired ?? 0} />
         </div>
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2">
           <MoneyStat
             label={t("assets.totalValue")}
             value={money?.total_value ?? 0}
             hint={t("assets.totalValueHint")}
-          />
-          <MoneyStat
-            label={t("assets.maintenanceSpend")}
-            value={money?.maintenance_spend ?? 0}
-            hint={t("assets.maintenanceSpendHint")}
           />
         </div>
 
@@ -254,7 +226,7 @@ function AssetsPage() {
             className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
           >
             <option value="">{t("assets.allStatuses")}</option>
-            {(["available", "assigned", "maintenance", "retired"] as AssetStatus[]).map((v) => (
+            {(["available", "assigned", "retired"] as AssetStatus[]).map((v) => (
               <option key={v} value={v}>
                 {t(`assets.status.${v}`)}
               </option>
@@ -340,7 +312,7 @@ function RowActions({
 }: {
   row: Asset;
   onOpenDetails: () => void;
-  onDialog: (kind: "edit" | "assign" | "return" | "maintenance" | "retire") => void;
+  onDialog: (kind: "edit" | "assign" | "return" | "retire") => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -397,10 +369,6 @@ function RowActions({
               <Send className="mr-2 h-4 w-4" />
               {t("assets.assign")}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onDialog("maintenance")}>
-              <Wrench className="mr-2 h-4 w-4" />
-              {t("assets.sendForMaintenance")}
-            </DropdownMenuItem>
           </>
         ) : null}
 
@@ -411,20 +379,7 @@ function RowActions({
           </DropdownMenuItem>
         ) : null}
 
-        {row.status === "maintenance" ? (
-          <DropdownMenuItem disabled>
-            <Wrench className="mr-2 h-4 w-4" />
-            {t("assets.inMaintenance")}
-          </DropdownMenuItem>
-        ) : null}
-
-        {/* Retire is available-only, and that is the server's rule, not a UI
-            preference: retireAsset refuses an `assigned` asset ("Return this
-            asset before retiring it") and a `maintenance` one ("Close the open
-            maintenance job first"). Offering it on those rows was a menu item
-            whose only possible outcome was a 409 - which teaches people the page
-            is broken. The two ways out are already above: Return for assigned,
-            and the drawer's "mark repaired" for maintenance. */}
+        {/* Retire is available-only: return assigned assets first. */}
         {row.status === "available" ? (
           <DropdownMenuItem onSelect={() => onDialog("retire")}>
             <Trash2 className="mr-2 h-4 w-4" />
@@ -444,7 +399,7 @@ function RowActions({
 }
 
 // ---------------------------------------------------------------------------
-// Detail drawer: custody history, maintenance, receipts
+// Detail drawer: custody history and receipts
 // ---------------------------------------------------------------------------
 
 function AssetDetailDrawer({
@@ -467,31 +422,11 @@ function AssetDetailDrawer({
   });
 
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
-  const [jobFiles, setJobFiles] = useState<File[]>([]);
-  const [activeJob, setActiveJob] = useState<string | null>(null);
 
   const uploadReceipt = useMutation({
     mutationFn: () => assetsService.uploadReceipts(uuid!, receiptFiles),
     onSuccess: () => {
       setReceiptFiles([]);
-      void qc.invalidateQueries({ queryKey: ["asset", uuid] });
-      onChanged();
-    },
-  });
-
-  const uploadInvoice = useMutation({
-    mutationFn: () => assetsService.uploadInvoices(activeJob!, jobFiles),
-    onSuccess: () => {
-      setJobFiles([]);
-      void qc.invalidateQueries({ queryKey: ["asset", uuid] });
-      onChanged();
-    },
-  });
-
-  const closeJob = useMutation({
-    mutationFn: (vars: { jobUuid: string; status: "completed" | "cancelled" }) =>
-      assetsService.completeMaintenance(vars.jobUuid, { status: vars.status }),
-    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["asset", uuid] });
       onChanged();
     },
@@ -518,10 +453,6 @@ function AssetDetailDrawer({
     <Sheet
       open={open}
       onOpenChange={(v) => {
-        if (!v) {
-          setActiveJob(null);
-          setJobFiles([]);
-        }
         // onChanged is deliberately NOT called on close: closing a panel is not
         // a mutation, and refreshing the table behind it made the list flicker
         // every time someone glanced at an asset.
@@ -626,103 +557,6 @@ function AssetDetailDrawer({
               )}
             </section>
 
-            {/* Maintenance */}
-            <section className="rounded-xl border bg-card p-4 space-y-3">
-              <h3 className="text-sm font-semibold">{t("assets.maintenance")}</h3>
-              {asset.maintenance.length === 0 ? (
-                <p className="text-sm text-muted-foreground italic">{t("assets.noMaintenance")}</p>
-              ) : (
-                <ul className="space-y-3">
-                  {asset.maintenance.map((job) => (
-                    <li key={job.uuid} className="rounded-xl border bg-muted/20 p-3.5 text-sm space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium text-foreground">{job.title}</span>
-                        <Badge variant={job.status === "open" ? "outline" : "secondary"} className="shrink-0 text-xs">
-                          {t(`assets.jobStatus.${job.status}`)}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {job.vendor ?? "—"}
-                        {job.cost != null ? ` · ${formatCurrency(job.cost)}` : ""} ·{" "}
-                        {formatDateTime(job.reported_at)}
-                      </p>
-
-                      {job.completion_notes ? (
-                        <p className="whitespace-pre-wrap rounded-md bg-background/80 p-2 text-xs text-muted-foreground border">
-                          {job.completion_notes}
-                        </p>
-                      ) : null}
-
-                      {(job.invoices ?? []).map((inv) => (
-                        <AttachmentRow key={inv.uuid} file={inv} refresh={refreshDetail} />
-                      ))}
-
-                      {activeJob === job.uuid ? (
-                        <div className="mt-3 pt-2 border-t space-y-2">
-                          <FileDropzone
-                            value={jobFiles}
-                            onChange={setJobFiles}
-                            label={t("assets.invoice")}
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            maxFiles={3}
-                          />
-                          <Button
-                            size="sm"
-                            disabled={jobFiles.length === 0 || uploadInvoice.isPending}
-                            onClick={() => uploadInvoice.mutate()}
-                          >
-                            {t("assets.upload")}
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="mt-3 flex flex-wrap gap-2 pt-1 border-t border-border/50">
-                          {job.status === "open" ? (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 text-xs"
-                                onClick={() =>
-                                  closeJob.mutate({ jobUuid: job.uuid, status: "completed" })
-                                }
-                                disabled={closeJob.isPending}
-                              >
-                                {t("assets.markRepaired")}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 text-xs text-muted-foreground"
-                                onClick={() =>
-                                  closeJob.mutate({ jobUuid: job.uuid, status: "cancelled" })
-                                }
-                                disabled={closeJob.isPending}
-                              >
-                                {t("assets.cancelMaintenance")}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 text-xs"
-                                onClick={() => setActiveJob(job.uuid)}
-                              >
-                                {t("assets.addInvoice")}
-                              </Button>
-                            </>
-                          ) : null}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {closeJob.isError ? (
-                <p className="mt-2 text-sm text-destructive">
-                  {apiErrorMessage(closeJob.error, t("assets.actionFailed"))}
-                </p>
-              ) : null}
-            </section>
-
             {/* Receipts */}
             <section className="rounded-xl border bg-card p-4 space-y-3">
               <h3 className="text-sm font-semibold">{t("assets.receipts")}</h3>
@@ -769,9 +603,8 @@ function AssetDetailDrawer({
 /**
  * One attachment inside a list.
  *
- * Wraps AttachmentCard rather than reimplementing it, so the receipts section and
- * the per-job invoices section behave identically: both can preview, download and
- * remove, and neither can render a filename as inert text.
+ * Wraps AttachmentCard rather than reimplementing it, so receipts can preview,
+ * download and remove, and filenames are never inert text.
  *
  * `refresh` is passed down so a removal re-reads the asset and the mutations that
  * follow it are visibly current - deleting a receipt otherwise left the row on
@@ -795,7 +628,7 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 }
 
 // ---------------------------------------------------------------------------
-// Dialogs: create/edit, assign, return, maintenance, retire
+// Dialogs: create/edit, assign, return, retire
 // ---------------------------------------------------------------------------
 
 type AssetForm = {
@@ -900,7 +733,7 @@ function AssetDialog({
     onSuccess: onSaved,
   });
 
-  if (kind === "assign" || kind === "return" || kind === "maintenance" || kind === "retire") {
+  if (kind === "assign" || kind === "return" || kind === "retire") {
     return (
       <ActionDialog
         kind={kind}
@@ -993,7 +826,7 @@ function AssetDialog({
   );
 }
 
-/** The single-click lifecycle transitions: assign, return, maintenance, retire. */
+/** The single-click lifecycle transitions: assign, return, retire. */
 function ActionDialog({
   kind,
   asset,
@@ -1009,9 +842,6 @@ function ActionDialog({
   const [employee, setEmployee] = useState("");
   const [condition, setCondition] = useState("good");
   const [notes, setNotes] = useState("");
-  const [title, setTitle] = useState("");
-  const [vendor, setVendor] = useState("");
-  const [cost, setCost] = useState("");
   const [reason, setReason] = useState("");
   const wasOpen = useRef(false);
 
@@ -1020,9 +850,6 @@ function ActionDialog({
       setEmployee("");
       setCondition("good");
       setNotes("");
-      setTitle("");
-      setVendor("");
-      setCost("");
       setReason("");
     }
     wasOpen.current = true;
@@ -1101,13 +928,6 @@ function ActionDialog({
       if (kind === "return") {
         return assetsService.return(asset.uuid, condition as "good", notes || undefined);
       }
-      if (kind === "maintenance") {
-        return assetsService.reportMaintenance(asset.uuid, {
-          title: title.trim(),
-          vendor: vendor || undefined,
-          cost: cost ? Number(cost) : undefined,
-        });
-      }
       return assetsService.retire(asset.uuid, reason || undefined);
     },
     onSuccess: onDone,
@@ -1116,7 +936,6 @@ function ActionDialog({
   const titles: Record<string, string> = {
     assign: t("assets.assign"),
     return: t("assets.returnAsset"),
-    maintenance: t("assets.sendForMaintenance"),
     retire: t("assets.retire"),
   };
 
@@ -1178,17 +997,8 @@ function ActionDialog({
             >
               <option value="good">{t("assets.condition.good")}</option>
               <option value="damaged">{t("assets.condition.damaged")}</option>
-              <option value="needs_maintenance">{t("assets.condition.needs_maintenance")}</option>
             </select>
           </label>
-          {/* Explains the consequence: a damaged return opens a repair job, which
-              changes the asset's status. Doing that without warning is how a
-              returned item stays broken. */}
-          {condition !== "good" ? (
-            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              {t("assets.conditionOpensMaintenance")}
-            </p>
-          ) : null}
           <label className="block space-y-1 text-sm">
             <span className="font-medium">{t("assets.notes")}</span>
             <textarea
@@ -1196,38 +1006,6 @@ function ActionDialog({
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-            />
-          </label>
-        </>
-      ) : null}
-
-      {kind === "maintenance" ? (
-        <>
-          <label className="block space-y-1 text-sm">
-            <span className="font-medium">{t("assets.jobTitle")}</span>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="font-medium">{t("assets.vendor")}</span>
-            <input
-              value={vendor}
-              onChange={(e) => setVendor(e.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-            />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="font-medium">{t("assets.cost")}</span>
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              value={cost}
-              onChange={(e) => setCost(e.target.value)}
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
             />
           </label>
         </>
