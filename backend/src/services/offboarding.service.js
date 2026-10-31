@@ -813,7 +813,7 @@ export async function completeExit({ orgId, actorUuid, exitUuid, hrNotes, conn =
     throw new ApiError(
       409,
       `Cannot complete the exit: ${assets.count} company asset(s) are still in the employee's custody (${assets.items
-        .map((a) => a.name)
+        .map((a) => a.asset_tag)
         .join(", ")}). Return them first.`,
     );
   }
