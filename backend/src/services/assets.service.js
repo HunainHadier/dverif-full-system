@@ -261,19 +261,12 @@ export async function createAsset({ orgId, actorUuid, data }) {
     );
 
     let assetUuid;
-    try {
-      const [res] = await conn.query(
-        `INSERT INTO assets (${insert.columns.join(", ")}) VALUES (${insert.placeholders.join(", ")})`,
-        insert.params,
-      );
-      const [[row]] = await conn.query("SELECT uuid FROM assets WHERE id=?", [res.insertId]);
-      assetUuid = row.uuid;
-    } catch (e) {
-      if (e.code === "ER_DUP_ENTRY") {
-        throw new ApiError(409, `Asset tag "${tag}" is already used in this organization`);
-      }
-      throw e;
-    }
+    const [res] = await conn.query(
+      `INSERT INTO assets (${insert.columns.join(", ")}) VALUES (${insert.placeholders.join(", ")})`,
+      insert.params,
+    );
+    const [[row]] = await conn.query("SELECT uuid FROM assets WHERE id=?", [res.insertId]);
+    assetUuid = row.uuid;
 
     await conn.commit();
     audit(actorUuid, "asset.create", "asset", assetUuid, orgId);
@@ -305,17 +298,10 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
     );
     if (!update.columns.length) throw new ApiError(400, "No fields to update");
 
-    try {
-      await conn.query(
-        `UPDATE assets ${update.clause} WHERE uuid=? AND organization_id=?`,
-        [...update.params, assetUuid, orgId],
-      );
-    } catch (e) {
-      if (e.code === "ER_DUP_ENTRY") {
-        throw new ApiError(409, "That asset tag is already used in this organization");
-      }
-      throw e;
-    }
+    await conn.query(
+      `UPDATE assets ${update.clause} WHERE uuid=? AND organization_id=?`,
+      [...update.params, assetUuid, orgId],
+    );
 
     await conn.commit();
     audit(actorUuid, "asset.update", "asset", assetUuid, orgId);
@@ -647,7 +633,7 @@ async function employeeForUser(orgId, userUuid) {
  * do I have" wants what is in their hands, and showing a returned laptop as still
  * theirs invites a support ticket about a device they do not have.
  *
- * Only non-sensitive columns are returned: tag, category, model, serial and the
+ * Only non-sensitive columns are returned: asset name and the
  * assignment date. Deliberately NOT purchase_cost or vendor — an employee has no
  * business seeing what the company paid, and including it would make this
  * endpoint a way to read procurement figures.
