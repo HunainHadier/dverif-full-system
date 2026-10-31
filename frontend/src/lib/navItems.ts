@@ -13,7 +13,6 @@ import {
   FileCheck2,
   FileSignature,
   FileText,
-  FolderTree,
   Headset,
   History,
   Hourglass,
@@ -146,9 +145,6 @@ export const orgAdminNavItems: NavItem[] = [
   // read in that order: payroll decides what is paid, expense claims are what
   // reimburses on top of it, and assets is the register of what was bought.
   { to: "/org/expense-claims", labelKey: "nav.expenseClaims", icon: Receipt },
-  // Asset categories sit before inventory because they are the filter the
-  // inventory is read through, and because only an org_admin sees the first one.
-  { to: "/org/asset-categories", labelKey: "nav.assetCategories", icon: FolderTree },
   { to: "/org/assets", labelKey: "nav.assets", icon: Package },
   // Offboarding sits after payroll because the FnF settlement is where the two
   // meet, and next to assets because the clearance checklist is what stands
