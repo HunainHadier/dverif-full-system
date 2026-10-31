@@ -136,7 +136,7 @@ export async function updateLeaveType(req, res) {
   }
 
   const [rows] = await pool.query(
-    "SELECT id, name, days_allowed_per_year, is_paid FROM leave_types WHERE id=?",
+    "SELECT id, name, days_allowed_per_year FROM leave_types WHERE id=?",
     [id]
   );
   logAudit({
