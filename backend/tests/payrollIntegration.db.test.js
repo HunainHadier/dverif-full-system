@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
+import { seedPayrollBaseline } from "./helpers/payrollPolicy.js";
 import {
   computeAutomaticLines,
   getMonthlyAttendanceAndLeaveSummary,
@@ -75,44 +76,6 @@ const WORKING_DAYS = 22;
 const PER_DAY = Math.round((BASIC / WORKING_DAYS) * 100) / 100;
 const HOURLY = Math.round((PER_DAY / 8) * 100) / 100;
 
-/**
- * The organization's payroll policy, seeded in beforeAll.
- *
- * This suite predates organization_payroll_policies and used to run against a
- * hardcoded set of rules baked into payroll.service.js. Those constants were
- * deliberately set to `null` and replaced by per-organization configuration, and
- * getConfiguredPayrollPolicy now refuses to compute anything until an
- * administrator has confirmed a COMPLETE policy - which is why every test in this
- * file failed at `Payroll policy is not configured` before this fixture existed.
- *
- * The values are not arbitrary. Each is the value the surrounding money assertions
- * already assume, made explicit so the fixture cannot silently drift from them:
- *
- *   daily_rate_basis             actual_working_days -> PER_DAY = BASIC / 22
- *   hours_per_workday            8                   -> HOURLY = PER_DAY / 8
- *   overtime_multiplier          1.5                 -> the 1.5 in the overtime test
- *   shift_start_time + grace     09:00 + 30          -> 09:30 cutoff, so the 08:59
- *                                                      check-in is on time and the
- *                                                      09:45 / 10:15 ones are late
- *   late_arrivals_per_penalty    3                   -> the 3-arrival threshold
- *   late_penalty_days            0.5                 -> half a day per threshold hit
- */
-const POLICY = {
-  currency: "PKR",
-  pay_frequency: "monthly",
-  daily_rate_basis: "actual_working_days",
-  hours_per_workday: 8,
-  shift_start_time: "09:00:00",
-  late_grace_minutes: 30,
-  late_arrivals_per_penalty: 3,
-  late_penalty_days: 0.5,
-  overtime_multiplier: 1.5,
-  deduct_unpaid_leave: 1,
-  deduct_absences: 1,
-  deduct_late_arrivals: 1,
-  pay_approved_overtime: 1,
-};
-
 let db;
 let orgId;
 let unpaidTypeId;
@@ -127,35 +90,7 @@ beforeAll(async () => {
     `Payroll Integration ${Date.now()}`,
   ]);
   orgId = org.insertId;
-  await db.query("INSERT INTO work_week_config (organization_id) VALUES (?)", [orgId]);
-
-  // Every policy field must be present and non-null, or the service 409s before it
-  // computes anything. `is_configured = 1` is what marks it as an administrator's
-  // deliberate confirmation rather than an untouched default.
-  await db.query(
-    `INSERT INTO organization_payroll_policies
-       (organization_id, currency, pay_frequency, daily_rate_basis, hours_per_workday,
-        shift_start_time, late_grace_minutes, late_arrivals_per_penalty, late_penalty_days,
-        overtime_multiplier, deduct_unpaid_leave, deduct_absences, deduct_late_arrivals,
-        pay_approved_overtime, is_configured)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
-    [
-      orgId,
-      POLICY.currency,
-      POLICY.pay_frequency,
-      POLICY.daily_rate_basis,
-      POLICY.hours_per_workday,
-      POLICY.shift_start_time,
-      POLICY.late_grace_minutes,
-      POLICY.late_arrivals_per_penalty,
-      POLICY.late_penalty_days,
-      POLICY.overtime_multiplier,
-      POLICY.deduct_unpaid_leave,
-      POLICY.deduct_absences,
-      POLICY.deduct_late_arrivals,
-      POLICY.pay_approved_overtime,
-    ],
-  );
+  await seedPayrollBaseline(db, orgId);
 
   // The paid/unpaid split the whole deduction rule depends on. Both types exist
   // because the interesting assertion is that only ONE of them costs the employee
