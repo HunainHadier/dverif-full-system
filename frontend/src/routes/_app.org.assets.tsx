@@ -115,9 +115,19 @@ function AssetsPage() {
 
   const columns: DataTableColumn<Asset>[] = [
     {
+      key: "asset_tag",
+      header: t("assets.tag"),
+      render: (r) => <span className="font-mono text-xs">{r.asset_tag}</span>,
+    },
+    {
       key: "name",
       header: t("assets.assetName"),
-      render: (r) => <span className="font-medium">{r.name}</span>,
+      render: (r) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium">{r.name}</p>
+          {r.model_details ? <p className="truncate text-xs text-muted-foreground">{r.model_details}</p> : null}
+        </div>
+      ),
     },
     {
       key: "status",
@@ -531,6 +541,7 @@ function AssetDetailDrawer({
       >
         <SheetHeader className="border-b px-6 py-5 text-left bg-card/40">
           <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">{asset?.asset_tag}</span>
             {asset ? (
               <Badge variant={ASSET_STATUS_VARIANT[asset.status]} className="text-xs">
                 {t(`assets.status.${asset.status}`)}
@@ -554,6 +565,7 @@ function AssetDetailDrawer({
                 Asset Information
               </h3>
               <dl className="grid grid-cols-2 gap-4 text-sm">
+                <Detail label={t("assets.serialNumber")}>{asset.serial_number ?? "—"}</Detail>
                 <Detail label={t("assets.purchaseDate")}>
                   {asset.purchase_date ? formatDate(asset.purchase_date) : "—"}
                 </Detail>
@@ -562,6 +574,7 @@ function AssetDetailDrawer({
                 <Detail label={t("assets.warranty")}>
                   {asset.warranty_expires_at ? formatDate(asset.warranty_expires_at) : "—"}
                 </Detail>
+                {asset.model_details ? <Detail label={t("assets.modelDetails")}>{asset.model_details}</Detail> : null}
               </dl>
             </div>
 
