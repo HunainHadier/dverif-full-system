@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
-import { seedPayrollBaseline, seedPayrollPolicy } from "./helpers/payrollPolicy.js";
+import { seedPayrollBaseline, seedPayrollSettings } from "./helpers/payrollPolicy.js";
 
 import {
   createSalaryComponent,
@@ -1153,7 +1153,7 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     const thirdOrgId = third.insertId;
     orgsToPurge.push(thirdOrgId);
     // Settings exist, but no monthly date schedule has been saved.
-    await seedPayrollPolicy(db, thirdOrgId);
+    await seedPayrollSettings(db, thirdOrgId);
     const emp = await newEmployee({
       name: "NoWorkWeek",
       org: thirdOrgId,
