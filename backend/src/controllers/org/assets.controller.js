@@ -16,43 +16,6 @@ import { parsePagination } from "../../utils/pagination.js";
  */
 
 // ---------------------------------------------------------------------------
-// Categories
-// ---------------------------------------------------------------------------
-
-export async function listCategories(req, res) {
-  const includeInactive = req.query.include_inactive === "1" || req.query.include_inactive === "true";
-  return ok(res, await assets.listCategories({ orgId: req.scopeOrgId, includeInactive }), "Categories");
-}
-
-export async function createCategory(req, res) {
-  const category = await assets.createCategory({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    data: req.body ?? {},
-  });
-  return ok(res, { category }, "Category created");
-}
-
-export async function updateCategory(req, res) {
-  const category = await assets.updateCategory({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    categoryUuid: req.params.uuid,
-    data: req.body ?? {},
-  });
-  return ok(res, { category }, "Category updated");
-}
-
-export async function deleteCategory(req, res) {
-  await assets.deleteCategory({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid,
-    categoryUuid: req.params.uuid,
-  });
-  return ok(res, null, "Category deleted");
-}
-
-// ---------------------------------------------------------------------------
 // Inventory
 // ---------------------------------------------------------------------------
 
@@ -65,7 +28,6 @@ export async function listAssets(req, res) {
     offset,
     search: typeof req.query.search === "string" ? req.query.search : undefined,
     status: typeof req.query.status === "string" ? req.query.status : undefined,
-    categoryUuid: typeof req.query.category_uuid === "string" ? req.query.category_uuid : undefined,
   });
   return ok(res, result, "Assets");
 }
