@@ -453,7 +453,7 @@ export async function clearChecklistItem({ orgId, actorUuid, exitUuid, checklist
 export async function getOutstandingAssets({ orgId, employeeUuid, conn = pool }) {
   assertUuid(employeeUuid, "Employee UUID");
   const [rows] = await conn.query(
-    `SELECT a.uuid AS asset_uuid, a.name,
+    `SELECT a.uuid AS asset_uuid, a.asset_tag, a.name, a.serial_number,
             a.status AS asset_status, a.purchase_cost,
             g.uuid AS assignment_uuid, g.assigned_at
        FROM asset_assignments g
@@ -461,13 +461,15 @@ export async function getOutstandingAssets({ orgId, employeeUuid, conn = pool })
       WHERE g.organization_id = ?
         AND g.employee_uuid = ?
         AND g.returned_at IS NULL
-      ORDER BY a.name`,
+      ORDER BY a.asset_tag`,
     [orgId, employeeUuid],
   );
 
   const items = rows.map((r) => ({
     asset_uuid: r.asset_uuid,
+    asset_tag: r.asset_tag,
     name: r.name,
+    serial_number: r.serial_number ?? null,
     asset_status: r.asset_status,
     purchase_cost: r.purchase_cost === null ? null : Number(r.purchase_cost),
     assigned_at: isoDate(r.assigned_at),
@@ -751,11 +753,11 @@ export async function processSettlement({ orgId, actorUuid, exitUuid, target = "
   const assets = await getOutstandingAssets({ orgId, employeeUuid: settlement.employee_uuid, conn });
   if (assets.count > 0) {
     // Named explicitly. "There is an issue with the checklist" sends someone
-    // hunting; the asset name identifies what HR needs returned.
+    // hunting; the asset tag identifies the exact device.
     throw new ApiError(
       409,
       `Cannot ${target} the settlement: ${assets.count} company asset(s) are still in the employee's custody (${assets.items
-        .map((a) => a.name)
+        .map((a) => a.asset_tag)
         .join(", ")}). Return them first.`,
     );
   }
