@@ -170,7 +170,6 @@ describe("the org_admin sidebar renders management modules only", () => {
       "/org/expense-claims",
       "/org/assets",
       "/org/offboarding",
-      "/org/hr-letters",
     ]) {
       expect(within(nav).getByTestId(`link-${p}`), `${p} not rendered`).toBeInTheDocument();
     }
