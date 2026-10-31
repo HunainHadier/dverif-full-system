@@ -28,7 +28,9 @@ describe("monthly attendance payroll calculation", () => {
   it("prorates monthly salary by working days and credits paid leave", () => {
     const result = calc();
     expect(result.payableRatio).toBe(0.9);
-    expect(result.lines.find((line) => line.source === "auto_attendance_proration")?.amount).toBe(3000);
+    expect(result.lines.find((line) => line.source === "auto_unpaid_leave")?.amount).toBe(1500);
+    expect(result.lines.find((line) => line.source === "auto_absenteeism")?.amount).toBe(1500);
+    expect(result.totalDeduction).toBe(3000);
     expect(result.perDayRate).toBe(1500);
   });
 
@@ -40,7 +42,8 @@ describe("monthly attendance payroll calculation", () => {
     });
     expect(result.expectedHours).toBe(160);
     expect(result.payableRatio).toBe(0.85);
-    expect(result.lines.find((line) => line.source === "auto_attendance_proration")?.amount).toBe(4500);
+    expect(result.totalDeduction).toBe(4500);
+    expect(result.lines.find((line) => line.source === "auto_short_hours")?.amount).toBe(1500);
   });
 
   it("pays overtime only when the independent overtime setting is enabled", () => {
