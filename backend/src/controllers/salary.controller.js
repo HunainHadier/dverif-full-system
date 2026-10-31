@@ -665,7 +665,8 @@ export async function previewPayroll(req, res) {
 /** Payroll settings and monthly working/off-day calendar. */
 export async function getPayrollSettings(req, res) {
   const [rows] = await pool.query("SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?", [req.scopeOrgId]);
-  return ok(res, { settings: rows[0] ?? null }, "Payroll settings");
+  const settings = rows[0] ? { ...rows[0], calculate_overtime: Number(rows[0].calculate_overtime) === 1 } : null;
+  return ok(res, { settings }, "Payroll settings");
 }
 
 export async function updatePayrollSettings(req, res) {
