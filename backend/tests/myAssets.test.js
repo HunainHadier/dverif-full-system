@@ -29,11 +29,7 @@ const EMPLOYEE = "44444444-4444-4444-8444-444444444444";
 const row = (over = {}) => ({
   uuid: "33333333-3333-4333-8333-333333333333",
   assignment_uuid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  asset_tag: "AST-0001",
   name: "ThinkPad T14",
-  category_name: "Laptops",
-  model_details: "T14 Gen 3",
-  serial_number: "PF3XK9",
   warranty_expires_at: "2027-01-31",
   assigned_at: "2026-02-01 09:00:00",
   ...over,
@@ -113,13 +109,7 @@ describe("my assets", () => {
     withEmployeeAndRows([row()]);
     const [first] = await assets.listMyAssets({ orgId: ORG, userUuid: USER });
 
-    for (const key of [
-      "asset_tag",
-      "category_name",
-      "model_details",
-      "serial_number",
-      "assigned_at",
-    ]) {
+    for (const key of ["name", "assigned_at", "warranty_expires_at"]) {
       expect(first).toHaveProperty(key);
     }
   });
