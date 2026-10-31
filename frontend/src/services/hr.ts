@@ -189,7 +189,6 @@ export type PayrollPreviewItem = {
     worked_hours: number;
     expected_working_hours: number;
     actual_overtime_hours: number;
-    worked_hours: number;
     absent_days: number;
     late_count: number;
     paid_leave_days: number;
@@ -237,13 +236,13 @@ export type PayrollSettings = {
   overtime_multiplier: number;
 };
 
-export type MonthlyWorkDay = { date: string; schedule_date?: string; day_type: "working" | "off" };
+export type MonthlyWorkDay = { schedule_date: string; day_type: "working" | "off" };
 
 export const orgSalaryService = {
   settings: () => api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings").then((r) => r.data.settings),
   saveSettings: (data: PayrollSettings) => api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
   schedule: (month: number, year: number) => api.get<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", { params: { month, year } }).then((r) => r.data),
-  saveSchedule: (data: { month: number; year: number; days: MonthlyWorkDay[] }) => api.put<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", data).then((r) => r.data),
+  saveSchedule: (data: { month: number; year: number; days: { date: string; day_type: "working" | "off" }[] }) => api.put<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", data).then((r) => r.data),
   list: (
     params: {
       page?: number;
