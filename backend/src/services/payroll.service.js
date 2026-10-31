@@ -200,7 +200,8 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
   assertUuid(employeeUuid, "Employee UUID");
 
   const [rows] = await conn.query(
-    `SELECT lr.start_date, lr.end_date, lt.name AS leave_type, lt.is_paid
+    `SELECT lr.start_date, lr.end_date, lt.name AS leave_type,
+            COALESCE(lr.approved_treatment, lr.requested_treatment, CASE WHEN lt.is_paid='no' THEN 'unpaid' ELSE 'paid' END) AS treatment
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_uuid=?
@@ -215,7 +216,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
   const unpaidDays = new Set();
 
   for (const r of rows) {
-    const target = String(r.is_paid) === "no" ? unpaidDays : paidDays;
+    const target = String(r.treatment) === "unpaid" ? unpaidDays : paidDays;
     // Clamp the request to the month, then step through it inclusively.
     let d = isoDate(r.start_date) < firstDay ? firstDay : isoDate(r.start_date);
     const end = isoDate(r.end_date) > lastDay ? lastDay : isoDate(r.end_date);
