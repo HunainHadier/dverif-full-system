@@ -289,7 +289,7 @@ function EmployeeDetailPage() {
           </CardContent>
         </Card>
       ) : (
-        <Tabs defaultValue="profile" className="space-y-4">
+        <Tabs defaultValue={search.salary === true && isCurrentEmployee(emp.status) ? "payroll" : "profile"} className="space-y-4">
           <TabsList className="h-auto w-full flex-wrap justify-start">
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
