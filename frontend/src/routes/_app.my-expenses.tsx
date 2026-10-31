@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { AlertTriangle, FolderTree, Plus, Receipt, Upload } from "lucide-react";
+import { AlertTriangle, Plus, Receipt, Upload } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -28,8 +28,7 @@ import {
   type ClaimStatus,
   type ExpenseAttachment,
   type ExpenseClaim,
-  type PaymentMode,
-} from "@/services";
+  } from "@/services";
 import { apiErrorMessage, formatCurrency, formatDate } from "@/lib/utils";
 import { usePermissions } from "@/lib/permissions";
 
@@ -83,7 +82,7 @@ function MyExpensesPage() {
               month. Not the filing date — a claim sent in March for a February
               taxi belongs in February. */}
           <p className="text-sm">{formatDate(r.expense_date)}</p>
-          <p className="truncate text-xs text-muted-foreground">{r.category_name ?? "—"}</p>
+          <p className="truncate text-xs text-muted-foreground">{r.expense_name ?? r.category_name ?? "—"}</p>
         </div>
       ),
     },
@@ -199,11 +198,9 @@ function MyExpensesPage() {
 // ---------------------------------------------------------------------------
 
 type ClaimForm = {
-  category_uuid: string;
   amount: string;
   expense_date: string;
   description: string;
-  payment_mode: PaymentMode;
 };
 
 function NewClaimDialog({
@@ -221,11 +218,9 @@ function NewClaimDialog({
 
   const form = useForm<ClaimForm>({
     defaultValues: {
-      category_uuid: "",
       amount: "",
       expense_date: today,
       description: "",
-      payment_mode: "payroll",
     },
   });
   const { reset } = form;
@@ -247,79 +242,21 @@ function NewClaimDialog({
    */
   const [autoApprove, setAutoApprove] = useState(false);
 
-  /*
-   * MY categories, through MY route.
-   *
-   * This used to call `expenseCategoriesService.list(false)` — i.e.
-   * GET /org/expense-categories — which is gated on org_admin/sub_admin plus
-   * approve_expenses. A person on the roster is neither, so it 403'd, `data` stayed
-   * undefined, and the dropdown rendered the empty state: "No categories found.
-   * Create a new category first." Both halves were wrong. The categories existed,
-   * and the page it pointed at is one they cannot open.
-   *
-   * The key is deliberately its own. Sharing ["expense-categories"] with the staff
-   * page would let one tab's cache answer the other's query — and the two routes
-   * have different permissions, so a cached staff answer could render here.
-   */
-  const categories = useQuery({
-    queryKey: ["my-expense-categories"],
-    queryFn: () => myExpensesService.categories(),
-    enabled: open,
-  });
-
   // Reset on the closed -> open transition, so a claim started and abandoned does
   // not leave stale amounts behind for the next one.
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
       reset({
-        category_uuid: "",
         amount: "",
         expense_date: today,
         description: "",
-        payment_mode: "payroll",
       });
       setReceipt(null);
       setAutoApprove(false);
     }
     wasOpen.current = open;
   }, [open, reset, today]);
-
-  const selected = (categories.data ?? []).find((c) => c.uuid === form.watch("category_uuid"));
-  const limit = selected?.max_limit_per_claim ?? null;
-  const amountValue = Number(form.watch("amount"));
-  const overLimit = limit !== null && amountValue > 0 && amountValue > limit;
-
-  /*
-   * THE EMPTY CATEGORY LIST, said out loud.
-   *
-   * A dropdown that shows only its placeholder is indistinguishable from a
-   * loading one, and an employee with no categories has no way to file anything
-   * and no way to know why. So the empty case states the problem and, for
-   * someone who can create one, links to where that happens.
-   *
-   * The link is gated on the SAME permission the backend enforces on
-   * POST /org/expense-categories - `approve_expenses`. Showing an unauthorized
-   * employee a "create a category" link would hand them a 403 and imply they had
-   * lost some privilege, when in fact they were never going to be allowed it.
-   */
-  /*
-   * A FAILED request is not an empty list, and must not be reported as one.
-   *
-   * `categoriesEmpty` deliberately excludes the error case. A dropdown with nothing
-   * in it looks identical either way, so conflating them is how a permissions
-   * fault presents itself as a data problem: a 403 left `data` undefined, the
-   * control looked empty, and the page told the person filing that their company
-   * had no categories and to go create one. Telling someone to fix a permissions
-   * fault by editing data is worse than showing nothing, because they will do it
-   * and it will not help. Retry is the only action that can, so it is the only one
-   * offered here.
-   */
-  const categoriesFailed = categories.isError;
-  const categoriesEmpty =
-    !categories.isLoading && !categoriesFailed && (categories.data ?? []).length === 0;
-
-  const canManageCategories = perms.isOrgAdmin || perms.approve_expenses === true;
 
   // Advisory only. The server re-checks both of these, and it is the server's
   // answer that counts — this exists so the employee finds out before a round trip.
@@ -349,11 +286,9 @@ function NewClaimDialog({
   const submit = useMutation({
     mutationFn: async (values: ClaimForm) => {
       const created = await myExpensesService.create({
-        category_uuid: values.category_uuid,
         amount: Number(values.amount),
         expense_date: values.expense_date,
         description: values.description.trim() || undefined,
-        payment_mode: values.payment_mode,
         auto_approve: autoApprove || undefined,
       });
 
@@ -399,76 +334,6 @@ function NewClaimDialog({
       onSubmit={(values) => submit.mutateAsync(values)}
       form={form}
     >
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.category")}</span>
-        <select
-          {...form.register("category_uuid", { required: t("expenses.category") })}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-        >
-          <option value="">{t("expenses.chooseCategory")}</option>
-          {(categories.data ?? []).map((c) => (
-            <option key={c.uuid} value={c.uuid}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        {/* The receipt requirement is stated the moment a category is chosen, not
-            at approval time. An employee who only learns a receipt was required
-            after they have been rejected has to do the work twice. */}
-        {selected?.requires_receipt ? (
-          <span className="block text-xs text-muted-foreground">
-            {t("expenses.requiresReceipt")}
-          </span>
-        ) : null}
-        {selected?.description ? (
-          <span className="block text-xs text-muted-foreground">{selected.description}</span>
-        ) : null}
-      </label>
-
-      {/*
-       * THE EMPTY CATEGORY LIST.
-       *
-       * A dropdown showing only its placeholder is indistinguishable from one
-       * that is still loading, and an employee with no categories cannot file
-       * anything and has no way to find out why. This states the problem, and
-       * offers the shortcut to the page that fixes it — but only to someone the
-       * backend would actually let create one, because offering a control that
-       * answers 403 is worse than not offering it.
-       */}
-      {categoriesFailed ? (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
-          <p className="text-xs text-destructive">
-            {t("expenses.categoriesLoadFailed")}
-          </p>
-          <button
-            type="button"
-            onClick={() => void categories.refetch()}
-            className="mt-1 text-xs font-medium text-primary underline underline-offset-2"
-          >
-            {t("expenses.retryLoadCategories")}
-          </button>
-        </div>
-      ) : null}
-
-      {categoriesEmpty ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-          <p className="text-xs text-amber-700 dark:text-amber-500">
-            {t("expenses.noCategoriesFound")}
-          </p>
-          {canManageCategories ? (
-            <Link
-              to="/org/expense-claims"
-              search={{ manageCategories: true }}
-              className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
-              onClick={() => onOpenChange(false)}
-            >
-              <FolderTree className="h-3.5 w-3.5" aria-hidden="true" />
-              {t("expenses.createCategoryShortcut")}
-            </Link>
-          ) : null}
-        </div>
-      ) : null}
-
       <label className="block space-y-1 text-sm">
         <span className="font-medium">{t("expenses.amount")}</span>
         <input
@@ -541,7 +406,7 @@ function NewClaimDialog({
        * The advisory-note the dropzone replaces still exists further down for the
        * claims that do NOT require one, where attaching a receipt is optional.
        */}
-      {selected?.requires_receipt ? (
+      {true ? (
         <FileDropzone
           value={receipt ? [receipt] : []}
           onChange={(files) => setReceipt(files[0] ?? null)}
