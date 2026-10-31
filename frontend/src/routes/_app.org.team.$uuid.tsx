@@ -56,6 +56,8 @@ import {
   resolveAssetUrl,
 } from "@/lib/utils";
 import { DverifLoader } from "@/components/common/DvarifLoader";
+import { EmployeeLettersPanel } from "@/components/hr/EmployeeLettersPanel";
+import { canAccessRoute } from "@/lib/routeAccess";
 
 export const Route = createFileRoute("/_app/org/team/$uuid")({
   validateSearch: (search: Record<string, unknown>): { edit?: boolean; salary?: boolean } => ({
@@ -112,6 +114,8 @@ function EmployeeDetailPage() {
   const search = useSearch({ from: "/_app/org/team/$uuid" });
   const qc = useQueryClient();
   const [editing, setEditing] = useState(search.edit === true);
+  const [activeTab, setActiveTab] = useState<"profile" | "documents" | "payroll" | "letters">(search.salary ? "payroll" : "profile");
+  const { user } = useAuth();
   const perms = usePermissions();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
 
@@ -287,45 +291,74 @@ function EmployeeDetailPage() {
           </CardContent>
         </Card>
       ) : (
-        <DisplayContent
-          key={emp?.uuid}
-          emp={emp}
-          editing={editing}
-          form={form}
-          setForm={setForm}
-          original={original}
-          designationsQ={designationsQ}
-          departmentsQ={departmentsQ}
-          managersQ={managersQ}
-          onManageOptions={setManageType}
-        />
-      )}
+        <>
+          <div role="tablist" aria-label="Employee sections" className="flex flex-wrap gap-2 border-b border-border">
+            {([
+              ["profile", "Profile"],
+              ["documents", "Documents"],
+              ...(isCurrentEmployee(emp.status) ? [["payroll", "Payroll"] as const] : []),
+              ...(canAccessRoute(user, "/org/hr-letters") && !isModuleFlagOff("hr_letters_management") ? [["letters", "Letters"] as const] : []),
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === key}
+                onClick={() => { setActiveTab(key); if (key !== "profile") setEditing(false); }}
+                className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
-      {emp && (
-        <DocumentsCard
-          uuid={uuid}
-          docs={docs}
-          docsQ={docsQ}
-          editing={editing}
-          stagedDocs={stagedDocs}
-          setStagedDocs={setStagedDocs}
-          onUpload={() => uploadDocsMut.mutate()}
-          uploading={uploadDocsMut.isPending}
-        />
-      )}
+          {activeTab === "profile" && (
+            <DisplayContent
+              key={emp.uuid}
+              emp={emp}
+              editing={editing}
+              form={form}
+              setForm={setForm}
+              original={original}
+              designationsQ={designationsQ}
+              departmentsQ={departmentsQ}
+              managersQ={managersQ}
+              onManageOptions={setManageType}
+            />
+          )}
 
-      {/* Payroll cards are hidden for ex-employees: they have no current salary to
-          manage. 'inactive' (deactivated) still gets them — they remain on the
-          roster. This is why isCurrentEmployee, not a bare status check. */}
-      {emp && isCurrentEmployee(emp.status) && (
-        isModuleFlagOff("payroll_management") ? (
-          <ModuleFeatureLockedCard feature="payroll_management" />
-        ) : (
-          <>
-            <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
-            <SalaryComponentsCard uuid={uuid} />
-          </>
-        )
+          {activeTab === "documents" && (
+            <DocumentsCard
+              uuid={uuid}
+              docs={docs}
+              docsQ={docsQ}
+              editing={editing}
+              stagedDocs={stagedDocs}
+              setStagedDocs={setStagedDocs}
+              onUpload={() => uploadDocsMut.mutate()}
+              uploading={uploadDocsMut.isPending}
+            />
+          )}
+
+          {activeTab === "payroll" && isCurrentEmployee(emp.status) && (
+            isModuleFlagOff("payroll_management") ? (
+              <ModuleFeatureLockedCard feature="payroll_management" />
+            ) : (
+              <div className="space-y-6">
+                <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
+                <SalaryComponentsCard uuid={uuid} />
+              </div>
+            )
+          )}
+
+          {activeTab === "letters" && canAccessRoute(user, "/org/hr-letters") && (
+            isModuleFlagOff("hr_letters_management") ? (
+              <ModuleFeatureLockedCard feature="hr_letters_management" />
+            ) : (
+              <EmployeeLettersPanel employeeUuid={uuid} />
+            )
+          )}
+        </>
       )}
 
       {/* One dialog for both lists, mounted once for the page rather than per row,
