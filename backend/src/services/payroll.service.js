@@ -390,23 +390,48 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
     payableRatio: 0, skipReason: workingDays <= 0 ? "no_working_days" : "no_basic_salary",
     method, expectedHours, workedHours: Number(summary.workedHours || 0),
   };
-  let payableRatio = 1;
-  if (method === "hours") {
-    const creditedHours = Number(summary.workedHours || 0) + paidLeaveDays * shiftHours;
-    payableRatio = expectedHours > 0 ? Math.min(1, creditedHours / expectedHours) : 0;
-  } else {
-    const payableDays = attendedDays + paidLeaveDays;
-    payableRatio = workingDays > 0 ? Math.min(1, payableDays / workingDays) : 0;
-  }
-  const proratedBasic = money(basic * payableRatio);
-  const baseDeduction = money(Math.max(0, basic - proratedBasic));
-  if (baseDeduction > 0) lines.push({
-    label: method === "hours" ? "Attendance and unpaid time adjustment" : "Attendance and unpaid leave adjustment",
-    type: "deduction", source: "auto_attendance_proration", amount: baseDeduction,
-    basis_value: method === "hours" ? Number(summary.workedHours || 0) : attendedDays + paidLeaveDays,
-    basis_unit: method === "hours" ? "hours" : "days",
-  });
+
+  const perDayRate = money(basic / workingDays);
   const hourlyRate = expectedHours > 0 ? money(basic / expectedHours) : 0;
+  let payableRatio = 1;
+
+  if (method === "days") {
+    const payableDays = Math.min(workingDays, attendedDays + paidLeaveDays);
+    payableRatio = payableDays / workingDays;
+    if (unpaidLeaveDays > 0) lines.push({
+      label: `Unpaid leave (${unpaidLeaveDays} day(s) x ${perDayRate})`,
+      type: "deduction", source: "auto_unpaid_leave",
+      amount: money(perDayRate * unpaidLeaveDays), basis_value: unpaidLeaveDays, basis_unit: "days",
+    });
+    if (absentDays > 0) lines.push({
+      label: `Absence (${absentDays} day(s) x ${perDayRate})`,
+      type: "deduction", source: "auto_absenteeism",
+      amount: money(perDayRate * absentDays), basis_value: absentDays, basis_unit: "days",
+    });
+  } else {
+    const workedHours = Number(summary.workedHours || 0);
+    const creditedHours = workedHours + paidLeaveDays * shiftHours;
+    payableRatio = Math.min(1, creditedHours / expectedHours);
+    const unpaidAmount = money(hourlyRate * shiftHours * unpaidLeaveDays);
+    const absenceAmount = money(hourlyRate * shiftHours * absentDays);
+    if (unpaidAmount > 0) lines.push({
+      label: `Unpaid leave (${unpaidLeaveDays} day(s), ${unpaidLeaveDays * shiftHours} hours)`,
+      type: "deduction", source: "auto_unpaid_leave",
+      amount: unpaidAmount, basis_value: unpaidLeaveDays * shiftHours, basis_unit: "hours",
+    });
+    if (absenceAmount > 0) lines.push({
+      label: `Absence (${absentDays} day(s), ${absentDays * shiftHours} hours)`,
+      type: "deduction", source: "auto_absenteeism",
+      amount: absenceAmount, basis_value: absentDays * shiftHours, basis_unit: "hours",
+    });
+    const shortHours = Math.max(0, expectedHours - creditedHours - unpaidLeaveDays * shiftHours - absentDays * shiftHours);
+    if (shortHours > 0) lines.push({
+      label: `Short working hours (${money(shortHours)} hours)`,
+      type: "deduction", source: "auto_short_hours",
+      amount: money(hourlyRate * shortHours), basis_value: money(shortHours), basis_unit: "hours",
+    });
+  }
+
   const overtimeHours = Number(policy.calculate_overtime) === 1 ? Number(summary.approvedOvertimeHours || 0) : 0;
   const multiplier = Number(policy.overtime_multiplier || 1.5);
   if (overtimeHours > 0 && hourlyRate > 0) lines.push({
@@ -417,11 +442,10 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const totalDeduction = money(lines.filter((l) => l.type === "deduction").reduce((sum, line) => sum + line.amount, 0));
   const totalAddition = money(lines.filter((l) => l.type === "earning").reduce((sum, line) => sum + line.amount, 0));
   return {
-    lines, perDayRate: workingDays ? money(basic / workingDays) : 0, hourlyRate,
-    perDayHours: shiftHours, totalDeduction, totalAddition, workingDays,
-    divisor: method === "hours" ? expectedHours : workingDays,
-    payableRatio, skipReason: workingDays <= 0 ? "no_working_days" : basic <= 0 ? "no_basic_salary" : null,
-    method, expectedHours, workedHours: Number(summary.workedHours || 0),
+    lines, perDayRate, hourlyRate, perDayHours: shiftHours, totalDeduction, totalAddition,
+    workingDays, divisor: method === "hours" ? expectedHours : workingDays,
+    payableRatio, skipReason: null, method, expectedHours,
+    workedHours: Number(summary.workedHours || 0),
   };
 }
 
