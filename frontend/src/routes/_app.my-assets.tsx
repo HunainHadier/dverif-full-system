@@ -36,36 +36,9 @@ function MyAssetsPage() {
 
   const columns: DataTableColumn<MyAsset>[] = [
     {
-      key: "asset_tag",
-      header: t("assets.tag"),
-      render: (r) => <span className="font-mono text-xs">{r.asset_tag}</span>,
-    },
-    {
       key: "name",
       header: t("assets.assetName"),
-      render: (r) => (
-        <div className="min-w-0">
-          <p className="truncate font-medium">{r.name}</p>
-          {r.model_details ? (
-            <p className="truncate text-xs text-muted-foreground">{r.model_details}</p>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      key: "category_name",
-      header: t("assets.category"),
-      render: (r) => (
-        <span className="text-sm text-muted-foreground">{r.category_name ?? "—"}</span>
-      ),
-    },
-    {
-      // The serial is what an employee quotes when reporting a fault or asking
-      // whether a replacement is the same machine, so it gets its own column
-      // rather than being buried in the details.
-      key: "serial_number",
-      header: t("assets.serialNumber"),
-      render: (r) => <span className="font-mono text-xs">{r.serial_number ?? "—"}</span>,
+      render: (r) => <span className="font-medium">{r.name}</span>,
     },
     {
       key: "assigned_at",
