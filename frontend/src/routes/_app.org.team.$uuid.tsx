@@ -345,7 +345,7 @@ function EmployeeDetailPage() {
             </TabsContent>
           )}
 
-          {!isModuleFlagOff("hr_letters_management") && (
+          {perms.hr_letters && !isModuleFlagOff("hr_letters_management") && (
             <TabsContent value="letters">
               <EmployeeLettersCard employeeUuid={uuid} employeeName={emp.full_name} />
             </TabsContent>
