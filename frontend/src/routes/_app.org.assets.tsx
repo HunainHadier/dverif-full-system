@@ -452,7 +452,7 @@ function AssetDetailDrawer({
     // corner. That is the shape this was always meant to be.
     <Sheet
       open={open}
-      onOpenChange={(v) => {
+      onOpenChange={() => {
         // onChanged is deliberately NOT called on close: closing a panel is not
         // a mutation, and refreshing the table behind it made the list flicker
         // every time someone glanced at an asset.
