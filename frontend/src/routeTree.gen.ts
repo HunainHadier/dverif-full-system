@@ -23,6 +23,7 @@ import { Route as AppInboxRouteImport } from './routes/_app.inbox'
 import { Route as AppLeavesRouteImport } from './routes/_app.leaves'
 import { Route as AppMyAssetsRouteImport } from './routes/_app.my-assets'
 import { Route as AppMyExpensesRouteImport } from './routes/_app.my-expenses'
+import { Route as AppMyInterviewsRouteImport } from './routes/_app.my-interviews'
 import { Route as AppMyLettersRouteImport } from './routes/_app.my-letters'
 import { Route as AppMyResignationRouteImport } from './routes/_app.my-resignation'
 import { Route as AppPaymentsRouteImport } from './routes/_app.payments'
@@ -63,7 +64,6 @@ import { Route as AppAdminSupportIndexRouteImport } from './routes/_app.admin.su
 import { Route as AppAdminSupportUuidRouteImport } from './routes/_app.admin.support.$uuid'
 import { Route as AppOrgRecruitmentCandidatesRouteImport } from './routes/_app.org.recruitment.candidates'
 import { Route as AppOrgRecruitmentInterviewsRouteImport } from './routes/_app.org.recruitment.interviews'
-import { Route as AppMyInterviewsRouteImport } from './routes/_app.my-interviews'
 import { Route as AppOrgRecruitmentOffersRouteImport } from './routes/_app.org.recruitment.offers'
 import { Route as AppOrgRecruitmentOpeningsRouteImport } from './routes/_app.org.recruitment.openings'
 import { Route as AppOrgRecruitmentPipelineRouteImport } from './routes/_app.org.recruitment.pipeline'
@@ -141,14 +141,14 @@ const AppMyExpensesRoute = AppMyExpensesRouteImport.update({
   path: '/my-expenses',
   getParentRoute: () => AppRoute,
 } as any)
-const AppMyLettersRoute = AppMyLettersRouteImport.update({
-  id: '/my-letters',
-  path: '/my-letters',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppMyInterviewsRoute = AppMyInterviewsRouteImport.update({
   id: '/my-interviews',
   path: '/my-interviews',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMyLettersRoute = AppMyLettersRouteImport.update({
+  id: '/my-letters',
+  path: '/my-letters',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMyResignationRoute = AppMyResignationRouteImport.update({
@@ -402,8 +402,8 @@ export interface FileRoutesByFullPath {
   '/leaves': typeof AppLeavesRoute
   '/my-assets': typeof AppMyAssetsRoute
   '/my-expenses': typeof AppMyExpensesRoute
-  '/my-letters': typeof AppMyLettersRoute
   '/my-interviews': typeof AppMyInterviewsRoute
+  '/my-letters': typeof AppMyLettersRoute
   '/my-resignation': typeof AppMyResignationRoute
   '/payments': typeof AppPaymentsRoute
   '/payroll': typeof AppPayrollRoute
@@ -465,8 +465,8 @@ export interface FileRoutesByTo {
   '/leaves': typeof AppLeavesRoute
   '/my-assets': typeof AppMyAssetsRoute
   '/my-expenses': typeof AppMyExpensesRoute
-  '/my-letters': typeof AppMyLettersRoute
   '/my-interviews': typeof AppMyInterviewsRoute
+  '/my-letters': typeof AppMyLettersRoute
   '/my-resignation': typeof AppMyResignationRoute
   '/payments': typeof AppPaymentsRoute
   '/payroll': typeof AppPayrollRoute
@@ -527,8 +527,8 @@ export interface FileRoutesById {
   '/_app/leaves': typeof AppLeavesRoute
   '/_app/my-assets': typeof AppMyAssetsRoute
   '/_app/my-expenses': typeof AppMyExpensesRoute
-  '/_app/my-letters': typeof AppMyLettersRoute
   '/_app/my-interviews': typeof AppMyInterviewsRoute
+  '/_app/my-letters': typeof AppMyLettersRoute
   '/_app/my-resignation': typeof AppMyResignationRoute
   '/_app/payments': typeof AppPaymentsRoute
   '/_app/payroll': typeof AppPayrollRoute
@@ -592,8 +592,8 @@ export interface FileRouteTypes {
     | '/leaves'
     | '/my-assets'
     | '/my-expenses'
-    | '/my-letters'
     | '/my-interviews'
+    | '/my-letters'
     | '/my-resignation'
     | '/payments'
     | '/payroll'
@@ -655,6 +655,7 @@ export interface FileRouteTypes {
     | '/leaves'
     | '/my-assets'
     | '/my-expenses'
+    | '/my-interviews'
     | '/my-letters'
     | '/my-resignation'
     | '/payments'
@@ -715,8 +716,8 @@ export interface FileRouteTypes {
     | '/_app/leaves'
     | '/_app/my-assets'
     | '/_app/my-expenses'
-    | '/_app/my-letters'
     | '/_app/my-interviews'
+    | '/_app/my-letters'
     | '/_app/my-resignation'
     | '/_app/payments'
     | '/_app/payroll'
@@ -878,6 +879,13 @@ declare module '@tanstack/react-router' {
       path: '/my-expenses'
       fullPath: '/my-expenses'
       preLoaderRoute: typeof AppMyExpensesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/my-interviews': {
+      id: '/_app/my-interviews'
+      path: '/my-interviews'
+      fullPath: '/my-interviews'
+      preLoaderRoute: typeof AppMyInterviewsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/my-letters': {
@@ -1262,8 +1270,8 @@ interface AppRouteChildren {
   AppLeavesRoute: typeof AppLeavesRoute
   AppMyAssetsRoute: typeof AppMyAssetsRoute
   AppMyExpensesRoute: typeof AppMyExpensesRoute
-  AppMyLettersRoute: typeof AppMyLettersRoute
   AppMyInterviewsRoute: typeof AppMyInterviewsRoute
+  AppMyLettersRoute: typeof AppMyLettersRoute
   AppMyResignationRoute: typeof AppMyResignationRoute
   AppPaymentsRoute: typeof AppPaymentsRoute
   AppPayrollRoute: typeof AppPayrollRoute
@@ -1309,8 +1317,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppLeavesRoute: AppLeavesRoute,
   AppMyAssetsRoute: AppMyAssetsRoute,
   AppMyExpensesRoute: AppMyExpensesRoute,
-  AppMyLettersRoute: AppMyLettersRoute,
   AppMyInterviewsRoute: AppMyInterviewsRoute,
+  AppMyLettersRoute: AppMyLettersRoute,
   AppMyResignationRoute: AppMyResignationRoute,
   AppPaymentsRoute: AppPaymentsRoute,
   AppPayrollRoute: AppPayrollRoute,
