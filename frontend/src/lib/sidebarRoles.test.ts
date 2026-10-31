@@ -87,6 +87,7 @@ describe("staff primary menu is management only", () => {
     ["sub_admin", staff],
   ])("%s sees no ROSTER-ONLY link, because they have no employee record", (_role, u) => {
     const shown = paths(primaryNavItemsFor(u.org_role));
+    expect(shown).not.toContain("/org/hr-letters");
     // /my-assets, /my-expenses and /my-resignation resolve the caller to an employee
     // row, and a manager has none — `callerEmployee` returns null and the handler
     // answers with an EMPTY list rather than a 403. So these are not features for
