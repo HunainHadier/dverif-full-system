@@ -74,7 +74,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("asset creation", () => {
-  it("creates an asset by name without category or legacy metadata", async () => {
+  it("creates an asset by name without category input", async () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
       const statement = String(sql);
