@@ -160,7 +160,8 @@ describe.skipIf(!reachable)("assign -> /my/assets, against a real database", () 
       expect(rows[0]).toMatchObject({
         uuid: assetUuid,
       });
-      expect(rows[0].name).toBe("ThinkPad");
+      expect(rows[0]).toMatchObject({ name: "ThinkPad", model_details: "T14 Gen 3", serial_number: "SN-IT-1" });
+      expect(rows[0].asset_tag).toBeTruthy();
       expect(rows[0].assigned_at).toBeTruthy();
     } finally {
       await cleanup(seed);
