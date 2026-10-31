@@ -1003,6 +1003,10 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
       allocations: [{ typeId: unpaidTypeId, days: 10 }],
     });
     await attendAll(emp.uuid, ["2026-10-06", "2026-10-07"]);
+    await db.query(
+      "UPDATE attendance_records SET check_out_at='2026-10-20 19:00:00' WHERE employee_uuid=? AND date='2026-10-20'",
+      [emp.uuid],
+    );
     await approveLeaveDirect(emp.uuid, unpaidTypeId, "2026-10-06", "2026-10-07");
 
     const transport = await createComponent({
@@ -1038,9 +1042,9 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(p.attendance.attended_days).toBe(20);
     expect(p.attendance.absent_days).toBe(0);
     expect(p.attendance.unpaid_leave_days).toBe(2);
-    expect(p.attendance.approved_overtime_hours).toBe(6);
+    expect(p.attendance.approved_overtime_hours).toBe(2);
 
-    const expectedOvertime = money(HOURLY * 1.5 * 6);
+    const expectedOvertime = money(HOURLY * 1.5 * 2);
     expect(Number(p.allowances)).toBe(money(8000 + expectedOvertime));
     expect(Number(p.deductions)).toBe(money(1000 + PER_DAY * 2));
     expect(Number(p.net_salary)).toBe(
@@ -1080,7 +1084,7 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(Number(leaveLine.basis_value)).toBe(2);
     expect(leaveLine.basis_unit).toBe("days");
     const overtimeLine = lines.find((l) => l.source === "auto_overtime");
-    expect(Number(overtimeLine.basis_value)).toBe(6);
+    expect(Number(overtimeLine.basis_value)).toBe(2);
     expect(overtimeLine.basis_unit).toBe("hours");
 
     // A second generate for the same employee/period is refused, not duplicated.
