@@ -518,7 +518,7 @@ it("refuses to settle when the organization has NO working days", async () => {
 
     try {
       await db.query(
-        "UPDATE work_week_config SET mon=0,tue=0,wed=0,thu=0,fri=0,sat=0,sun=0 WHERE organization_id=?",
+        "UPDATE organization_monthly_work_schedules SET day_type='off' WHERE organization_id=?",
         [orgId],
       );
 
@@ -539,7 +539,7 @@ it("refuses to settle when the organization has NO working days", async () => {
       // inherited an all-zero work week and failed for the wrong reason - which is
       // how one test turned into ten unrelated-looking failures.
       await db.query(
-        "UPDATE work_week_config SET mon=1,tue=1,wed=1,thu=1,fri=1,sat=0,sun=0 WHERE organization_id=?",
+        "UPDATE organization_monthly_work_schedules SET day_type=CASE WHEN DAYOFWEEK(schedule_date) IN (1,7) THEN 'off' ELSE 'working' END WHERE organization_id=?",
         [orgId],
       );
     }
