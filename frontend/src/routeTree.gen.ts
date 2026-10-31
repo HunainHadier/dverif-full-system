@@ -46,7 +46,6 @@ import { Route as AppAdminUnresponsiveRouteImport } from './routes/_app.admin.un
 import { Route as AppAdminUsersRouteImport } from './routes/_app.admin.users'
 import { Route as AppAutoVerifiedUuidRouteImport } from './routes/_app.auto-verified_.$uuid'
 import { Route as AppOrgAdminsRouteImport } from './routes/_app.org.admins'
-import { Route as AppOrgAssetCategoriesRouteImport } from './routes/_app.org.asset-categories'
 import { Route as AppOrgAssetsRouteImport } from './routes/_app.org.assets'
 import { Route as AppOrgAttendanceRouteImport } from './routes/_app.org.attendance'
 import { Route as AppOrgExpenseClaimsRouteImport } from './routes/_app.org.expense-claims'
@@ -258,11 +257,6 @@ const AppOrgAdminsRoute = AppOrgAdminsRouteImport.update({
   path: '/org/admins',
   getParentRoute: () => AppRoute,
 } as any)
-const AppOrgAssetCategoriesRoute = AppOrgAssetCategoriesRouteImport.update({
-  id: '/org/asset-categories',
-  path: '/org/asset-categories',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppOrgAssetsRoute = AppOrgAssetsRouteImport.update({
   id: '/org/assets',
   path: '/org/assets',
@@ -425,7 +419,6 @@ export interface FileRoutesByFullPath {
   '/admin/users': typeof AppAdminUsersRoute
   '/auto-verified/$uuid': typeof AppAutoVerifiedUuidRoute
   '/org/admins': typeof AppOrgAdminsRoute
-  '/org/asset-categories': typeof AppOrgAssetCategoriesRoute
   '/org/assets': typeof AppOrgAssetsRoute
   '/org/attendance': typeof AppOrgAttendanceRoute
   '/org/expense-claims': typeof AppOrgExpenseClaimsRoute
@@ -487,7 +480,6 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AppAdminUsersRoute
   '/auto-verified/$uuid': typeof AppAutoVerifiedUuidRoute
   '/org/admins': typeof AppOrgAdminsRoute
-  '/org/asset-categories': typeof AppOrgAssetCategoriesRoute
   '/org/assets': typeof AppOrgAssetsRoute
   '/org/attendance': typeof AppOrgAttendanceRoute
   '/org/expense-claims': typeof AppOrgExpenseClaimsRoute
@@ -550,7 +542,6 @@ export interface FileRoutesById {
   '/_app/admin/users': typeof AppAdminUsersRoute
   '/_app/auto-verified_/$uuid': typeof AppAutoVerifiedUuidRoute
   '/_app/org/admins': typeof AppOrgAdminsRoute
-  '/_app/org/asset-categories': typeof AppOrgAssetCategoriesRoute
   '/_app/org/assets': typeof AppOrgAssetsRoute
   '/_app/org/attendance': typeof AppOrgAttendanceRoute
   '/_app/org/expense-claims': typeof AppOrgExpenseClaimsRoute
@@ -615,7 +606,6 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/auto-verified/$uuid'
     | '/org/admins'
-    | '/org/asset-categories'
     | '/org/assets'
     | '/org/attendance'
     | '/org/expense-claims'
@@ -677,7 +667,6 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/auto-verified/$uuid'
     | '/org/admins'
-    | '/org/asset-categories'
     | '/org/assets'
     | '/org/attendance'
     | '/org/expense-claims'
@@ -739,7 +728,6 @@ export interface FileRouteTypes {
     | '/_app/admin/users'
     | '/_app/auto-verified_/$uuid'
     | '/_app/org/admins'
-    | '/_app/org/asset-categories'
     | '/_app/org/assets'
     | '/_app/org/attendance'
     | '/_app/org/expense-claims'
@@ -1042,13 +1030,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOrgAdminsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/org/asset-categories': {
-      id: '/_app/org/asset-categories'
-      path: '/org/asset-categories'
-      fullPath: '/org/asset-categories'
-      preLoaderRoute: typeof AppOrgAssetCategoriesRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/org/assets': {
       id: '/_app/org/assets'
       path: '/org/assets'
@@ -1289,7 +1270,6 @@ interface AppRouteChildren {
   AppAdminUsersRoute: typeof AppAdminUsersRoute
   AppAutoVerifiedUuidRoute: typeof AppAutoVerifiedUuidRoute
   AppOrgAdminsRoute: typeof AppOrgAdminsRoute
-  AppOrgAssetCategoriesRoute: typeof AppOrgAssetCategoriesRoute
   AppOrgAssetsRoute: typeof AppOrgAssetsRoute
   AppOrgAttendanceRoute: typeof AppOrgAttendanceRoute
   AppOrgExpenseClaimsRoute: typeof AppOrgExpenseClaimsRoute
@@ -1336,7 +1316,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppAdminUsersRoute: AppAdminUsersRoute,
   AppAutoVerifiedUuidRoute: AppAutoVerifiedUuidRoute,
   AppOrgAdminsRoute: AppOrgAdminsRoute,
-  AppOrgAssetCategoriesRoute: AppOrgAssetCategoriesRoute,
   AppOrgAssetsRoute: AppOrgAssetsRoute,
   AppOrgAttendanceRoute: AppOrgAttendanceRoute,
   AppOrgExpenseClaimsRoute: AppOrgExpenseClaimsRoute,

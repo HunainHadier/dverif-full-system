@@ -208,7 +208,6 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
 
   // --- Assets ------------------------------------------------------------------
   // Two different gates on purpose, mirroring the backend's assetMgmt versus
-  // assetCategoryMgmt.
   //
   // Inventory is operational: handing a laptop to someone and taking it back is
   // day-to-day work a sub-admin does, so /org/assets is STAFF_ROLES.
@@ -222,7 +221,6 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
   // with every permission switched off could still open both — the one place where
   // the sidebar and the guard agreed with each other and BOTH were wrong.
   "/org/assets": { roles: STAFF_ROLES, feature: "manage_assets", always: ["org_admin"] },
-  "/org/asset-categories": { roles: ["org_admin"] },
 
   // --- Recruitment ------------------------------------------------------------
   // STAFF_ROLES + `manage_recruitment`, mirroring the backend's recruitmentMgmt gate.

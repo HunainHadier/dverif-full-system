@@ -35,7 +35,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -45,7 +44,6 @@ import { SearchableSelect, type SearchableSelectItem } from "@/components/common
 import {
   ASSET_STATUS_VARIANT,
   assetsService,
-  assetCategoriesService,
   isCurrentEmployee,
   orgService,
   type Asset,
@@ -86,7 +84,6 @@ function AssetsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<AssetStatus | "">("");
-  const [category, setCategory] = useState("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [dialog, setDialog] = useState<
     null | "create" | "edit" | "assign" | "return" | "maintenance" | "retire"
@@ -94,20 +91,14 @@ function AssetsPage() {
   const [active, setActive] = useState<Asset | null>(null);
 
   const list = useQuery({
-    queryKey: ["assets", page, search, status, category],
+    queryKey: ["assets", page, search, status],
     queryFn: () =>
       assetsService.list({
         page,
         limit: PAGE_SIZE,
         search: search || undefined,
         status: status || undefined,
-        category_uuid: category || undefined,
       }),
-  });
-
-  const categories = useQuery({
-    queryKey: ["asset-categories", false],
-    queryFn: () => assetCategoriesService.list(false),
   });
 
   const summary = useQuery({
@@ -134,17 +125,8 @@ function AssetsPage() {
       render: (r) => (
         <div className="min-w-0">
           <p className="truncate font-medium">{r.name}</p>
-          {r.model_details ? (
-            <p className="truncate text-xs text-muted-foreground">{r.model_details}</p>
-          ) : null}
+          {r.model_details ? <p className="truncate text-xs text-muted-foreground">{r.model_details}</p> : null}
         </div>
-      ),
-    },
-    {
-      key: "category_name",
-      header: t("assets.category"),
-      render: (r) => (
-        <span className="text-sm text-muted-foreground">{r.category_name ?? "—"}</span>
       ),
     },
     {
@@ -278,21 +260,6 @@ function AssetsPage() {
               </option>
             ))}
           </select>
-          <select
-            value={category}
-            onChange={(e) => {
-              setCategory(e.target.value);
-              setPage(1);
-            }}
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
-          >
-            <option value="">{t("assets.allCategories")}</option>
-            {(categories.data ?? []).map((c) => (
-              <option key={c.uuid} value={c.uuid}>
-                {c.name}
-              </option>
-            ))}
-          </select>
         </div>
 
         <DataTable
@@ -319,7 +286,6 @@ function AssetsPage() {
       <AssetDialog
         kind={dialog}
         asset={active}
-        categories={categories.data ?? []}
         onClose={() => {
           setDialog(null);
           setActive(null);
@@ -585,10 +551,7 @@ function AssetDetailDrawer({
           <SheetTitle className="text-xl font-semibold mt-1">
             {asset ? asset.name : t("loading")}
           </SheetTitle>
-          <SheetDescription className="text-xs text-muted-foreground">
-            {asset ? t("assets.detailDescription", { category: asset.category_name ?? "—" }) : ""}
-          </SheetDescription>
-        </SheetHeader>
+          </SheetHeader>
 
         {detail.isLoading ? (
           <p className="p-6 text-sm text-muted-foreground">{t("loading")}</p>
@@ -611,11 +574,7 @@ function AssetDetailDrawer({
                 <Detail label={t("assets.warranty")}>
                   {asset.warranty_expires_at ? formatDate(asset.warranty_expires_at) : "—"}
                 </Detail>
-                {asset.model_details ? (
-                  <Detail label={t("assets.modelDetails") || "Model Details"}>
-                    {asset.model_details}
-                  </Detail>
-                ) : null}
+                {asset.model_details ? <Detail label={t("assets.modelDetails")}>{asset.model_details}</Detail> : null}
               </dl>
             </div>
 
@@ -840,11 +799,7 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
 // ---------------------------------------------------------------------------
 
 type AssetForm = {
-  category_uuid: string;
   name: string;
-  asset_tag: string;
-  model_details: string;
-  serial_number: string;
   purchase_date: string;
   purchase_cost: string;
   vendor: string;
@@ -855,13 +810,11 @@ type AssetForm = {
 function AssetDialog({
   kind,
   asset,
-  categories,
   onClose,
   onSaved,
 }: {
   kind: string | null;
   asset: Asset | null;
-  categories: { uuid: string; name: string }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -870,11 +823,7 @@ function AssetDialog({
 
   const form = useForm<AssetForm>({
     defaultValues: {
-      category_uuid: "",
       name: "",
-      asset_tag: "",
-      model_details: "",
-      serial_number: "",
       purchase_date: "",
       purchase_cost: "",
       vendor: "",
@@ -882,7 +831,7 @@ function AssetDialog({
       notes: "",
     },
   });
-  const { reset, setValue } = form;
+  const { reset } = form;
   const wasOpen = useRef(false);
 
   // Seed on open only. Re-seeding on every render would discard whatever the
@@ -891,11 +840,7 @@ function AssetDialog({
     if (open && !wasOpen.current) {
       if (kind === "edit" && asset) {
         reset({
-          category_uuid: asset.category_uuid,
           name: asset.name,
-          asset_tag: asset.asset_tag,
-          model_details: asset.model_details ?? "",
-          serial_number: asset.serial_number ?? "",
           purchase_date: asset.purchase_date ?? "",
           purchase_cost: asset.purchase_cost == null ? "" : String(asset.purchase_cost),
           vendor: asset.vendor ?? "",
@@ -904,11 +849,7 @@ function AssetDialog({
         });
       } else if (kind === "create") {
         reset({
-          category_uuid: categories[0]?.uuid ?? "",
           name: "",
-          asset_tag: "",
-          model_details: "",
-          serial_number: "",
           purchase_date: "",
           purchase_cost: "",
           vendor: "",
@@ -918,12 +859,12 @@ function AssetDialog({
       }
     }
     wasOpen.current = open;
-  }, [open, kind, asset, categories, reset]);
+  }, [open, kind, asset, reset]);
 
   const save = useMutation({
     mutationFn: async (values: AssetForm) => {
       const text = (raw: string) => raw.trim();
-      const shared = { category_uuid: values.category_uuid, name: values.name.trim() };
+      const shared = { name: values.name.trim() };
       const costText = text(values.purchase_cost);
 
       // On create an empty optional field is simply omitted.
@@ -940,9 +881,6 @@ function AssetDialog({
       if (kind === "edit" && asset) {
         return assetsService.update(asset.uuid, {
           ...shared,
-          asset_tag: values.asset_tag.trim(),
-          model_details: clear(values.model_details),
-          serial_number: clear(values.serial_number),
           purchase_date: clear(values.purchase_date),
           purchase_cost: costText ? Number(costText) : null,
           vendor: clear(values.vendor),
@@ -952,9 +890,6 @@ function AssetDialog({
       }
       return assetsService.create({
         ...shared,
-        asset_tag: values.asset_tag.trim() || undefined,
-        model_details: omit(values.model_details),
-        serial_number: omit(values.serial_number),
         purchase_date: omit(values.purchase_date),
         purchase_cost: costText ? Number(costText) : undefined,
         vendor: omit(values.vendor),
@@ -964,13 +899,6 @@ function AssetDialog({
     },
     onSuccess: onSaved,
   });
-
-  // Default the category once the list arrives, but only while creating.
-  useEffect(() => {
-    if (kind === "create" && categories.length && !form.getValues("category_uuid")) {
-      setValue("category_uuid", categories[0].uuid);
-    }
-  }, [kind, categories, setValue, form]);
 
   if (kind === "assign" || kind === "return" || kind === "maintenance" || kind === "retire") {
     return (
@@ -1002,48 +930,9 @@ function AssetDialog({
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("assets.category")}</span>
-          <select
-            {...form.register("category_uuid", { required: true })}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          >
-            {categories.map((c) => (
-              <option key={c.uuid} value={c.uuid}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block space-y-1 text-sm">
           <span className="font-medium">{t("assets.assetName")}</span>
           <input
             {...form.register("name", { required: t("assets.assetName") })}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("assets.tag")}</span>
-          <input
-            {...form.register("asset_tag")}
-            placeholder={t("assets.tagAuto")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("assets.modelDetails")}</span>
-          <input
-            {...form.register("model_details")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          />
-        </label>
-
-        <label className="block space-y-1 text-sm">
-          <span className="font-medium">{t("assets.serialNumber")}</span>
-          <input
-            {...form.register("serial_number")}
             className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           />
         </label>
@@ -1236,7 +1125,7 @@ function ActionDialog({
       open={Boolean(asset)}
       onOpenChange={(v) => !v && onClose()}
       title={titles[kind] ?? ""}
-      description={asset ? `${asset.asset_tag} — ${asset.name}` : ""}
+      description={asset ? asset.name : ""}
       submitLabel={t("common.save")}
       cancelLabel={t("common.cancel")}
       onSubmit={() => act.mutateAsync()}

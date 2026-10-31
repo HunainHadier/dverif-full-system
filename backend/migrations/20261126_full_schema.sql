@@ -204,37 +204,6 @@ BEGIN
   END IF;
 END */;;
 DELIMITER ;
-CREATE TABLE IF NOT EXISTS `asset_categories` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `uuid` char(36) NOT NULL,
-  `organization_id` bigint(20) unsigned NOT NULL,
-  `name` varchar(120) NOT NULL,
-  `description` varchar(500) DEFAULT NULL,
-  `default_lifespan_months` int(10) unsigned DEFAULT NULL,
-  `is_active` tinyint(1) NOT NULL DEFAULT 1,
-  `created_by_uuid` char(36) DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_asset_categories_uuid` (`uuid`),
-  UNIQUE KEY `uk_asset_categories_org_name` (`organization_id`,`name`),
-  UNIQUE KEY `uk_asset_categories_uuid_org` (`uuid`,`organization_id`),
-  KEY `idx_asset_categories_org` (`organization_id`,`is_active`),
-  KEY `fk_asset_categories_creator` (`created_by_uuid`),
-  CONSTRAINT `fk_asset_categories_creator` FOREIGN KEY (`created_by_uuid`) REFERENCES `users` (`uuid`) ON DELETE SET NULL,
-  CONSTRAINT `fk_asset_categories_org` FOREIGN KEY (`organization_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=273 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-DROP TRIGGER IF EXISTS `bi_asset_categories_uuid`;
-DELIMITER ;;
-/*!50003 CREATE*/ /*!50017 DEFINER=`root`@`localhost`*/ /*!50003 TRIGGER `bi_asset_categories_uuid`
-BEFORE INSERT ON `asset_categories`
-FOR EACH ROW
-BEGIN
-  IF NEW.`uuid` IS NULL OR NEW.`uuid` = '' THEN
-    SET NEW.`uuid` = UUID();
-  END IF;
-END */;;
-DELIMITER ;
 CREATE TABLE IF NOT EXISTS `asset_maintenance` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `uuid` char(36) NOT NULL,
@@ -279,7 +248,6 @@ CREATE TABLE IF NOT EXISTS `assets` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `uuid` char(36) NOT NULL,
   `organization_id` bigint(20) unsigned NOT NULL,
-  `category_uuid` char(36) NOT NULL,
   `asset_tag` varchar(40) NOT NULL,
   `name` varchar(200) NOT NULL,
   `model_details` varchar(200) DEFAULT NULL,
@@ -299,12 +267,9 @@ CREATE TABLE IF NOT EXISTS `assets` (
   UNIQUE KEY `uk_assets_org_tag` (`organization_id`,`asset_tag`),
   UNIQUE KEY `uk_assets_single_holder` (`active_assignment_guard`),
   KEY `idx_assets_org_status` (`organization_id`,`status`),
-  KEY `idx_assets_category` (`category_uuid`),
   KEY `idx_assets_serial` (`organization_id`,`serial_number`),
   KEY `idx_assets_purchase_date` (`organization_id`,`purchase_date`),
   KEY `fk_assets_creator` (`created_by_uuid`),
-  KEY `fk_assets_category_same_org` (`category_uuid`,`organization_id`),
-  CONSTRAINT `fk_assets_category_same_org` FOREIGN KEY (`category_uuid`, `organization_id`) REFERENCES `asset_categories` (`uuid`, `organization_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_assets_creator` FOREIGN KEY (`created_by_uuid`) REFERENCES `users` (`uuid`) ON DELETE SET NULL,
   CONSTRAINT `fk_assets_org` FOREIGN KEY (`organization_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=433 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

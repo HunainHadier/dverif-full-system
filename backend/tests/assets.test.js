@@ -33,7 +33,6 @@ const assets = await import("../src/services/assets.service.js");
 const ORG = 7;
 const OTHER_ORG = 99;
 const ADMIN = "11111111-1111-4111-8111-111111111111";
-const CATEGORY = "22222222-2222-4222-8222-222222222222";
 const ASSET = "33333333-3333-4333-8333-333333333333";
 const EMPLOYEE = "44444444-4444-4444-8444-444444444444";
 const JOB = "55555555-5555-4555-8555-555555555555";
@@ -42,9 +41,10 @@ const assetRow = (over = {}) => ({
   id: 1,
   uuid: ASSET,
   organization_id: ORG,
-  category_uuid: CATEGORY,
   asset_tag: "AST-0001",
   name: "ThinkPad",
+  model_details: null,
+  serial_number: null,
   status: "available",
   notes: null,
   ...over,
@@ -70,70 +70,18 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Categories
-// ---------------------------------------------------------------------------
-
-describe("categories", () => {
-  it("scopes the list to the organization", async () => {
-    pool.query.mockResolvedValueOnce([[], []]);
-    await assets.listCategories({ orgId: ORG });
-    expect(pool.query.mock.calls[0][1]).toEqual([ORG]);
-  });
-
-  it("hides inactive categories unless asked", async () => {
-    // `SELECT c.*` always brings is_active back; what matters is whether the
-    // FILTER is applied. Note the call index: the second assertion reads the
-    // SECOND query, not the first.
-    pool.query.mockResolvedValue([[], []]);
-    await assets.listCategories({ orgId: ORG });
-    expect(String(pool.query.mock.calls[0][0])).toContain("c.is_active = 1");
-
-    await assets.listCategories({ orgId: ORG, includeInactive: true });
-    expect(String(pool.query.mock.calls[1][0])).not.toContain("c.is_active = 1");
-  });
-
-  it("counts the assets in each category, so an empty class is visible", async () => {
-    pool.query.mockResolvedValueOnce([[{ uuid: CATEGORY, asset_count: 3 }], []]);
-    const [row] = await assets.listCategories({ orgId: ORG });
-    expect(row.asset_count).toBe(3);
-  });
-
-  it("requires a name", async () => {
-    await expect(
-      assets.createCategory({ orgId: ORG, actorUuid: ADMIN, data: { name: "  " } }),
-    ).rejects.toMatchObject({ statusCode: 400 });
-  });
-
-  it("reports a duplicate name as a conflict, not a 500", async () => {
-    pool.query.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "ER_DUP_ENTRY" }));
-    await expect(
-      assets.createCategory({ orgId: ORG, actorUuid: ADMIN, data: { name: "Laptops" } }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  it("refuses to delete a category that still holds assets", async () => {
-    // Deleting would either fail on the FK or cascade away a purchase history.
-    pool.query.mockResolvedValueOnce([[{ n: 4 }], []]);
-    await expect(
-      assets.deleteCategory({ orgId: ORG, actorUuid: ADMIN, categoryUuid: CATEGORY }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-    expect(pool.query).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Inventory creation
 // ---------------------------------------------------------------------------
 
 describe("asset creation", () => {
-  it("always starts available, whatever the client posts", async () => {
+  it("creates an asset by name without category input", async () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
-      if (String(sql).includes("FROM asset_categories")) return [[{ uuid: CATEGORY, name: "Laptops", is_active: 1 }], []];
-      if (String(sql).includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
-      if (String(sql).includes("SELECT 1 AS x")) return [[], []];
-      if (String(sql).includes("INSERT INTO assets")) return [{ insertId: 9 }, []];
-      if (String(sql).includes("SELECT uuid FROM assets")) return [[{ uuid: ASSET }], []];
+      const statement = String(sql);
+      if (statement.includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
+      if (statement.includes("SELECT 1 AS x")) return [[], []];
+      if (statement.includes("INSERT INTO assets")) return [{ insertId: 9 }, []];
+      if (statement.includes("SELECT uuid FROM assets")) return [[{ uuid: ASSET }], []];
       return [[], []];
     });
     pool.query = vi.fn(async () => [[assetRow()], []]);
@@ -141,77 +89,41 @@ describe("asset creation", () => {
     await assets.createAsset({
       orgId: ORG,
       actorUuid: ADMIN,
-      data: { name: "ThinkPad", category_uuid: CATEGORY, status: "assigned" },
+      data: { name: "ThinkPad", status: "assigned" },
     });
 
     const insert = conn.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO assets"));
     expect(insert).toBeTruthy();
+    expect(String(insert[0])).not.toContain("category_uuid");
+    expect(insert[1]).toContain("AST-0001");
     expect(insert[1]).toContain("available");
     expect(insert[1]).not.toContain("assigned");
   });
 
-  it("allocates a tag when the client does not supply one", async () => {
+  it("rolls back when the asset insert fails", async () => {
     const conn = useConnection();
     conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM asset_categories")) return [[{ uuid: CATEGORY, name: "Laptops", is_active: 1 }], []];
-      if (s.includes("COUNT(*) AS n FROM assets")) return [[{ n: 4 }], []];
-      if (s.includes("SELECT 1 AS x")) return [[], []];
-      if (s.includes("INSERT INTO assets")) return [{ insertId: 9 }, []];
-      if (s.includes("SELECT uuid FROM assets")) return [[{ uuid: ASSET }], []];
-      return [[], []];
-    });
-    pool.query = vi.fn(async () => [[assetRow()], []]);
-
-    await assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad", category_uuid: CATEGORY } });
-
-    const insert = conn.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO assets"));
-    expect(insert[1]).toContain("AST-0005");
-  });
-
-  it("rejects an asset in an inactive category", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      if (String(sql).includes("FROM asset_categories")) {
-        return [[{ uuid: CATEGORY, name: "Old Laptops", is_active: 0 }], []];
+      if (String(sql).includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
+      if (String(sql).includes("SELECT 1 AS x")) return [[], []];
+      if (String(sql).includes("INSERT INTO assets")) {
+        throw Object.assign(new Error("insert failed"), { code: "ER_DUP_ENTRY" });
       }
       return [[], []];
     });
 
     await expect(
-      assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad", category_uuid: CATEGORY } }),
-    ).rejects.toMatchObject({ statusCode: 409 });
-    expect(conn.rollback).toHaveBeenCalled();
-  });
-
-  it("rolls back on failure rather than leaving a partial asset", async () => {
-    const conn = useConnection();
-    conn.query = vi.fn(async (sql) => {
-      const s = String(sql);
-      if (s.includes("FROM asset_categories")) return [[{ uuid: CATEGORY, name: "Laptops", is_active: 1 }], []];
-      if (s.includes("COUNT(*) AS n FROM assets")) return [[{ n: 0 }], []];
-      if (s.includes("SELECT 1 AS x")) return [[], []];
-      // Fail at the INSERT, which is the duplicate-tag path.
-      if (s.includes("INSERT INTO assets")) {
-        throw Object.assign(new Error("dup"), { code: "ER_DUP_ENTRY" });
-      }
-      return [[], []];
-    });
-
-    await expect(
-      assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad", category_uuid: CATEGORY } }),
+      assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad" } }),
     ).rejects.toMatchObject({ statusCode: 409 });
     expect(conn.rollback).toHaveBeenCalled();
     expect(conn.commit).not.toHaveBeenCalled();
     expect(conn.release).toHaveBeenCalled();
   });
 
-  it("requires a category", async () => {
-    const conn = useConnection();
+  it("requires a non-empty asset name", async () => {
     await expect(
-      assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "ThinkPad" } }),
+      assets.createAsset({ orgId: ORG, actorUuid: ADMIN, data: { name: "  " } }),
     ).rejects.toMatchObject({ statusCode: 400 });
-    expect(conn.rollback).toHaveBeenCalled();
+    expect(pool.getConnection).not.toHaveBeenCalled();
   });
 });
 
