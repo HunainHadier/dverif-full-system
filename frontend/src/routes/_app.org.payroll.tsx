@@ -1092,7 +1092,7 @@ function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
       const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       next[key] = date.getDay() === 0 || date.getDay() === 6 ? "off" : "working";
     }
-    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date).slice(0, 10)] = item.day_type;
+    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date ?? item.date).slice(0, 10)] = item.day_type;
     setDayTypes(next);
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
