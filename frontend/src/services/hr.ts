@@ -40,11 +40,12 @@ export const leavesService = {
   ) => api.get<Paginated<LeaveRequest>>("/leaves/mine", { params }).then((r) => r.data),
   create: (data: {
     leave_type_id: number;
+    requested_treatment: "paid" | "unpaid";
     start_date: string;
     end_date: string;
     reason?: string;
   }) => api.post<{ leaveRequest: LeaveRequest }>("/leaves", data).then((r) => r.data.leaveRequest),
-  decide: (uuid: UUID, data: { status: "approved" | "rejected" }) =>
+  decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
     api
       .patch<{ leaveRequest: LeaveRequest }>(`/leaves/${uuid}/decide`, data)
       .then((r) => r.data.leaveRequest),
@@ -53,9 +54,9 @@ export const leavesService = {
 export const orgLeavesService = {
   types: () =>
     api.get<{ leaveTypes: LeaveType[] }>("/org/leave-types").then((r) => r.data.leaveTypes),
-  createType: (data: { name: string; days_allowed_per_year?: number; is_paid: "yes" | "no" }) =>
+  createType: (data: { name: string; days_allowed_per_year?: number }) =>
     api.post<{ leaveType: LeaveType }>("/org/leave-types", data).then((r) => r.data.leaveType),
-  updateType: (id: number, data: { name: string; days_allowed_per_year?: number; is_paid: "yes" | "no" }) =>
+  updateType: (id: number, data: { name: string; days_allowed_per_year?: number }) =>
     api.put<{ leaveType: LeaveType }>(`/org/leave-types/${id}`, data).then((r) => r.data.leaveType),
   deleteType: (id: number) => api.delete(`/org/leave-types/${id}`).then((r) => r.data),
   list: (params: { page?: number; limit?: number; status?: string; search?: string } = {}) =>
