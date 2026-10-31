@@ -367,7 +367,7 @@ describe.runIf(HAS_DB)("asset clearance reads the same rows the asset register d
     const assets = await getOutstandingAssets({ orgId, employeeUuid: uuid });
     expect(assets.count).toBe(1);
     expect(assets.exposure).toBe(250000);
-    expect(assets.items[0].name).toBe("AST-CLEAR-1");
+    expect(assets.items[0].asset_tag).toBe("AST-CLEAR-1");
     expect(assets.items[0].purchase_cost).toBe(250000);
   });
 
