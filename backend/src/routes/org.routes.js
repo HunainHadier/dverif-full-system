@@ -38,10 +38,6 @@ import {
   updateLeaveType,
 } from "../controllers/leave.controller.js";
 import {
-  listExpenseCategories,
-  createExpenseCategory,
-  updateExpenseCategory,
-  deleteExpenseCategory,
   listExpenseClaims,
   getExpenseClaim,
   reviewExpenseClaim,
