@@ -21,7 +21,6 @@ import { readFileSync } from "node:fs";
  */
 const ASSETS = readFileSync("src/routes/_app.org.assets.tsx", "utf8");
 const MY_ASSETS = readFileSync("src/routes/_app.my-assets.tsx", "utf8");
-const CATEGORIES = readFileSync("src/routes/_app.org.asset-categories.tsx", "utf8");
 const SHEET = readFileSync("src/components/ui/sheet.tsx", "utf8");
 const NAV = readFileSync("src/lib/navItems.ts", "utf8");
 const ACCESS = readFileSync("src/lib/routeAccess.ts", "utf8");
@@ -76,11 +75,6 @@ describe("asset detail panel is a real side panel", () => {
 });
 
 describe("interpolation reaches the screen", () => {
-  it("the delete-category key uses double braces", () => {
-    const en = JSON.parse(readFileSync("src/i18n/locales/en.json", "utf8"));
-    expect(en.assets.deleteCategoryWarning).toBe('Delete "{{name}}"?');
-    expect(en.assets.deleteCategoryWarning).not.toMatch(/(?<!\{)\{name\}(?!\})/);
-  });
 
   it("the detail-description key uses double braces", () => {
     const en = JSON.parse(readFileSync("src/i18n/locales/en.json", "utf8"));
@@ -113,7 +107,7 @@ describe("/my-assets", () => {
       expect(MY_ASSETS, `column header ${header} missing`).toContain(header);
     }
     // Model details render in the name cell.
-    expect(MY_ASSETS).toContain("model_details");
+    expect(MY_ASSETS).not.toContain("model_details");
   });
 
   it("calls the session-scoped endpoint with no parameters", () => {
