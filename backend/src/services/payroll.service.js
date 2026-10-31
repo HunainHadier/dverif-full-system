@@ -18,18 +18,6 @@ import { CURRENCY } from "../utils/currency.js";
  */
 
 /**
- * Late arrival cutoff is configured per organization. Payroll never assumes a
- * company shift start or grace period.
- */
-const LATE_AFTER_MINUTES = null;
-
-/** Every 3 late arrivals costs half a day's pay. */
-const LATES_PER_HALF_DAY = null;
-
-/** Overtime is paid at this multiple of the hourly rate derived from basic. */
-const OVERTIME_RATE_MULTIPLIER = null;
-
-/**
  * The effective basic salary for a given month.
  *
  * Matched on the month's LAST day against each period's [effective_from,
@@ -57,14 +45,6 @@ export async function effectiveBasicForMonth({ employeeUuid, orgId, month, year,
   );
   return rows.length ? rows[0].basic_salary : 0;
 }
-
-export const PAYROLL_RULES = {
-  LATE_AFTER_MINUTES,
-  LATES_PER_HALF_DAY,
-  OVERTIME_RATE_MULTIPLIER,
-  OVERTIME_RATE_LABEL: null,
-  DEFAULT_WORK_WEEK: null,
-};
 
 // `currency` is NOT one of these. It was, when administrators could type a
 // three-letter code, and its absence here is the point: a currency is no longer
