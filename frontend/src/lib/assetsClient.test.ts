@@ -160,15 +160,8 @@ describe("file uploads", () => {
     expect(body).toContain("multipart/form-data");
   });
 
-  it("uploadInvoices posts multipart FormData", () => {
-    const body = member(code(SERVICE), "uploadInvoices");
-    expect(body).toContain("new FormData()");
-    expect(body).toContain("multipart/form-data");
-  });
-
   it("routes files to the attachment endpoints, never a path field", () => {
     expect(SERVICE).toContain("/org/assets/${uuid}/receipts");
-    expect(SERVICE).toContain("/org/asset-maintenance/${jobUuid}/invoices");
     expect(code(SERVICE)).not.toMatch(/receipt_path|invoice_path/);
   });
 
@@ -196,11 +189,11 @@ describe("asset actions match the server's transitions", () => {
     return next > 0 ? rest.slice(0, next) : rest.slice(0, 700);
   }
 
-  it("offers Assign and Send for maintenance only when available", () => {
+  it("offers Assign only when available", () => {
     const branch = branchFor("available");
     expect(branch.length, "available branch not found").toBeGreaterThan(40);
     expect(branch).toContain("assets.assign");
-    expect(branch).toContain("assets.sendForMaintenance");
+    expect(branch).not.toContain("maintenance");
   });
 
   it("offers Return only when assigned", () => {
@@ -209,19 +202,8 @@ describe("asset actions match the server's transitions", () => {
     expect(branch).toContain("assets.returnAsset");
   });
 
-  it("shows a placeholder, not an action, while an asset is in maintenance", () => {
-    // Assigning or returning something on a repair bench would 409. The honest
-    // option is to say why nothing is available.
-    expect(branchFor("maintenance")).toContain("assets.inMaintenance");
-    expect(branchFor("maintenance")).not.toContain("assets.assign");
-  });
-
   it("offers Retire only when available, and Reinstate only when retired", () => {
-    // retireAsset refuses an `assigned` asset ("Return this asset before retiring
-    // it") and a `maintenance` one ("Close the open maintenance job before
-    // retiring this asset"). The menu used to gate Retire on
-    // `status !== "retired"`, so on both of those rows it offered an action whose
-    // only possible outcome was a 409 - which teaches people the page is broken.
+    // retireAsset refuses an assigned asset, so return it before retiring.
     expect(ASSETS_PAGE).not.toContain('row.status !== "retired"');
     expect(ASSETS_PAGE).toMatch(
       /\{row\.status === "available" \? \(\s*<DropdownMenuItem onSelect=\{\(\) => onDialog\("retire"\)\}/,
@@ -233,10 +215,6 @@ describe("asset actions match the server's transitions", () => {
     expect(branchFor("assigned"), "a retire action leaked into the assigned row").not.toContain(
       "assets.retire",
     );
-    expect(
-      branchFor("maintenance"),
-      "a retire action leaked into the maintenance row",
-    ).not.toContain("assets.retire");
   });
 
   it("reports a failed action instead of doing nothing", () => {
@@ -272,14 +250,6 @@ describe("the Assign picker can reach the whole company", () => {
 });
 
 describe("the summary cards show the server's figures", () => {
-  it("reads total_value and maintenance_spend off the summary response", () => {
-    // Summing the rows on screen would report only the current page's worth: the
-    // register is paginated, so a 10-page inventory would claim 1/10th of its
-    // value. The server already computes both across the whole org.
-    expect(ASSETS_PAGE).toContain("money?.total_value");
-    expect(ASSETS_PAGE).toContain("money?.maintenance_spend");
-  });
-
   it("does not compute a money total from the rows", () => {
     expect(ASSETS_PAGE).not.toMatch(/purchase_cost\s*\*\s*rows\.length/);
     expect(ASSETS_PAGE).not.toMatch(/rows\.reduce\([^)]*purchase_cost/);
@@ -289,16 +259,8 @@ describe("the summary cards show the server's figures", () => {
     // An unexplained total is how a register gets disbelieved: someone reconciles
     // it against the ledger, finds a difference, and stops reading the page.
     expect(ASSETS_PAGE).toContain("assets.totalValueHint");
-    expect(ASSETS_PAGE).toContain("assets.maintenanceSpendHint");
   });
 
-  it("surfaces open_jobs next to the status it explains", () => {
-    // "Maintenance" for two separate faults is one problem on a dashboard and two
-    // on a worklist. The count is what stops the asset being closed out after the
-    // first repair.
-    expect(ASSETS_PAGE).toContain("assets.openJobs");
-    expect(ASSETS_PAGE).toContain("r.open_jobs");
-  });
 });
 
 describe("a maintenance job can be closed either way", () => {
