@@ -215,12 +215,9 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   for (const r of rows) {
     const iso = isoDate(r.date);
     if (!working.has(iso)) continue;
-    // An attendance row on a day the employee was on approved leave means the
-    // leave record and the log disagree. The log is the stronger evidence that
-    // they worked, so it counts as present — otherwise the day is deducted as
-    // unpaid leave AND counted as an absence.
-    if (excused.has(iso)) continue;
     // A workday is complete only when both clock-in and clock-out exist.
+    // If a completed attendance record overlaps approved leave, the attendance
+    // record wins: the day is treated as worked, not as leave or absence.
     // A check-in-only row must not be treated as a full paid day in days mode.
     if (!r.check_in_at || !r.check_out_at) continue;
     const start = new Date(r.check_in_at).getTime();
@@ -239,7 +236,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   // Never negative: a manually entered attendance row can otherwise push this
   // below zero and then a negative day count becomes a negative deduction, which
   // reads as a pay rise.
-  const excusedCount = [...excused].filter((d) => working.has(d)).length;
+  const excusedCount = [...excused].filter((d) => working.has(d) && !presentDates.has(d)).length;
   const absentDays = Math.max(0, working.size - presentDates.size - excusedCount);
 
   return {
@@ -346,8 +343,8 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     workedHours: attendance.workedHours,
     absentDays: attendance.absentDays,
     lateCount: attendance.lateCount,
-    paidLeaveDays: leave.paidLeaveDays,
-    unpaidLeaveDays: leave.unpaidLeaveDays,
+    paidLeaveDays: leave.paidDates.filter((date) => !attendance.presentDates.includes(date)).length,
+    unpaidLeaveDays: leave.unpaidDates.filter((date) => !attendance.presentDates.includes(date)).length,
     approvedOvertimeHours: Math.min(overtime.approvedOvertimeHours, attendance.actualOvertimeHours),
     actualOvertimeHours: attendance.actualOvertimeHours,
     requestedOvertimeHours: overtime.requestedOvertimeHours,
