@@ -40,7 +40,10 @@ const ATTACH = "66666666-6666-4666-8666-666666666666";
 const assetRow = (over = {}) => ({
   uuid: ASSET,
   organization_id: ORG,
+  asset_tag: "AST-0001",
   name: "ThinkPad",
+  model_details: null,
+  serial_number: null,
   status: "available",
   ...over,
 });
