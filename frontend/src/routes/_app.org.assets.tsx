@@ -49,6 +49,7 @@ import {
   type AssetAttachment,
   type AssetDetail,
   type AssetStatus,
+  type AssetReturnCondition,
 } from "@/services";
 import {
   apiErrorMessage,
@@ -840,7 +841,7 @@ function ActionDialog({
 }) {
   const { t } = useTranslation();
   const [employee, setEmployee] = useState("");
-  const [condition, setCondition] = useState("good");
+  const [condition, setCondition] = useState<AssetReturnCondition>("good");
   const [notes, setNotes] = useState("");
   const [reason, setReason] = useState("");
   const wasOpen = useRef(false);
@@ -926,7 +927,7 @@ function ActionDialog({
         return assetsService.assign(asset.uuid, employee);
       }
       if (kind === "return") {
-        return assetsService.return(asset.uuid, condition as "good", notes || undefined);
+        return assetsService.return(asset.uuid, condition, notes || undefined);
       }
       return assetsService.retire(asset.uuid, reason || undefined);
     },
