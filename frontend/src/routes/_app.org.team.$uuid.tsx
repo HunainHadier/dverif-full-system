@@ -45,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isCurrentEmployee, orgService, orgEmployeeSalaryService, salaryComponentService, type EmployeeDocument, type EmployeeRecord, type EmployeeSalaryComponent, type SalaryComponent, type SalaryHistoryEntry, type UUID } from "@/services";
+import { isCurrentEmployee, orgService, orgEmployeeSalaryService, salaryComponentService, hrLettersService, letterTemplatesService, HR_LETTER_TYPES, type EmployeeDocument, type EmployeeRecord, type EmployeeSalaryComponent, type SalaryComponent, type SalaryHistoryEntry, type HrLetterListItem, type HrLetterType, type UUID } from "@/services";
 import {
   digitsOnly,
   formatCNIC,
@@ -58,7 +58,6 @@ import {
 import { DverifLoader } from "@/components/common/DvarifLoader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IssueLetterDialog } from "@/components/hr/IssueLetterDialog";
-import { hrLettersService, letterTemplatesService, HR_LETTER_TYPES, type HrLetterListItem, type HrLetterType } from "@/services";
 
 export const Route = createFileRoute("/_app/org/team/$uuid")({
   validateSearch: (search: Record<string, unknown>): { edit?: boolean; salary?: boolean } => ({
@@ -382,7 +381,7 @@ function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUI
   const templatesQ = useQuery({
     queryKey: ["hr-letter-templates", "employee-detail"],
     queryFn: () => letterTemplatesService.list(),
-    enabled: createOpen,
+    enabled: true,
   });
 
   const createMut = useMutation({
@@ -402,6 +401,7 @@ function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUI
   });
 
   const items = lettersQ.data?.items ?? [];
+  const activeTemplates = (templatesQ.data?.items ?? []).filter((x) => x.is_active);
 
   return (
     <Card className="border-border/70 shadow-none">
@@ -410,7 +410,7 @@ function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUI
           <CardTitle className="text-base">HR Letters</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">Create, assign and issue letters for {employeeName}.</p>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
+        <Button size="sm" onClick={() => setCreateOpen(true)} disabled={templatesQ.isLoading || !(templatesQ.data?.items ?? []).some((x) => x.is_active)}>
           <Plus className="mr-1.5 h-4 w-4" /> Assign Letter
         </Button>
       </CardHeader>
@@ -461,20 +461,20 @@ function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUI
             </div>
             <div className="space-y-1.5">
               <Label>Letter Template</Label>
-              <Select value={templateUuid || "none"} onValueChange={(v) => {
+              <Select value={templateUuid} onValueChange={(v) => {
                 const selected = (templatesQ.data?.items ?? []).find((x) => x.uuid === v);
-                setTemplateUuid(v === "none" ? "" : v);
+                setTemplateUuid(v);
                 if (selected) setLetterType(selected.letter_type);
               }}>
                 <SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No template</SelectItem>
-                  {(templatesQ.data?.items ?? []).filter((x) => x.is_active).map((tpl) => (
+                  {activeTemplates.map((tpl) => (
                     <SelectItem key={tpl.uuid} value={tpl.uuid}>{tpl.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               {templatesQ.isLoading ? <p className="text-xs text-muted-foreground">Loading templates…</p> : null}
+              {!templatesQ.isLoading && activeTemplates.length === 0 ? <p className="text-xs text-destructive">Create an active letter template before assigning a letter.</p> : null}
             </div>
             <div className="space-y-1.5">
               <Label>Letter Type</Label>
@@ -488,7 +488,7 @@ function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUI
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)} disabled={createMut.isPending}>Cancel</Button>
-            <Button onClick={() => createMut.mutate()} disabled={createMut.isPending || (templatesQ.isLoading && !templateUuid)} loading={createMut.isPending}>Create Draft</Button>
+            <Button onClick={() => createMut.mutate()} disabled={createMut.isPending || !templateUuid || templatesQ.isLoading} loading={createMut.isPending}>Create Draft</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
