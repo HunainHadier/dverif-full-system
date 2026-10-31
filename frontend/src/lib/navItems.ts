@@ -140,7 +140,6 @@ export const orgAdminNavItems: NavItem[] = [
   { to: "/org/salary-components", labelKey: "nav.payrollComponents", icon: Wallet },
   { to: "/org/payroll", labelKey: "nav.payroll", icon: Wallet },
   { to: "/org/letter-templates", labelKey: "nav.letterTemplates", icon: FileText },
-  { to: "/org/hr-letters", labelKey: "nav.hrLetters", icon: FileSignature },
   // Expense claims sit after payroll and before assets, because the money ops
   // read in that order: payroll decides what is paid, expense claims are what
   // reimburses on top of it, and assets is the register of what was bought.
