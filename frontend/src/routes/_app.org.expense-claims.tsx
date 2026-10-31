@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -81,28 +81,26 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
  * THERE IS NO "NEW CLAIM" BUTTON, AND THAT IS THE POLICY. An org_admin reaches
  * this page through a gate that makes them unconditionally `approve_expenses`, so
  * a create control here would hand the one account that can rubber-stamp every
- * reimbursement the power to originate one - approving its own. Staff shape the
- * policy (categories) and adjudicate it (review); they do not spend the company's
- * money by filing against an employee of their choosing. Employees file from
- * /my-expenses, where the server derives the claimant from the session.
+ * reimbursement the power to originate one - approving its own. Staff adjudicate
+ * claims (review); they do not spend the company's money by filing against an
+ * employee of their choosing. Employees file from /my-expenses, where the server
+ * derives the claimant from the session.
  */
 function ExpenseClaimsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<ClaimStatus | "">("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ExpenseClaim | null>(null);
   const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">("approved");
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
 
   const list = useQuery({
-    queryKey: ["expense-claims", page, status],
+    queryKey: ["expense-claims", page],
     queryFn: () =>
       expenseClaimsService.list({
         page,
         limit: PAGE_SIZE,
-        status: status || undefined,
       }),
   });
 
@@ -128,18 +126,6 @@ function ExpenseClaimsPage() {
 
   const rows = list.data?.items ?? [];
 
-  /**
-   * Every filter resets to page 1.
-   *
-   * Narrowing a filter while sitting on page 4 renders an empty table, which reads
-   * as "nothing matches" rather than "there is no page 4 of this".
-   */
-  const setStatusFilter = (v: ClaimStatus | "") => {
-    setStatus(v);
-    setPage(1);
-  };
-
-
   const columns: DataTableColumn<ExpenseClaim>[] = [
     {
       key: "employee_name",
@@ -147,7 +133,7 @@ function ExpenseClaimsPage() {
       render: (r) => (
         <div className="min-w-0">
           <p className="truncate font-medium">{r.employee_name}</p>
-          <p className="truncate text-xs text-muted-foreground">{r.expense_name ?? r.category_name ?? "—"}</p>
+          <p className="truncate text-xs text-muted-foreground">{r.expense_name || "—"}</p>
         </div>
       ),
     },
@@ -190,17 +176,6 @@ function ExpenseClaimsPage() {
       render: (r) => (
         <span className="flex items-center gap-1.5">
           <Badge variant={CLAIM_STATUS_VARIANT[r.status]}>{t(STATUS_LABEL[r.status])}</Badge>
-          {/*
-              The receipt warning rides next to the status rather than replacing it:
-              a claim that cannot be approved is still pending, and showing only
-              "needs receipt" would hide that it is waiting on the employee rather
-              than on finance.
-          */}
-          {!r.receipt_satisfied ? (
-            <span className="text-xs text-amber-600 dark:text-amber-500">
-              {t("expenses.receiptMissing")}
-            </span>
-          ) : null}
         </span>
       ),
     },
@@ -257,13 +232,7 @@ function ExpenseClaimsPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                title={
-                  // A disabled button cannot be clicked to find out why, and
-                  // nothing else on the row explains it. The title carries the
-                  // reason.
-                  r.receipt_satisfied ? t("expenses.approve") : t("expenses.approveNeedsReceipt")
-                }
-                disabled={!r.receipt_satisfied}
+                title={t("expenses.approve")}
                 onClick={() => { setReviewDecision("approved"); setReviewing(r); }}
               >
                 <Check className="h-4 w-4" />
@@ -296,13 +265,6 @@ function ExpenseClaimsPage() {
       ),
     },
   ];
-
-  const pendingCount = useMemo(
-    () => (list.data?.items ?? []).filter((r) => r.status === "pending").length,
-    [list.data],
-  );
-
-
 
   return (
     <ModuleGate module="expense_management">
@@ -359,10 +321,8 @@ function ExpenseClaimsPage() {
   );
 }
 
-const CLAIM_STATUS_KEYS: ClaimStatus[] = ["pending", "approved", "paid", "rejected"];
-
 // ---------------------------------------------------------------------------
-// Detail sheet: the receipts, and an upload for the ones that need one
+// Detail sheet: the claim with its optional receipts
 // ---------------------------------------------------------------------------
 
 const EXPENSE_ATTACHMENT_HANDLERS: AttachmentCardHandlers = {
@@ -422,7 +382,7 @@ function ClaimDetailSheet({
           </SheetTitle>
           <SheetDescription>
             {claim
-              ? `${claim.expense_name ?? claim.category_name ?? "—"} · ${formatDate(claim.expense_date)}`
+              ? `${claim.expense_name || "—"} · ${formatDate(claim.expense_date)}`
               : t("loading")}
           </SheetDescription>
         </SheetHeader>

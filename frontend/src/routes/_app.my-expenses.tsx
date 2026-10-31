@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { AlertTriangle, Plus, Receipt, Upload } from "lucide-react";
+import { Plus, Receipt, Upload } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
@@ -28,7 +28,7 @@ import {
   type ClaimStatus,
   type ExpenseAttachment,
   type ExpenseClaim,
-  } from "@/services";
+} from "@/services";
 import { apiErrorMessage, formatCurrency, formatDate } from "@/lib/utils";
 import { usePermissions } from "@/lib/permissions";
 
@@ -82,7 +82,7 @@ function MyExpensesPage() {
               month. Not the filing date — a claim sent in March for a February
               taxi belongs in February. */}
           <p className="text-sm">{formatDate(r.expense_date)}</p>
-          <p className="truncate text-xs text-muted-foreground">{r.expense_name ?? r.category_name ?? "—"}</p>
+          <p className="truncate text-xs text-muted-foreground">{r.expense_name || "—"}</p>
         </div>
       ),
     },
@@ -106,11 +106,6 @@ function MyExpensesPage() {
       render: (r) => (
         <span className="flex items-center gap-1.5">
           <Badge variant={CLAIM_STATUS_VARIANT[r.status]}>{t(STATUS_LABEL[r.status])}</Badge>
-          {!r.receipt_satisfied ? (
-            <span className="text-xs text-amber-600 dark:text-amber-500">
-              {t("expenses.receiptMissing")}
-            </span>
-          ) : null}
         </span>
       ),
     },
@@ -129,13 +124,6 @@ function MyExpensesPage() {
         if (r.status === "rejected") {
           return (
             <span className="text-xs text-muted-foreground">{t("expenses.resubmitHint")}</span>
-          );
-        }
-        if (!r.receipt_satisfied) {
-          return (
-            <span className="text-xs text-amber-600 dark:text-amber-500">
-              {t("expenses.attachReceiptHint")}
-            </span>
           );
         }
         return (
@@ -243,7 +231,7 @@ function NewClaimDialog({
    * cannot approve gets a pending claim even if it posts the flag by hand.
    */
   const [autoApprove, setAutoApprove] = useState(false);
-  const canManageCategories = perms.isOrgAdmin || perms.approve_expenses === true;
+  const canApproveExpenses = perms.isOrgAdmin || perms.approve_expenses === true;
 
   // Reset on the closed -> open transition, so a claim started and abandoned does
   // not leave stale amounts behind for the next one.
@@ -355,7 +343,6 @@ function NewClaimDialog({
           inputMode="decimal"
           className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
         />
-}
       </label>
 
       <label className="block space-y-1 text-sm">
@@ -389,14 +376,9 @@ function NewClaimDialog({
       {/*
        * THE RECEIPT, AT SUBMISSION.
        *
-       * This used to be a note saying "attach it afterwards from the claim's
-       * detail", which meant the one thing that decides whether a
-       * receipt-required claim gets approved was deferred to a second visit the
-       * employee had no reason to make. The employee is the only person holding
-       * the till slip, so the slip belongs in the same breath as the amount.
-       *
-       * The advisory-note the dropzone replaces still exists further down for the
-       * claims that do NOT require one, where attaching a receipt is optional.
+       * Optional, but offered here rather than only from the claim's detail: the
+       * employee is the only person holding the slip, and a second visit to attach
+       * it is a visit most people never make.
        */}
       <FileDropzone
         value={receipt ? [receipt] : []}
@@ -418,7 +400,7 @@ function NewClaimDialog({
        * checkbox is for. An employee who never sees it gets a pending claim, and
        * an account that posts the flag by hand gets the same thing.
        */}
-      {canManageCategories ? (
+      {canApproveExpenses ? (
         <label className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
           <input
             type="checkbox"
@@ -508,7 +490,7 @@ function MyClaimDialog({
         <DialogHeader>
           <DialogTitle>
             {claim
-              ? `${claim.category_name ?? "—"} · ${formatCurrency(claim.amount)}`
+              ? `${claim.expense_name || "—"} · ${formatCurrency(claim.amount)}`
               : t("loading")}
           </DialogTitle>
           <DialogDescription>
@@ -536,11 +518,6 @@ function MyClaimDialog({
               <Badge variant={claim.payment_mode === "payroll" ? "secondary" : "outline"} className="text-xs">
                 {t(`expenses.mode.${claim.payment_mode}`)}
               </Badge>
-              {!claim.receipt_satisfied ? (
-                <span className="ml-auto text-xs font-medium text-amber-600 dark:text-amber-400">
-                  ⚠ {t("expenses.receiptMissing")}
-                </span>
-              ) : null}
             </div>
 
             {/* Key Details Grid */}
@@ -557,16 +534,6 @@ function MyClaimDialog({
                   <dt className="text-xs text-muted-foreground">{t("expenses.paymentMode")}</dt>
                   <dd className="font-medium text-foreground">{t(`expenses.mode.${claim.payment_mode}`)}</dd>
                 </div>
-                {claim.category_requires_receipt !== undefined ? (
-                  <div>
-                    <dt className="text-xs text-muted-foreground">{t("expenses.receipts")}</dt>
-                    <dd className="font-medium text-foreground">
-                      {claim.category_requires_receipt
-                        ? t("expenses.receiptRequired")
-                        : t("expenses.receiptOptional", "Optional")}
-                    </dd>
-                  </div>
-                ) : null}
                 {claim.paid_at ? (
                   <div>
                     <dt className="text-xs text-muted-foreground">{t("expenses.paidAt", { date: "" }).replace("", "").trim() || "Paid on"}</dt>
@@ -606,11 +573,6 @@ function MyClaimDialog({
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">
                   {t("expenses.receipts")}
-                  {claim.category_requires_receipt ? (
-                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                      ({t("expenses.receiptRequired")})
-                    </span>
-                  ) : null}
                 </p>
                 {receipts.length > 0 ? (
                   <span className="text-xs text-muted-foreground">{receipts.length} file{receipts.length !== 1 ? "s" : ""}</span>

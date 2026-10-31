@@ -40,24 +40,11 @@ export type ExpenseAttachment = {
   created_at: string;
 };
 
-/** The org's policy: what may be claimed, up to how much, and with what proof. */
-export type ExpenseCategory = {
-  uuid: UUID;
-  name: string;
-  description: string | null;
-  /** `null` means no ceiling, which is NOT the same as a ceiling of zero. */
-  max_limit_per_claim: number | null;
-  requires_receipt: number | boolean;
-  is_active?: number | boolean;
-  claim_count?: number;
-};
-
+/** A reimbursement claim: a free-text expense name, an amount, a date, a receipt. */
 export type ExpenseClaim = {
   uuid: UUID;
   employee_uuid: UUID;
   employee_name: string;
-  category_uuid: UUID | null;
-  category_name: string | null;
   expense_name: string;
   amount: number;
   /** YYYY-MM-DD. The day the money was spent, not the day it was claimed. */
@@ -73,21 +60,10 @@ export type ExpenseClaim = {
   payment_reference: string | null;
   created_at: string;
   receipt_count: number;
-  category_requires_receipt: boolean;
-  /**
-   * Whether this claim could be approved RIGHT NOW.
-   *
-   * The server computes it (a category that requires a receipt with none attached
-   * is not approvable) and the UI disables Approve on it. That flag is what turns
-   * "attach a receipt or it will be rejected" from a rule somebody has to know
-   * into a state the page shows.
-   */
-  receipt_satisfied: boolean;
 };
 
 export type ExpenseClaimDetail = ExpenseClaim & {
   receipts: ExpenseAttachment[];
-  category_max_limit: number | null;
 };
 
 /**
@@ -120,82 +96,6 @@ export const CLAIM_STATUSES: ClaimStatus[] = ["pending", "approved", "rejected",
  */
 export const MAX_BACKDATE_DAYS = 90;
 
-export const expenseCategoriesService = {
-  list: (includeInactive = false) =>
-    api
-      .get<{ items?: ExpenseCategory[] } | ExpenseCategory[]>("/org/expense-categories", {
-        params: includeInactive ? { include_inactive: 1 } : undefined,
-      })
-      .then((r) => {
-        const data = r.data as { items?: ExpenseCategory[] } | ExpenseCategory[];
-        const items = Array.isArray(data) ? data : (data.items ?? []);
-        // Defensive: this list drives a <Select>, and a non-array would throw
-        // during render rather than degrade.
-        return Array.isArray(items) ? items : [];
-      }),
-
-  create: (data: {
-    name: string;
-    // null clears it, same as update. The two payloads are built from the same
-    // form value, and `null` is what the form produces for a field the user
-    // emptied — typing it as `string | undefined` here made one shared payload
-    // unassignable to create while assignable to update.
-    description?: string | null;
-    max_limit_per_claim?: number | null;
-    requires_receipt?: boolean;
-  }) =>
-    api
-      .post<{ category: ExpenseCategory }>("/org/expense-categories", data)
-      .then((r) => r.data.category),
-
-  /**
-   * Edit a category. PARTIAL on purpose — only the keys passed are sent, so a
-   * single field can be changed without restating the rest.
-   *
-   * The checkbox case is why this matters: sending `requires_receipt: false` must
-   * not arrive alongside a blank name, which is what a whole-object payload built
-   * from a partially-filled form would produce. Keys whose value is `undefined`
-   * are dropped by axios, so they simply never reach the server.
-   */
-  update: (
-    uuid: UUID,
-    data: {
-      name?: string;
-      description?: string | null;
-      max_limit_per_claim?: number | null;
-      requires_receipt?: boolean;
-      is_active?: boolean;
-    },
-  ) =>
-    api
-      .put<{ category: ExpenseCategory }>(`/org/expense-categories/${uuid}`, data)
-      .then((r) => r.data.category),
-
-  /**
-   * Remove a category.
-   *
-   * NAMED `remove` rather than `delete`, and it is NOT a hard delete. The server
-   * deactivates: the category leaves the dropdown, while every claim already filed
-   * against it — and every payslip already generated from it — keeps resolving to
-   * the same name. `claims_preserved` comes back so the UI can say what was kept
-   * rather than implying the category and its history were thrown away.
-   */
-  remove: (uuid: UUID) =>
-    api
-      .delete<{ retired: boolean; claims_preserved: number }>(
-        `/org/expense-categories/${uuid}`,
-      )
-      .then((r) => r.data),
-
-  /** Bring a removed category back. Reversible is the point of deactivating. */
-  restore: (uuid: UUID) =>
-    api
-      .put<{ category: ExpenseCategory }>(`/org/expense-categories/${uuid}`, {
-        is_active: true,
-      })
-      .then((r) => r.data.category),
-};
-
 /**
  * The claim lifecycle, as the two pages actually use it.
  *
@@ -210,7 +110,6 @@ export const expenseClaimsService = {
       limit?: number;
       status?: ClaimStatus;
       employee_uuid?: UUID;
-      category_uuid?: UUID;
     } = {},
   ) =>
     api
@@ -229,7 +128,7 @@ export const expenseClaimsService = {
    * unconditionally `approve_expenses`. A method that filed a claim for a named
    * employee would therefore give the one account that can approve any
    * reimbursement the power to originate one and approve it in the same breath.
-   * Staff shape the policy and adjudicate it; employees originate it, through
+   * Staff adjudicate claims; employees originate them, through
    * myExpensesService.create below, which cannot name an employee at all.
    *
    * POST /org/expense-claims is not registered server-side either. If you are

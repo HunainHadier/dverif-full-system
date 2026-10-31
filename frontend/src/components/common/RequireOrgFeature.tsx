@@ -37,7 +37,6 @@ const FEATURE_LABEL: Record<OrgFeatureKey, string> = {
   manage_separation: "Offboarding",
   approve_expenses: "Expense Approvals",
   manage_recruitment: "Recruitment",
-  override_failed_interview: "Failed Interview Exception",
 };
 
 /** Renders children only when the current user may access the requested org feature. */

@@ -116,8 +116,6 @@ describe("an employee can only ever file a claim for themselves", () => {
     expect(code(ORG_PAGE)).not.toMatch(/expenseClaimsService\.create/);
     expect(ORG_PAGE).not.toMatch(/function NewClaimDialog/);
     expect(ORG_PAGE).not.toContain("expenses.newClaim");
-    // Category management is untouched — that IS an org admin's job.
-    expect(ORG_PAGE).toContain("expenses.newCategory");
   });
 });
 
@@ -126,124 +124,25 @@ describe("an employee can only ever file a claim for themselves", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Categories are editable and removable, and the removal is reversible.
- *
- * Only `create` shipped, which left a wrong limit or a typo permanent. The part
- * worth pinning is the SHAPE of the removal: `expense_claims.category_uuid` is
- * ON DELETE RESTRICT, and these are claims the company has already reimbursed and
- * paid out on a payslip. So remove deactivates, keeps every claim resolvable, and
- * can be undone.
+ * Categories are gone. A claim is free text now — an expense name, an amount, a
+ * date and an optional receipt — so nothing on either page may read a category
+ * field that the API no longer returns.
  */
-describe("expense categories can be edited and retired", () => {
-  const CATS = serviceBlock(code(SERVICE), "expenseCategoriesService");
-
-  it("the category service was found", () => {
-    // Guards the guard: a failed lookup makes every assertion below vacuous.
-    expect(CATS.length).toBeGreaterThan(200);
+describe("the category system is fully removed", () => {
+  it("the client has no category service or category claim fields", () => {
+    expect(code(SERVICE)).not.toMatch(/expenseCategoriesService|ExpenseCategory\b/);
+    expect(code(SERVICE)).not.toMatch(/category_uuid|category_name|category_requires_receipt/);
   });
 
-  it("update PUTs to the category, and create still POSTs to the collection", () => {
-    // Tolerating the newline before the chained call: prettier wraps these, and an
-    // assertion that breaks when someone reformats a file trains people to stop
-    // reading the failures.
-    expect(CATS).toMatch(/api\s*\n?\s*\.put<\{ category: ExpenseCategory \}>\(`\/org\/expense-categories\/\$\{uuid\}`/);
-    expect(CATS).toMatch(/api\s*\n?\s*\.post<\{ category: ExpenseCategory \}>\("\/org\/expense-categories"/);
+  it("neither page reads a category or receipt-satisfaction field", () => {
+    expect(code(ORG_PAGE)).not.toMatch(/category_name|category_uuid|receipt_satisfied/);
+    expect(code(ESS_PAGE)).not.toMatch(/category_name|category_uuid|receipt_satisfied/);
   });
 
-  it("update is PARTIAL, so a checkbox cannot blank the rest", () => {
-    // Every key optional. Sending a whole object built from a half-filled form is
-    // how `requires_receipt: false` arrives alongside an empty name.
-    expect(CATS).toMatch(/name\?: string/);
-    expect(CATS).toMatch(/is_active\?: boolean/);
-  });
-
-  it("remove DELETEs, but the server retires rather than erases", () => {
-    expect(CATS).toMatch(/api\s*\n?\s*\.delete<\{ retired: boolean; claims_preserved: number \}>/);
-    // The response contract is what lets the toast say what was KEPT rather than
-    // implying a year of claims was thrown away.
-    expect(CATS).toContain("claims_preserved: number");
-  });
-
-  it("and it can be undone", () => {
-    // A soft delete with no way back is just a slower hard delete. Pinned because
-    // `restore` is trivially droppable and the UI has a button wired to it.
-    expect(CATS).toMatch(/restore: \(uuid: UUID\) =>/);
-    expect(CATS).toMatch(/is_active: true/);
-  });
-
-  it("the page manages categories, not just creates them", () => {
-    expect(ORG_PAGE).toContain("function CategoryManagerDialog");
-    expect(ORG_PAGE).toContain("expenseCategoriesService.update(");
-    expect(ORG_PAGE).toContain("expenseCategoriesService.remove(");
-    expect(ORG_PAGE).toContain("expenseCategoriesService.restore(");
-  });
-
-  it("removed categories stay visible and restorable", () => {
-    // Otherwise "Delete" is irreversible in practice — the only way back would
-    // be the API, and a mis-click on a category with claims behind it costs a
-    // migration.
-    expect(ORG_PAGE).toContain("showInactive");
-    expect(ORG_PAGE).toContain("expenses.showRemovedCategories");
-  });
-
-  it("it warns that lowering a limit strands claims already filed", () => {
-    // The limit is re-checked at APPROVAL, so lowering it below a filed claim
-    // leaves that claim unapprovable. Not visible from the field itself.
-    expect(ORG_PAGE).toContain("expenses.categoryLimitEditWarning");
-  });
-
-  it("the manager is not the claims filter dropdown", () => {
-    // The row you are about to retire must not be the row you just filtered to.
-    // Asserted structurally: the manager is its own dialog with its own heading.
-    expect(ORG_PAGE).toMatch(/function CategoryManagerDialog[\s\S]{0,4000}expenses\.manageCategories/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-/**
- * The same bug a second time, in the dropdown that gates the whole form.
- *
- * The claim form's category list called expenseCategoriesService.list(), i.e.
- * GET /org/expense-categories — gated on org_admin/sub_admin PLUS
- * approve_expenses. An employee is neither, so it 403'd, and because a rejected
- * query leaves `data` undefined the form rendered its EMPTY state: "No categories
- * found. Create a new category first." Both halves of that sentence were wrong.
- * The categories existed, and the page it told them to visit is one an employee
- * cannot open.
- *
- * Worth its own section rather than a line in the receipt one above, because the
- * receipt case shows a 403 and this one HID it: the empty state is a designed,
- * reassuring message. The user's report was that saving an expense "didn't work",
- * and the cause was four layers away from anything that looks like a permission.
- */
-describe("the employee portal reads categories through its OWN route", () => {
-  const ESS = serviceBlock(code(SERVICE), "myExpensesService");
-
-  it("gets them from /my/expenses/categories", () => {
-    expect(ESS).toContain("/my/expenses/categories");
-  });
-
-  it("does NOT call the staff category list", () => {
-    expect(ESS).not.toContain("/org/expense-categories");
-  });
-
-  it("the ESS page reads categories through the self-service client", () => {
-    expect(ESS_PAGE).toMatch(/queryFn: \(\) => myExpensesService\.categories\(\)/);
-    // Not expenseCategoriesService, and not even the same query KEY: a shared key
-    // would let one tab's cached staff answer render on the employee portal.
-    expect(code(ESS_PAGE)).not.toMatch(/expenseCategoriesService/);
-    expect(ESS_PAGE).toContain('queryKey: ["my-expense-categories"]');
-  });
-
-  it("a FAILED load is not reported as an empty list", () => {
-    // The reason this bug survived: an error and an empty list render the same
-    // dropdown, and the empty state told the person filing to fix a permissions
-    // fault by creating data. `categoriesEmpty` must exclude the error case.
-    expect(ESS_PAGE).toContain("const categoriesFailed = categories.isError;");
-    expect(ESS_PAGE).toContain("!categoriesFailed");
-    expect(ESS_PAGE).toContain("expenses.categoriesLoadFailed");
-    expect(ESS_PAGE).toContain("categories.refetch()");
+  it("the claim is identified by its free-text expense name", () => {
+    expect(code(SERVICE)).toContain("expense_name: string;");
+    expect(code(ORG_PAGE)).toContain("r.expense_name");
+    expect(code(ESS_PAGE)).toContain("r.expense_name");
   });
 });
 
@@ -298,16 +197,11 @@ describe("the employee portal uploads receipts through its OWN route", () => {
 // ---------------------------------------------------------------------------
 
 describe("the review page only offers transitions the server implements", () => {
-  it("Approve is disabled until the receipt requirement is satisfied", () => {
-    // A receipt-required category with no receipt is refused by reviewClaim with a
-    // 409. Offering Approve anyway is a button whose only outcome is an error.
-    expect(ORG_PAGE).toMatch(/disabled=\{!r\.receipt_satisfied\}/);
-  });
-
-  it("a disabled Approve says WHY, in its title", () => {
-    // A disabled control cannot be clicked to find out, and no other part of the
-    // row explains it.
-    expect(ORG_PAGE).toContain("expenses.approveNeedsReceipt");
+  it("Approve is available without a receipt, because receipts are optional", () => {
+    // There is no category receipt policy any more, so the server does not refuse
+    // an approval for a missing receipt and the UI must not pretend otherwise.
+    expect(ORG_PAGE).not.toMatch(/receipt_satisfied/);
+    expect(ORG_PAGE).not.toMatch(/expenses\.approveNeedsReceipt/);
   });
 
   it("Mark paid appears only for an approved DIRECT claim", () => {
@@ -399,8 +293,7 @@ describe("the expenses client never sends status", () => {
   });
 
   it("no inline POST body sends a status", () => {
-    // review/pay/bulkPay build theirs as object literals. The categories service
-    // is separate, so this cannot accidentally cover it.
+    // review/pay/bulkPay build theirs as object literals.
     const posts = [...STAFF.matchAll(/\.post(?:<[^>]*>)?\([^,]+,\s*(\{[\s\S]*?\})/g)];
     expect(posts.length, "expected inline POST bodies").toBeGreaterThan(0);
     for (const [, body] of posts) {
@@ -439,14 +332,8 @@ describe("the expenses client never sends status", () => {
 // ---------------------------------------------------------------------------
 
 describe("filter changes cannot strand the table on a page past its end", () => {
-  it("the status filter resets to page 1", () => {
-    // Narrowing a filter while on page 4 renders an empty table, which reads as
-    // "nothing matches" rather than "there is no page 4 of this".
-    expect(ORG_PAGE).toMatch(/setStatus\(v\);\s*setPage\(1\);/);
-  });
-
-  it("the category filter resets to page 1", () => {
-    expect(ORG_PAGE).toMatch(/setCategory\(v\);\s*setPage\(1\);/);
+  it("there is no status or category filter left to strand the table", () => {
+    expect(code(ORG_PAGE)).not.toMatch(/setStatusFilter|setCategoryFilter|category_uuid/);
   });
 
   it("the date column carries the date and nothing else", () => {
@@ -528,10 +415,10 @@ describe("the client-side date and limit checks mirror the server's", () => {
     expect(ESS_PAGE).toMatch(/inFuture = daysBack < 0/);
   });
 
-  it("warns when the amount exceeds the category limit", () => {
-    // Also re-checked by the server at submission AND at approval, because the
-    // limit can be tightened in between.
-    expect(ESS_PAGE).toMatch(/overLimit = limit !== null/);
+  it("does not warn about a category limit the API no longer has", () => {
+    // An amount is the employee's figure; there is no policy table to compare it
+    // against, so a client-side ceiling would be invented.
+    expect(ESS_PAGE).not.toMatch(/overLimit/);
   });
 });
 
@@ -552,7 +439,7 @@ describe("navigation and access control", () => {
     expect(ACCESS).toContain('"/my-expenses"');
   });
 
-  it("opens the review page to staff, mirroring the backend's expenseCategoryMgmt", () => {
+  it("opens the review page to staff, mirroring the backend's expenseReviewMgmt", () => {
     expect(ACCESS).toMatch(/"\/org\/expense-claims":\s*\{\s*roles:\s*STAFF_ROLES,/);
   });
 

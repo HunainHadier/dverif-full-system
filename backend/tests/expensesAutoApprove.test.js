@@ -20,10 +20,10 @@ import { ATTACHMENT_ENTITY } from "../src/services/expenses.service.js";
 import { parseFeatureAccess } from "../src/utils/permissions.js";
 
 /**
- * THE AUTO-APPROVAL SHORTCUT, AND THE THREE THINGS THAT MUST HOLD.
+ * THE AUTO-APPROVAL SHORTCUT, AND THE TWO THINGS THAT MUST HOLD.
  *
  * A checkbox that skips a review queue is a shortcut around the one control that
- * decides whether the company pays for something. Three rules keep it honest, and
+ * decides whether the company pays for something. Two rules keep it honest, and
  * each of these tests kills the shortcut if its rule is removed:
  *
  *   1. AUTHORITY IS SERVER-SIDE. The flag on the request is a claim made by the
@@ -31,8 +31,8 @@ import { parseFeatureAccess } from "../src/utils/permissions.js";
  *      the permission gets a PENDING claim even though it sent the flag.
  *   2. NO SELF-APPROVAL. The claimant and the approver are two people on purpose,
  *      and a submission-time checkbox must not become a way around that.
- *   3. THE RECEIPT RULE SURVIVES. A receipt-required category still needs its
- *      receipt, or the shortcut is not a shortcut at all.
+ *
+ * Receipts are optional now, so there is no receipt rule to preserve here.
  *
  * And the behaviour that makes the feature usable at all: a REFUSED auto-approval
  * still leaves the claim FILED, pending. Refusing the entire submission would
@@ -43,11 +43,10 @@ const ORG_ID = 7;
 const ACTOR = "aaaaaaaa-0000-4000-8000-000000000001";
 const CLAIMANT = "aaaaaaaa-0000-4000-8000-000000000002";
 const CLAIM = "aaaaaaaa-0000-4000-8000-000000000003";
-const CATEGORY = "aaaaaaaa-0000-4000-8000-000000000004";
 const EMPLOYEE = { uuid: CLAIMANT, full_name: "Ayesha" };
 
 /** A DB router shaped for the claim path. */
-function installDb({ requiresReceipt = 1, limit = null, receipts = 0, claimAmount = "1000.00" } = {}) {
+function installDb({ claimAmount = "1000.00" } = {}) {
   const route = (sql) => {
     const s = String(sql);
     /*
@@ -57,20 +56,7 @@ function installDb({ requiresReceipt = 1, limit = null, receipts = 0, claimAmoun
      * and the failure reads as "Employee not found" on a test that was about
      * something else entirely.
      */
-    if (s.includes("SELECT name, requires_receipt FROM expense_categories")) {
-      return [[{ name: "Travel", requires_receipt: requiresReceipt }]];
-    }
-    if (s.includes("SELECT name, max_limit_per_claim FROM expense_categories")) {
-      return [[{ name: "Travel", max_limit_per_claim: limit }]];
-    }
-    if (s.includes("COUNT(*) AS n FROM attachments")) return [[{ n: receipts }]];
     if (s.includes("SELECT amount FROM expense_claims")) return [[{ amount: claimAmount }]];
-    if (s.includes("FROM expense_categories WHERE uuid=? AND organization_id=?")) {
-      return [[{ name: "Travel", requires_receipt: requiresReceipt }]];
-    }
-    if (s.includes("SELECT name, requires_receipt FROM expense_categories WHERE uuid=? AND organization_id=?")) {
-      return [[{ name: "Travel", requires_receipt: requiresReceipt }]];
-    }
     if (s.includes("uuid, full_name") && s.includes("FROM employees")) {
       return [[{ ...EMPLOYEE, status: "current_employee" }]];
     }
@@ -82,7 +68,7 @@ function installDb({ requiresReceipt = 1, limit = null, receipts = 0, claimAmoun
         organization_id: ORG_ID,
         employee_uuid: CLAIMANT,
         employee_name: "Ayesha",
-        category_uuid: CATEGORY,
+        expense_name: "Taxi to client visit",
         amount: claimAmount,
         expense_date: "2026-09-10",
         description: null,
@@ -109,7 +95,6 @@ describe("autoApproveClaim — the rules the shortcut cannot bypass", () => {
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
       claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
       canApproveExpenses: false,
       conn: h.conn,
     });
@@ -121,65 +106,27 @@ describe("autoApproveClaim — the rules the shortcut cannot bypass", () => {
   });
 
   it("refuses self-approval even for an authorized approver", async () => {
-    // The authority is present and the receipt rule is satisfied. The ONLY thing
-    // standing between this and an approval is that the claimant and the actor
-    // are the same person - which is the rule the requirement says is NOT bypassed.
+    // The authority is present. The ONLY thing standing between this and an
+    // approval is that the claimant and the actor are the same person - which is
+    // the rule the requirement says is NOT bypassed.
     const refusal = await autoApproveClaim({
       orgId: ORG_ID,
       actorUuid: CLAIMANT,
       employeeUuid: CLAIMANT,
       claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
       canApproveExpenses: true,
-      requiresReceipt: 1,
-      receipts: 1,
       conn: h.conn,
     });
 
     expect(refusal).toMatch(/person it reimburses/i);
   });
 
-  it("refuses a receipt-required category with no receipt attached", async () => {
-    installDb({ requiresReceipt: 1, receipts: 0 });
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
-      canApproveExpenses: true,
-      conn: h.conn,
-    });
-
-    expect(refusal).toMatch(/require a receipt/i);
-  });
-
-  it("refuses a claim above the category's current limit", async () => {
-    // The limit is checked at submission AND here, because a category can be
-    // tightened between the two. Approving against a stale policy reimburses what
-    // the org's own rules now forbid.
-    installDb({ requiresReceipt: 0, limit: 500, claimAmount: "1000.00" });
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
-      canApproveExpenses: true,
-      conn: h.conn,
-    });
-
-    expect(refusal).toMatch(/limit/i);
-  });
-
   it("approves, and records WHO approved and that the shortcut was used", async () => {
-    installDb({ requiresReceipt: 0, receipts: 1 });
     const refusal = await autoApproveClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
       claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
       canApproveExpenses: true,
       conn: h.conn,
     });
@@ -199,13 +146,11 @@ describe("autoApproveClaim — the rules the shortcut cannot bypass", () => {
   });
 
   it("keeps the status guard, so a concurrent manual decision is not overwritten", async () => {
-    installDb({ requiresReceipt: 0, receipts: 1 });
     await autoApproveClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
       claimUuid: CLAIM,
-      categoryUuid: CATEGORY,
       canApproveExpenses: true,
       conn: h.conn,
     });
@@ -234,12 +179,11 @@ describe("feature_access — the permission the shortcut is gated on", () => {
 
 describe("createClaim — still files the claim whatever the shortcut does", () => {
   it("creates a PENDING claim, which is the path the auto-approval upgrades", async () => {
-    installDb({ requiresReceipt: 0 });
     await createClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
-      categoryUuid: CATEGORY,
+      expenseName: "Taxi to client visit",
       amount: 1000,
       expenseDate: "2026-09-10",
       conn: h.conn,
@@ -248,6 +192,10 @@ describe("createClaim — still files the claim whatever the shortcut does", () 
     const inserted = h.conn.query.mock.calls.find(([s]) => String(s).includes("INSERT INTO expense_claims"));
     expect(inserted).toBeDefined();
     expect(String(inserted[0])).toContain("'pending'");
+    // The claim is free text now: the insert names the expense, and carries no
+    // category reference.
+    expect(String(inserted[0])).toContain("expense_name");
+    expect(String(inserted[0])).not.toContain("category_uuid");
     // No auto-approval columns on the insert path: the claim is filed as pending
     // and the shortcut is a decision made afterwards, not a column set at birth.
     expect(String(inserted[0])).not.toContain("auto_approved");
@@ -256,12 +204,11 @@ describe("createClaim — still files the claim whatever the shortcut does", () 
   it("is independent of the auto-approve decision, so a refusal cannot unfile it", async () => {
     // The order the controller uses: create, then attempt the decision. A claim
     // that refused the shortcut is still a claim that exists.
-    installDb({ requiresReceipt: 0 });
     const claim = await createClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
-      categoryUuid: CATEGORY,
+      expenseName: "Taxi to client visit",
       amount: 1000,
       expenseDate: "2026-09-10",
       conn: h.conn,
@@ -272,7 +219,6 @@ describe("createClaim — still files the claim whatever the shortcut does", () 
       actorUuid: ACTOR,
       employeeUuid: CLAIMANT,
       claimUuid: claim.uuid,
-      categoryUuid: CATEGORY,
       canApproveExpenses: false,
       conn: h.conn,
     });
@@ -286,7 +232,7 @@ describe("createClaim — still files the claim whatever the shortcut does", () 
 
 describe("attachReceipts — the org scoping the receipt follows", () => {
   it("scopes to the expense_claim entity, not a generic attachment", async () => {
-    // Re-exported to pin the constant the auto-approval receipt count queries by.
+    // The constant every receipt path scopes by.
     expect(ATTACHMENT_ENTITY.CLAIM).toBe("expense_claim");
   });
 });

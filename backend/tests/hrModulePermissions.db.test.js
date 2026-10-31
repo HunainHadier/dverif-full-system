@@ -125,7 +125,7 @@ describe("each module gate in org.routes.js requires its own permission", () => 
     ["hrLettersMgmt", "hr_letters"],
     ["assetMgmt", "manage_assets"],
     ["separationMgmt", "manage_separation"],
-    ["expenseCategoryMgmt", "approve_expenses"],
+    ["expenseReviewMgmt", "approve_expenses"],
   ];
 
   /** The single-line definition of a gate, so an assertion cannot match a comment. */

@@ -495,11 +495,16 @@ router.get(
   recruitmentMgmt,
   asyncHandler(downloadResume),
 );
-// Aliased: expense and asset categories are separate tables with separate
-// lifecycles, and both modules export a listCategories/createCategory pair. Same
-// name, different register - importing both unaliased would silently shadow one.
-const expenseCategoryMgmt = [requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
+// Asset categories: staff define the org's asset taxonomy behind the asset
+// module. Redefining what classes of asset exist stays org_admin-only.
 const assetCategoryMgmt = [...orgAdminsOnly, requireModuleFeature("asset_management")];
+
+// Expense claims are reviewed behind the staff gate plus the delegated
+// "approve_expenses" permission: an employee must never reach the review queue,
+// and an org_admin passes the permission on ROLE alone. Built from `staff` rather
+// than repeating requireRole here, so the role and subscription gates cannot drift
+// out of order — requirePermission reads req.user, which only exists after them.
+const expenseReviewMgmt = [...staff, requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
 
 router.get("/asset-categories", assetMgmt, asyncHandler(listCategories));
 router.post("/asset-categories", assetCategoryMgmt, asyncHandler(createCategory));
@@ -549,37 +554,37 @@ router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandle
 // itself: this same gate is what lets them approve one (requirePermission
 // "approve_expenses" is always true for org_admin), so a creation route would
 // hand the one person who can rubber-stamp a reimbursement the power to originate
-// it. Staff manage categories and review what employees file; employees file
-// through POST /api/v1/my/expenses, which derives the claimant from the session
-// and therefore cannot be pointed at anybody else.
+// it. Staff review what employees file; employees file through POST
+// /api/v1/my/expenses, which derives the claimant from the session and therefore
+// cannot be pointed at anybody else.
 //
 // The route is GONE rather than gated to a role, so it 404s. A permanently-403
 // route is a disabled feature with a working URL, and the next person to add a
 // create button finds it answers instead of finding it refused. See
 // tests/expenseClaimCreationRestricted.test.js, which fails if this comes back.
-router.get("/expense-claims", expenseCategoryMgmt, asyncHandler(listExpenseClaims));
-router.get("/expense-claims/:uuid", expenseCategoryMgmt, asyncHandler(getExpenseClaim));
+router.get("/expense-claims", expenseReviewMgmt, asyncHandler(listExpenseClaims));
+router.get("/expense-claims/:uuid", expenseReviewMgmt, asyncHandler(getExpenseClaim));
 // Registered BEFORE the /:uuid routes deliberately. Express matches in
 // registration order, so a literal segment sitting behind a parameter is one
 // refactor away from being swallowed by it. `/bulk-pay` as a uuid string would
 // reach loadClaim and 404 with a confusing message instead of paying anything.
-router.post("/expense-claims/bulk-pay", expenseCategoryMgmt, asyncHandler(bulkPayExpenseClaims));
-router.post("/expense-claims/:uuid/review", expenseCategoryMgmt, asyncHandler(reviewExpenseClaim));
-router.post("/expense-claims/:uuid/pay", expenseCategoryMgmt, asyncHandler(payExpenseClaim));
+router.post("/expense-claims/bulk-pay", expenseReviewMgmt, asyncHandler(bulkPayExpenseClaims));
+router.post("/expense-claims/:uuid/review", expenseReviewMgmt, asyncHandler(reviewExpenseClaim));
+router.post("/expense-claims/:uuid/pay", expenseReviewMgmt, asyncHandler(payExpenseClaim));
 router.post(
   "/expense-claims/:uuid/receipts",
-  expenseCategoryMgmt,
+  expenseReviewMgmt,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadExpenseReceipts),
 );
 router.delete(
   "/expense-attachments/:attachmentUuid",
-  expenseCategoryMgmt,
+  expenseReviewMgmt,
   asyncHandler(removeExpenseReceipt),
 );
 router.get(
   "/expense-attachments/:attachmentUuid/download",
-  expenseCategoryMgmt,
+  expenseReviewMgmt,
   asyncHandler(downloadExpenseReceipt),
 );
 

@@ -5,10 +5,6 @@ import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import {
-  listCategories,
-  createCategory,
-  updateCategory,
-  deleteCategory,
   listClaims,
   getClaim,
   createClaim,
@@ -28,8 +24,7 @@ import {
  * Thin, like every other module controller here: the rules live in the service and
  * are enforced in the database. One thing is deliberate and worth stating - every
  * handler takes the organization from the session and NEVER from the body, so a
- * guessed claim or category uuid must 404 rather than return another tenant's
- * expense records.
+ * guessed claim uuid must 404 rather than return another tenant's expense records.
  *
  * Receipts go through the shared attachments table with entity_type
  * 'expense_claim', which the attachments migration already documents as the
@@ -55,99 +50,6 @@ async function callerEmployee(orgId, req) {
 }
 
 // ---------------------------------------------------------------------------
-// Categories (staff)
-// ---------------------------------------------------------------------------
-
-export async function listExpenseCategories(req, res) {
-  const includeInactive = req.query.include_inactive === "1" || req.query.include_inactive === "true";
-  const items = await listCategories({ orgId: req.scopeOrgId, includeInactive });
-  return ok(res, { items }, "Expense categories");
-}
-
-export async function createExpenseCategory(req, res) {
-  const category = await createCategory({
-    orgId: req.scopeOrgId,
-    actorId: req.user?.id ?? null,
-    name: req.body?.name,
-    description: req.body?.description,
-    maxLimitPerClaim: req.body?.max_limit_per_claim,
-    requiresReceipt: req.body?.requires_receipt,
-  });
-  logAudit({
-    ...getActorFromReq(req),
-    action: "expense_category.create",
-    entityType: "expense_category",
-    entityId: category.uuid,
-    details: { name: category.name, requires_receipt: category.requires_receipt },
-    req,
-  });
-  return created(res, { category }, "Expense category created");
-}
-
-/**
- * Edit a category.
- *
- * Org from the session, never the body — the same rule as every handler here, and
- * the reason a guessed category uuid cannot reach another tenant's policy.
- */
-export async function updateExpenseCategory(req, res) {
-  const category = await updateCategory({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid ?? null,
-    categoryUuid: req.params.uuid,
-    name: req.body?.name,
-    description: req.body?.description,
-    maxLimitPerClaim: req.body?.max_limit_per_claim,
-    requiresReceipt: req.body?.requires_receipt,
-    isActive: req.body?.is_active,
-  });
-  logAudit({
-    ...getActorFromReq(req),
-    action: "expense_category.update",
-    entityType: "expense_category",
-    entityId: category.uuid,
-    details: {
-      name: category.name,
-      requires_receipt: category.requires_receipt,
-      max_limit_per_claim: category.max_limit_per_claim,
-      is_active: category.is_active,
-    },
-    req,
-  });
-  return ok(res, { category }, "Expense category updated");
-}
-
-/**
- * Retire a category. Deactivates rather than erasing — see deleteCategory in the
- * service for why a claim that has been reimbursed must keep the category it was
- * filed under.
- */
-export async function deleteExpenseCategory(req, res) {
-  const result = await deleteCategory({
-    orgId: req.scopeOrgId,
-    actorUuid: req.user?.uuid ?? null,
-    categoryUuid: req.params.uuid,
-  });
-  logAudit({
-    ...getActorFromReq(req),
-    action: "expense_category.delete",
-    entityType: "expense_category",
-    entityId: req.params.uuid,
-    // claims_preserved is the interesting half of this entry: it records that the
-    // category was retired rather than destroyed, and how much history rides on it.
-    details: { claims_preserved: result.claimsPreserved },
-    req,
-  });
-  // camelCase in the service, snake_case on the wire, like every other field this
-  // API returns. The client reads `claims_preserved` to decide what the toast says.
-  return ok(
-    res,
-    { retired: result.retired, claims_preserved: result.claimsPreserved },
-    "Expense category removed",
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Claims (staff) — read, review, settle. Never create.
 // ---------------------------------------------------------------------------
 
@@ -157,7 +59,6 @@ export async function listExpenseClaims(req, res) {
     orgId: req.scopeOrgId,
     status: req.query.status,
     employeeUuid: req.query.employee_uuid,
-    categoryUuid: req.query.category_uuid,
     page,
     limit,
     offset,
@@ -275,33 +176,6 @@ export async function downloadExpenseReceipt(req, res) {
 // ---------------------------------------------------------------------------
 
 /**
- * The categories this employee may file a claim under.
- *
- * EXISTS BECAUSE THE ESS PORTAL CANNOT USE THE STAFF ROUTE.
- *
- * GET /org/expense-categories is gated `requireRole("org_admin","sub_admin")` +
- * `requirePermission("approve_expenses")`. An employee is neither, so the
- * employee portal's category dropdown was calling a URL that answered 403 — and
- * because a failed query leaves `data` undefined, the form rendered its EMPTY
- * state: "No categories found. Create a new category first." That message is a
- * lie here. Categories existed, the employee simply was not allowed to be told
- * about them, and the page told them to go create one instead — a page they
- * cannot reach. The same shape as the receipt-upload bug this module already
- * documents: a card wired to the staff service 403s silently inside the one
- * action the portal exists to enable.
- *
- * Read-only and derived from the SESSION's org, so an employee can see what they
- * may claim but cannot create, deactivate or edit a category — that stays with
- * staff. Active only: an inactive category cannot be filed against, so offering
- * it would produce a submission the server then refuses on the limit/active check.
- */
-export async function myExpenseCategories(req, res) {
-  const orgId = req.scopeOrgId ?? req.user?.organization;
-  const items = await listCategories({ orgId, includeInactive: false });
-  return ok(res, { items }, "Expense categories");
-}
-
-/**
  * The employee's own claims, and nothing else's.
  *
  * Derived from the session rather than from a parameter, because "list claims for
@@ -355,8 +229,8 @@ export async function submitMyExpenseClaim(req, res) {
    *
    * Whether it is HONORED is not this function's decision and not the checkbox's.
    * `autoApproveClaim` applies the three rules - approve_expenses authority, no
-   * self-approval, and the receipt requirement the manual review also enforces -
-   * and returns a reason when it refuses.
+   * self-approval, and that the claim is still pending - and returns a reason when
+   * it refuses.
    *
    * A REFUSAL IS NOT AN ERROR. The claim has already been filed by the time this
    * runs, and the whole point of the design is that it stays filed: an employee

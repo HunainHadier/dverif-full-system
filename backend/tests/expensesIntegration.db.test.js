@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import {
-  createCategory,
   createClaim,
   reviewClaim,
   markClaimPaid,
@@ -39,10 +38,10 @@ import { seedPayrollBaseline } from "./helpers/payrollPolicy.js";
  *     toISOString() shifts the calendar day backwards. isoDate() is used throughout
  *     precisely so that cannot happen; a mock has no timezone to catch it in.
  *
- * EVERY TEST GETS ITS OWN EMPLOYEE AND ITS OWN CATEGORY. Claims are counted and
- * totalled per employee and per period, so a shared fixture would make each test see
- * the previous one's money and the file would become order-dependent - a payroll
- * regression would present as "the claim total is wrong" with no obvious cause.
+ * EVERY TEST GETS ITS OWN EMPLOYEE. Claims are counted and totalled per employee and
+ * per period, so a shared fixture would make each test see the previous one's money
+ * and the file would become order-dependent - a payroll regression would present as
+ * "the claim total is wrong" with no obvious cause.
  *
  * THE 20261114 REGRESSION, EXPLICITLY.
  *
@@ -91,9 +90,6 @@ let orgId;
 let otherOrgId;
 /** A REAL user row: salary_records.created_by is an FK to users(id). */
 let payrollUserId;
-let taxi;
-let meals;
-let unlimited;
 let n = 0;
 
 beforeAll(async () => {
@@ -127,15 +123,6 @@ beforeAll(async () => {
     `Expense Other Tenant ${Date.now()}`,
   ]);
   otherOrgId = other.insertId;
-
-  const mk = async (name, opts) =>
-    createCategory({ orgId, name, conn: db, ...opts });
-
-  // requires_receipt: the receipt gate, and the reason attachments exist here.
-  taxi = await mk("Taxi", { maxLimitPerClaim: 5000, requiresReceipt: true });
-  meals = await mk("Meals", { requiresReceipt: false });
-  // No limit at all, to keep limit-enforcement tests off the critical path.
-  unlimited = await mk("General", { requiresReceipt: false });
 });
 
 afterAll(async () => {
@@ -163,7 +150,7 @@ afterAll(async () => {
       await db.query("DELETE FROM employees WHERE organization_id=?", [id]);
     }
     // Both probe orgs are deleted: left behind they appear in an org-admin's
-    // organization picker and their categories look like real company policy.
+    // organization picker and their claims look like real company data.
   
   } finally {
     await purgeTestOrgs(db, [orgId, otherOrgId]);
@@ -196,7 +183,7 @@ const file = (amount, over = {}) =>
   createClaim({
     orgId,
     employeeUuid: over.employeeUuid,
-    categoryUuid: over.categoryUuid ?? unlimited.uuid,
+    expenseName: over.expenseName ?? "Probe expense",
     amount,
     expenseDate: over.expenseDate ?? IN_PERIOD,
     description: "probe claim",
@@ -204,12 +191,9 @@ const file = (amount, over = {}) =>
     conn: db,
   });
 
-/** file + approve, attaching a receipt first only when the category requires one. */
-async function approvedClaim({ employeeUuid, categoryUuid = unlimited.uuid, amount = 1000, expenseDate = IN_PERIOD, paymentMode = "payroll" }) {
-  const claim = await file(amount, { employeeUuid, categoryUuid, expenseDate, paymentMode });
-  // Derived from the category rather than passed in as a flag, so a test cannot
-  // forget it and then fail for the wrong reason.
-  if (categoryUuid === taxi.uuid) await attachReceipt(claim.uuid);
+/** file + approve. Receipts are optional, so none is attached. */
+async function approvedClaim({ employeeUuid, expenseName = "Probe expense", amount = 1000, expenseDate = IN_PERIOD, paymentMode = "payroll" }) {
+  const claim = await file(amount, { employeeUuid, expenseName, expenseDate, paymentMode });
   return reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db });
 }
 
@@ -335,33 +319,23 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
   // -------------------------------------------------------------------------
   // Review rules.
   // -------------------------------------------------------------------------
-  it("a category that requires a receipt cannot be approved without one", async () => {
-    const employee = await newEmployee(orgId, "NoReceipt");
-    const claim = await file(900, { employeeUuid: employee, categoryUuid: taxi.uuid });
+  it("a claim can be approved with NO receipt, and still reports zero receipts", async () => {
+    // Receipts are optional now. Demanding one everywhere would make the module
+    // unusable for small daily spend and people would stop filing claims.
+    const employee = await newEmployee(orgId, "NoReceiptNeeded");
+    const claim = await file(120, { employeeUuid: employee, expenseName: "Bus fare" });
+    const approved = await reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db });
+    expect(approved.status).toBe("approved");
+    expect(approved.receipt_count).toBe(0);
+  });
 
-    await expect(
-      reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db }),
-    ).rejects.toThrow(/require a receipt/i);
-
-    // Still pending afterwards - a refused approval must not half-apply.
-    const [rows] = await db.query("SELECT status FROM expense_claims WHERE uuid=?", [claim.uuid]);
-    expect(rows[0].status).toBe("pending");
-
+  it("a receipt is still accepted when the employee attaches one", async () => {
+    const employee = await newEmployee(orgId, "WithReceipt");
+    const claim = await file(900, { employeeUuid: employee, expenseName: "Taxi" });
     await attachReceipt(claim.uuid);
     const approved = await reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db });
     expect(approved.status).toBe("approved");
-    expect(approved.receipt_satisfied).toBe(true);
-  });
-
-  it("a receipt requirement is NOT applied to a category that does not ask for one", async () => {
-    // The other direction: if receipts were demanded everywhere, the module would be
-    // unusable for small daily spend and people would stop filing claims at all.
-    const employee = await newEmployee(orgId, "NoReceiptNeeded");
-    const claim = await file(120, { employeeUuid: employee, categoryUuid: meals.uuid });
-    const approved = await reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db });
-    expect(approved.status).toBe("approved");
-    expect(approved.receipt_satisfied).toBe(true);
-    expect(approved.receipt_count).toBe(0);
+    expect(approved.receipt_count).toBe(1);
   });
 
   it("a claim cannot be decided twice", async () => {
@@ -463,27 +437,6 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
   // -------------------------------------------------------------------------
   // Submission rules.
   // -------------------------------------------------------------------------
-  it("a claim over the category limit is refused at submission AND at review", async () => {
-    const employee = await newEmployee(orgId, "OverLimit");
-    // taxi is capped at 5000.
-    await expect(file(6000, { employeeUuid: employee, categoryUuid: taxi.uuid })).rejects.toThrow(
-      /exceeds the Taxi limit/i,
-    );
-
-    // And the limit can be TIGHTENED between submission and review, which is why it
-    // is re-checked on approval rather than trusted from submission time.
-    const claim = await file(4000, { employeeUuid: employee, categoryUuid: taxi.uuid });
-    await attachReceipt(claim.uuid);
-    await db.query("UPDATE expense_categories SET max_limit_per_claim=1000 WHERE uuid=?", [taxi.uuid]);
-    try {
-      await expect(
-        reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db }),
-      ).rejects.toThrow(/exceeds the current Taxi limit/i);
-    } finally {
-      await db.query("UPDATE expense_categories SET max_limit_per_claim=5000 WHERE uuid=?", [taxi.uuid]);
-    }
-  });
-
   it("refuses a future expense and one beyond the backdate window", async () => {
     const employee = await newEmployee(orgId, "BadDates");
     await expect(file(100, { employeeUuid: employee, expenseDate: "2099-01-01" })).rejects.toThrow(
@@ -525,18 +478,6 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
     // And it is still untouched in its own org.
     const [rows] = await db.query("SELECT status FROM expense_claims WHERE uuid=?", [mine.uuid]);
     expect(rows[0].status).toBe("approved");
-  });
-
-  it("a claim cannot be filed against a category belonging to another organization", async () => {
-    const theirCategory = await createCategory({
-      orgId: otherOrgId,
-      name: "Their Travel",
-      conn: db,
-    });
-    const employee = await newEmployee(orgId, "WrongCategory");
-    await expect(
-      file(100, { employeeUuid: employee, categoryUuid: theirCategory.uuid }),
-    ).rejects.toThrow(/not found/i);
   });
 
   it("an employee from another organization cannot have a claim filed for them", async () => {
@@ -594,13 +535,13 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
     expect(expenseReimbursementLine(null)).toBeNull();
   });
 
-  it("a single claim is labelled by its category rather than as a count of one", async () => {
+  it("a single claim is labelled by its expense name rather than as a count of one", async () => {
     const employee = await newEmployee(orgId, "SingleLabel");
-    await approvedClaim({ employeeUuid: employee, amount: 100, categoryUuid: meals.uuid });
+    await approvedClaim({ employeeUuid: employee, amount: 100, expenseName: "Client lunch" });
     const claims = await getApprovedClaimsForPeriod({
       orgId, employeeUuid: employee, month: MONTH, year: YEAR, conn: db,
     });
-    expect(expenseReimbursementLine(claims).label).toMatch(/Meals/);
+    expect(expenseReimbursementLine(claims).label).toMatch(/Client lunch/);
   });
 });
 
@@ -653,7 +594,7 @@ async function newPaidEmployee(name) {
 describe.runIf(HAS_DB)("payroll carries approved claims onto the payslip and consumes them", () => {
   it("an approved claim becomes an auto_expense EARNING line and is marked paid by the run", async () => {
     const employee = await newPaidEmployee("PayslipEarning");
-    const claim = await approvedClaim({ employeeUuid: employee, amount: 1250, categoryUuid: meals.uuid });
+    const claim = await approvedClaim({ employeeUuid: employee, amount: 1250, expenseName: "Client lunch" });
 
     const res = fakeRes();
     await generatePayroll(

@@ -59,17 +59,6 @@ const resolveExpenseApprovalAuthority = (req, _res, next) => {
   next();
 };
 
-/**
- * Read-only, so an employee can see what they are allowed to claim without being
- * able to manage the categories themselves — creating, deactivating and editing
- * them stay with staff behind requirePermission("approve_expenses").
- *
- * BEFORE `/:uuid`, deliberately, and for the same reason org.routes.js registers
- * `/bulk-pay` first: Express matches in registration order, so a literal segment
- * sitting behind a parameter is one refactor away from being swallowed by it.
- * Registered second, "categories" reaches myExpenseClaimDetail and 404s as a
- * missing claim.
- */
 router.get("/", selfService, asyncHandler(myExpenseClaims));
 router.get("/:uuid", selfService, asyncHandler(myExpenseClaimDetail));
 router.post("/", selfService, resolveExpenseApprovalAuthority, asyncHandler(submitMyExpenseClaim));
@@ -77,16 +66,12 @@ router.post("/", selfService, resolveExpenseApprovalAuthority, asyncHandler(subm
 /**
  * Receipts on the employee's OWN claim.
  *
- * These exist because a receipt-required category cannot be approved without one,
- * and the employee is the only person who has the till slip. Without these routes
- * the ESS portal could file a claim and then do nothing about the receipt that
- * decides whether it is approved - the employee would have to email finance and
- * wait, which is the exact workflow the portal was meant to replace.
+ * A receipt is optional, but when the employee has one this is where it is
+ * attached: the staff routes are org-gated and would return 403 to an employee,
+ * and simply removing the gate would expose every claim in the tenant, since these
+ * paths take a uuid.
  *
  * Every handler here re-derives the caller and then proves the claim is THEIRS.
- * The staff equivalents are org-gated and would return 403 to an employee; and
- * simply removing the gate would expose every claim in the tenant, since these
- * paths take a uuid.
  */
 router.post(
   "/:uuid/receipts",
