@@ -61,7 +61,7 @@ export const orgLeavesService = {
   deleteType: (id: number) => api.delete(`/org/leave-types/${id}`).then((r) => r.data),
   list: (params: { page?: number; limit?: number; status?: string; search?: string } = {}) =>
     api.get<Paginated<LeaveRequest>>("/org/leaves", { params }).then((r) => r.data),
-  decide: (uuid: UUID, data: { status: "approved" | "rejected" }) =>
+  decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
     api
       .patch<{ leaveRequest: LeaveRequest }>(`/leaves/${uuid}/decide`, data)
       .then((r) => r.data.leaveRequest),
@@ -223,34 +223,21 @@ export type PayrollPreview = {
   count: number;
 };
 
-export type PayrollPolicy = {
-  /**
-   * Read-only. The API always reports the application's single currency (PKR);
-   * it is not an administrator-settable field and is deliberately absent from
-   * `PayrollPolicyInput`.
-   */
-  currency: string;
-  pay_frequency: "weekly" | "biweekly" | "semi_monthly" | "monthly";
-  daily_rate_basis: "actual_working_days" | "calendar_days" | "fixed_30";
+export type PayrollSettings = {
+  salary_calculation_method: "hours" | "days";
+  calculate_overtime: boolean;
   shift_start_time: string;
-  hours_per_workday: number;
-  late_grace_minutes: number;
-  late_arrivals_per_penalty: number;
-  late_penalty_days: number;
+  shift_end_time: string;
   overtime_multiplier: number;
-  deduct_unpaid_leave: boolean;
-  deduct_absences: boolean;
-  deduct_late_arrivals: boolean;
-  pay_approved_overtime: boolean;
-  work_week: Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", boolean>;
 };
 
-/** What the policy form actually submits — everything except the currency. */
-export type PayrollPolicyInput = Omit<PayrollPolicy, "currency">;
+export type MonthlyWorkDay = { date: string; day_type: "working" | "off" };
 
 export const orgSalaryService = {
-  policy: () => api.get<{ configured: boolean; policy: PayrollPolicy | null; work_week: Record<string, number> | null }>("/org/payroll-policy").then((r) => r.data),
-  savePolicy: (data: PayrollPolicyInput) => api.put<{ configured: true; policy: PayrollPolicy; work_week: Record<string, number> }>("/org/payroll-policy", data).then((r) => r.data),
+  settings: () => api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings").then((r) => r.data.settings),
+  saveSettings: (data: PayrollSettings) => api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
+  schedule: (month: number, year: number) => api.get<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", { params: { month, year } }).then((r) => r.data),
+  saveSchedule: (data: { month: number; year: number; days: MonthlyWorkDay[] }) => api.put<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", data).then((r) => r.data),
   list: (
     params: {
       page?: number;
