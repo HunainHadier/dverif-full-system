@@ -297,7 +297,7 @@ function EmployeeDetailPage() {
             {isCurrentEmployee(emp.status) && (
               <TabsTrigger value="payroll">Payroll</TabsTrigger>
             )}
-            {!isModuleFlagOff("hr_letters_management") && (
+            {perms.hr_letters && !isModuleFlagOff("hr_letters_management") && (
               <TabsTrigger value="letters" className="gap-1.5">
                 <FileSignature className="h-3.5 w-3.5" /> Letters
               </TabsTrigger>
