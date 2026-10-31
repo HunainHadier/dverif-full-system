@@ -40,8 +40,6 @@ const ATTACH = "66666666-6666-4666-8666-666666666666";
 const assetRow = (over = {}) => ({
   uuid: ASSET,
   organization_id: ORG,
-  category_uuid: "22222222-2222-4222-8222-222222222222",
-  asset_tag: "AST-0001",
   name: "ThinkPad",
   status: "available",
   ...over,
