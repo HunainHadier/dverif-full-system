@@ -194,11 +194,11 @@ async function attendAll(uuid, skip = []) {
   }
 }
 
-async function approveLeave(uuid, leaveTypeId, start, end) {
+async function approveLeave(uuid, leaveTypeId, start, end, treatment = "unpaid") {
   await db.query(
-    `INSERT INTO leave_requests (uuid, employee_uuid, leave_type_id, start_date, end_date, status, approved_at)
-     VALUES (UUID(), ?, ?, ?, ?, 'approved', NOW())`,
-    [uuid, leaveTypeId, start, end],
+    `INSERT INTO leave_requests (uuid, employee_uuid, leave_type_id, start_date, end_date, requested_treatment, approved_treatment, status, approved_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'approved', NOW())`,
+    [uuid, leaveTypeId, start, end, treatment, treatment],
   );
 }
 
@@ -275,7 +275,7 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     const before = compute(await summarise(uuid));
     expect(before.totalDeduction).toBe(0);
 
-    await approveLeave(uuid, paidTypeId, "2026-10-12", "2026-10-12"); // a Monday already worked
+    await approveLeave(uuid, paidTypeId, "2026-10-12", "2026-10-12", "paid"); // a Monday already worked
 
     const summary = await summarise(uuid);
     expect(summary.paidLeaveDays).toBe(1);
