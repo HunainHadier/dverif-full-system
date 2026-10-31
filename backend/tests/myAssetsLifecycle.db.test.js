@@ -110,9 +110,7 @@ async function seedEmployee({ withPortalAccount = true } = {}) {
   return { orgId, employeeUuid: linked.uuid, userUuid: linked.linked_user_uuid };
 }
 
-async function seedAsset(orgId, employeeUuid) {
-  const [[emp]] = await db.query("SELECT uuid FROM employees WHERE uuid=?", [employeeUuid]);
-
+async function seedAsset(orgId) {
   const [a] = await db.query(
     `INSERT INTO assets (organization_id, asset_tag, name, model_details, serial_number, status) VALUES (?, ?, ?, ?, ?, 'available')`,
     [orgId, uniq(), 'ThinkPad', 'T14 Gen 3', 'SN-IT-1'],
@@ -142,7 +140,7 @@ describe.skipIf(!reachable)("assign -> /my/assets, against a real database", () 
   it("an assigned asset appears immediately for that employee", async () => {
     const seed = await seedEmployee();
     try {
-      const assetUuid = await seedAsset(seed.orgId, seed.employeeUuid);
+      const assetUuid = await seedAsset(seed.orgId);
 
       // Before: nothing.
       expect(await assets.listMyAssets({ orgId: seed.orgId, userUuid: seed.userUuid })).toEqual([]);
