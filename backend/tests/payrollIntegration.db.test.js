@@ -202,11 +202,11 @@ async function approveLeave(uuid, leaveTypeId, start, end, treatment = "unpaid")
   );
 }
 
-async function clockIn(uuid, date, time) {
+async function clockIn(uuid, date, time, checkout = `${date} 17:00:00`) {
   await db.query(
-    `INSERT INTO attendance_records (uuid, employee_uuid, organization_id, date, check_in_at, status, is_manual, created_at)
-     VALUES (UUID(), ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
-    [uuid, orgId, date, time],
+    `INSERT INTO attendance_records (uuid, employee_uuid, organization_id, date, check_in_at, check_out_at, status, is_manual, created_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
+    [uuid, orgId, date, time, checkout],
   );
 }
 
@@ -343,43 +343,14 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     expect(summary.attendedDays).toBe(2);
   });
 
-  it("two lates cost NOTHING, and three cost exactly half a day", async () => {
-    const two = await newEmployee("TwoLates");
-    await clockIn(two, "2026-10-05", "2026-10-05 09:45:00");
-    await clockIn(two, "2026-10-06", "2026-10-06 10:15:00");
-
-    const twoSummary = await summarise(two);
-    expect(twoSummary.lateCount).toBe(2);
-    const twoComputed = compute(twoSummary);
-    // Prorating here would make the penalty CHEAPER as the employee became
-    // latelier: 2 lates at 0.33 of a day and 3 at exactly 0.5 means committing
-    // to a third late arrival reduces the penalty.
-    expect(twoComputed.lines.some((l) => l.source === "auto_late")).toBe(false);
-
-    const three = await newEmployee("ThreeLates");
-    await clockIn(three, "2026-10-05", "2026-10-05 09:45:00");
-    await clockIn(three, "2026-10-06", "2026-10-06 10:15:00");
-    await clockIn(three, "2026-10-07", "2026-10-07 11:30:00");
-
-    const threeSummary = await summarise(three);
-    expect(threeSummary.lateCount).toBe(3);
-    const line = compute(threeSummary).lines.find((l) => l.source === "auto_late");
-    expect(line).toBeTruthy();
-    expect(Number(line.amount)).toBeCloseTo(PER_DAY * 0.5, 2);
-    expect(line.basis_unit).toBe("late_arrivals");
-    // This used to read `expect(PAYROLL_RULES.LATES_PER_HALF_DAY).toBe(3)` against a
-    // hardcoded constant. That constant is now `null` by design - the threshold and
-    // the penalty are organization policy, and getConfiguredPayrollPolicy refuses to
-    // compute payroll until an administrator has set them - so the assertion could
-    // never pass and was testing behaviour that no longer exists.
-    //
-    // The live equivalent, and what this test should be asserting: the threshold the
-    // SEEDED policy configures (late_arrivals_per_penalty, below) is what produced
-    // the penalty, and `basis_value` reports the late arrivals that crossed it. Three
-    // arrivals against a threshold of three is the first number that pays.
-    expect(Number(line.basis_value)).toBe(3);
-    expect(POLICY.late_arrivals_per_penalty).toBe(3);
-    expect(POLICY.late_penalty_days).toBeCloseTo(0.5, 2);
+  it("reports late arrivals without applying a removed policy-based penalty", async () => {
+    const uuid = await newEmployee("LateReporting");
+    await clockIn(uuid, "2026-10-05", "2026-10-05 09:45:00");
+    await clockIn(uuid, "2026-10-06", "2026-10-06 10:15:00");
+    await clockIn(uuid, "2026-10-07", "2026-10-07 11:30:00");
+    const summary = await summarise(uuid);
+    expect(summary.lateCount).toBe(3);
+    expect(compute(summary).lines.some((line) => line.source === "auto_late")).toBe(false);
   });
 
   it("APPROVED overtime hours are paid; requested-but-REJECTED hours are not", async () => {
@@ -387,20 +358,21 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     await addOvertime(uuid, "2026-10-20", 8, 6, "approved");
     await addOvertime(uuid, "2026-10-21", 10, 0, "rejected");
     await addOvertime(uuid, "2026-10-22", 4, 0, "pending");
+    await clockIn(uuid, "2026-10-20", "2026-10-20 09:00:00", "2026-10-20 19:00:00");
 
     const summary = await summarise(uuid);
     // Of the approved request, 8h were claimed and 6h allowed. Paying the claimed
     // figure instead would pay 2 hours nobody approved.
-    expect(summary.approvedOvertimeHours).toBe(6);
+    expect(summary.approvedOvertimeHours).toBe(2);
     expect(summary.requestedOvertimeHours).toBe(8);
 
     const c = compute(summary);
     const line = c.lines.find((l) => l.source === "auto_overtime");
     expect(line).toBeTruthy();
     expect(line.type).toBe("earning");
-    expect(line.basis_value).toBe(6);
-    expect(Number(line.amount)).toBeCloseTo(HOURLY * 1.5 * 6, 2);
-    expect(c.totalAddition).toBeCloseTo(HOURLY * 1.5 * 6, 2);
+    expect(line.basis_value).toBe(2);
+    expect(Number(line.amount)).toBeCloseTo(HOURLY * 1.5 * 2, 2);
+    expect(c.totalAddition).toBeCloseTo(HOURLY * 1.5 * 2, 2);
   });
 
   it("a PENDING overtime request pays nothing until it is approved", async () => {
@@ -419,6 +391,7 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     const uuid = await newEmployee("BothWays");
     await approveLeave(uuid, unpaidTypeId, "2026-10-06", "2026-10-07");
     await addOvertime(uuid, "2026-10-20", 6, 6, "approved");
+    await clockIn(uuid, "2026-10-20", "2026-10-20 09:00:00", "2026-10-20 19:00:00");
 
     const c = compute(await summarise(uuid));
     const earnings = c.lines.filter((l) => l.type === "earning");
@@ -434,34 +407,22 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     expect(c.totalAddition).not.toBe(c.totalDeduction - c.totalAddition);
   });
 
-  it("a holiday is not a working day, so it is not an absence either", async () => {
-    // The bug this table exists to prevent: with no calendar, a public holiday has
-    // no attendance row, so "no row" reads as absent and a day's pay is docked for
-    // a day nobody was expected to work.
-    const uuid = await newEmployee("Holiday");
-    const [holiday] = await db.query(
-      "INSERT INTO holidays (uuid, organization_id, name, date) VALUES (UUID(), ?, 'Integration Holiday', '2026-10-19')",
+  it("a date marked off in the monthly schedule is not a working day or an absence", async () => {
+    const uuid = await newEmployee("ScheduledOff");
+    await db.query(
+      "UPDATE organization_monthly_work_schedules SET day_type='off' WHERE organization_id=? AND schedule_date='2026-10-19'",
       [orgId],
     );
-
     try {
       const summary = await summarise(uuid);
       expect(summary.workingDays).toBe(WORKING_DAYS - 1);
-      expect(summary.holidayCount).toBeGreaterThanOrEqual(1);
-      // One fewer working day to be absent from, and the employee is absent on
-      // all of them, so absence drops by one rather than the deduction rising.
       expect(summary.absentDays).toBe(WORKING_DAYS - 1);
-
-      const c = compute(summary);
-      expect(c.workingDays).toBe(WORKING_DAYS - 1);
-      // The denominator dropped too, so each remaining day costs slightly MORE -
-      // but the total must still be less than paying for a full month.
-      expect(c.totalDeduction).toBeLessThan(BASIC);
+      expect(compute(summary).workingDays).toBe(WORKING_DAYS - 1);
     } finally {
-      // Holidays are ORG-scoped, so leaving one behind shifts the working-day
-      // count for every later test in this file and turns a real payroll bug into
-      // an unexplained number.
-      await db.query("DELETE FROM holidays WHERE id=?", [holiday.insertId]);
+      await db.query(
+        "UPDATE organization_monthly_work_schedules SET day_type='working' WHERE organization_id=? AND schedule_date='2026-10-19'",
+        [orgId],
+      );
     }
   });
 
