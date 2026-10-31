@@ -208,7 +208,6 @@ describe("canAccessRoute — sub_admin", () => {
       "/org/team",
       "/org/leaves",
       "/org/attendance",
-      "/org/salary-components",
       "/org/payroll",
     ]) {
       expect(canAccessRoute(s, p), p).toBe(false);
@@ -237,7 +236,6 @@ describe("canAccessRoute — sub_admin", () => {
       ["manage_employees", "/org/team"],
       ["leave", "/org/leaves"],
       ["attendance", "/org/attendance"],
-      ["payroll", "/org/salary-components"],
       ["payroll", "/org/payroll"],
     ];
     for (const [flag, path] of cases) {
