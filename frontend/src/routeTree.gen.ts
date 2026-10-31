@@ -728,7 +728,6 @@ export interface FileRouteTypes {
     | '/_app/admin/users'
     | '/_app/auto-verified_/$uuid'
     | '/_app/org/admins'
-    | '/_app/org/asset-categories'
     | '/_app/org/assets'
     | '/_app/org/attendance'
     | '/_app/org/expense-claims'
