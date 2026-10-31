@@ -49,12 +49,7 @@ export type AssetMaintenanceJob = {
 
 export type Asset = {
   uuid: UUID;
-  category_uuid: UUID;
-  category_name?: string;
-  asset_tag: string;
   name: string;
-  model_details: string | null;
-  serial_number: string | null;
   purchase_date: string | null;
   purchase_cost: number | null;
   vendor: string | null;
@@ -73,15 +68,6 @@ export type AssetDetail = Asset & {
   assignments: AssetAssignment[];
   maintenance: AssetMaintenanceJob[];
   receipts: AssetAttachment[];
-};
-
-export type AssetCategory = {
-  uuid: UUID;
-  name: string;
-  description: string | null;
-  default_lifespan_months: number | null;
-  is_active: number | boolean;
-  asset_count?: number;
 };
 
 export type AssetSummary = {
@@ -107,38 +93,6 @@ export const ASSET_STATUS_VARIANT: Record<
   retired: "secondary",
 };
 
-export const assetCategoriesService = {
-  list: (includeInactive = false) =>
-    api
-      .get<{ items?: AssetCategory[] } | AssetCategory[]>("/org/asset-categories", {
-        params: includeInactive ? { include_inactive: 1 } : undefined,
-      })
-      .then((r) => {
-        const data = r.data as { items?: AssetCategory[] } | AssetCategory[];
-        const items = Array.isArray(data) ? data : (data.items ?? []);
-        // Defensive: the list drives a <Select>, and a non-array would throw
-        // during render rather than degrade.
-        return Array.isArray(items) ? items : [];
-      }),
-  create: (data: { name: string; description?: string; default_lifespan_months?: number | null }) =>
-    api
-      .post<{ category: AssetCategory }>("/org/asset-categories", data)
-      .then((r) => r.data.category),
-  update: (
-    uuid: UUID,
-    data: {
-      name?: string;
-      description?: string;
-      default_lifespan_months?: number | null;
-      is_active?: boolean;
-    },
-  ) =>
-    api
-      .put<{ category: AssetCategory }>(`/org/asset-categories/${uuid}`, data)
-      .then((r) => r.data.category),
-  remove: (uuid: UUID) => api.delete(`/org/asset-categories/${uuid}`).then((r) => r.data),
-};
-
 /**
  * What an employee sees about their own hardware.
  *
@@ -150,11 +104,7 @@ export const assetCategoriesService = {
 export type MyAsset = {
   uuid: UUID;
   assignment_uuid: string;
-  asset_tag: string;
   name: string;
-  category_name: string | null;
-  model_details: string | null;
-  serial_number: string | null;
   warranty_expires_at: string | null;
   assigned_at: string;
 };
@@ -166,7 +116,6 @@ export const assetsService = {
       limit?: number;
       search?: string;
       status?: AssetStatus;
-      category_uuid?: UUID;
     } = {},
   ) =>
     api
@@ -181,11 +130,7 @@ export const assetsService = {
   summary: () => api.get<AssetSummary>("/org/assets/summary").then((r) => r.data),
 
   create: (data: {
-    category_uuid: UUID;
     name: string;
-    asset_tag?: string;
-    model_details?: string;
-    serial_number?: string;
     purchase_date?: string;
     purchase_cost?: number;
     vendor?: string;
@@ -198,7 +143,6 @@ export const assetsService = {
     data: {
       category_uuid?: UUID;
       name?: string;
-      asset_tag?: string;
       /**
        * `string | null`, and the null is load-bearing.
        *
@@ -207,8 +151,6 @@ export const assetsService = {
        * a cost, a serial or a note has to send null; sending undefined types
        * fine and silently does nothing, which looks like a save that worked.
        */
-      model_details?: string | null;
-      serial_number?: string | null;
       purchase_date?: string | null;
       purchase_cost?: number | null;
       vendor?: string | null;
