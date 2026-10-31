@@ -49,7 +49,10 @@ export type AssetMaintenanceJob = {
 
 export type Asset = {
   uuid: UUID;
+  asset_tag: string;
   name: string;
+  model_details: string | null;
+  serial_number: string | null;
   purchase_date: string | null;
   purchase_cost: number | null;
   vendor: string | null;
@@ -104,7 +107,10 @@ export const ASSET_STATUS_VARIANT: Record<
 export type MyAsset = {
   uuid: UUID;
   assignment_uuid: string;
+  asset_tag: string;
   name: string;
+  model_details: string | null;
+  serial_number: string | null;
   warranty_expires_at: string | null;
   assigned_at: string;
 };
@@ -131,6 +137,8 @@ export const assetsService = {
 
   create: (data: {
     name: string;
+    model_details?: string;
+    serial_number?: string;
     purchase_date?: string;
     purchase_cost?: number;
     vendor?: string;
@@ -142,12 +150,15 @@ export const assetsService = {
     uuid: UUID,
     data: {
       name?: string;
+      asset_tag?: string;
+      model_details?: string | null;
+      serial_number?: string | null;
       /**
        * `string | null`, and the null is load-bearing.
        *
        * The server treats undefined as "leave this field alone" and null as
        * "clear this field". So an update that must be able to REMOVE a vendor,
-       * a cost or a note has to send null; sending undefined types
+       * a cost, model detail, serial number or note has to send null; sending undefined types
        * fine and silently does nothing, which looks like a save that worked.
        */
       purchase_date?: string | null;
