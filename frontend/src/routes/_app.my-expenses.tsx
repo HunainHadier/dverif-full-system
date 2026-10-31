@@ -198,6 +198,7 @@ function MyExpensesPage() {
 // ---------------------------------------------------------------------------
 
 type ClaimForm = {
+  expense_name: string;
   amount: string;
   expense_date: string;
   description: string;
@@ -218,6 +219,7 @@ function NewClaimDialog({
 
   const form = useForm<ClaimForm>({
     defaultValues: {
+      expense_name: "",
       amount: "",
       expense_date: today,
       description: "",
@@ -248,6 +250,7 @@ function NewClaimDialog({
   useEffect(() => {
     if (open && !wasOpen.current) {
       reset({
+        expense_name: "",
         amount: "",
         expense_date: today,
         description: "",
@@ -286,6 +289,7 @@ function NewClaimDialog({
   const submit = useMutation({
     mutationFn: async (values: ClaimForm) => {
       const created = await myExpensesService.create({
+        expense_name: values.expense_name.trim(),
         amount: Number(values.amount),
         expense_date: values.expense_date,
         description: values.description.trim() || undefined,
@@ -335,6 +339,15 @@ function NewClaimDialog({
       form={form}
     >
       <label className="block space-y-1 text-sm">
+        <span className="font-medium">{t("expenses.expenseName", "Expense Name")}</span>
+        <input
+          {...form.register("expense_name", { required: t("expenses.expenseName", "Expense Name") })}
+          maxLength={160}
+          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+        />
+      </label>
+
+      <label className="block space-y-1 text-sm">
         <span className="font-medium">{t("expenses.amount")}</span>
         <input
           {...form.register("amount", { required: t("expenses.amount") })}
@@ -376,24 +389,6 @@ function NewClaimDialog({
         />
       </label>
 
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.paymentMode")}</span>
-        <select
-          {...form.register("payment_mode")}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-        >
-          <option value="payroll">{t("expenses.mode.payroll")}</option>
-          <option value="direct">{t("expenses.mode.direct")}</option>
-        </select>
-        {/* Stated in words, because the two labels do not tell an employee which
-            one gets their money sooner — and that is the thing they are choosing. */}
-        <span className="block text-xs text-muted-foreground">
-          {form.watch("payment_mode") === "payroll"
-            ? t("expenses.modePayrollHint")
-            : t("expenses.modeDirectHint")}
-        </span>
-      </label>
-
       {/*
        * THE RECEIPT, AT SUBMISSION.
        *
@@ -406,29 +401,16 @@ function NewClaimDialog({
        * The advisory-note the dropzone replaces still exists further down for the
        * claims that do NOT require one, where attaching a receipt is optional.
        */}
-      {true ? (
-        <FileDropzone
-          value={receipt ? [receipt] : []}
-          onChange={(files) => setReceipt(files[0] ?? null)}
-          accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
-          maxFiles={1}
-          maxSizeMb={10}
-          disabled={submit.isPending}
-          label={t("expenses.receiptLabel", "Receipt")}
-          hint={t("expenses.receiptHint", "PDF or image, up to 10MB")}
-        />
-      ) : (
-        <FileDropzone
-          value={receipt ? [receipt] : []}
-          onChange={(files) => setReceipt(files[0] ?? null)}
-          accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
-          maxFiles={1}
-          maxSizeMb={10}
-          disabled={submit.isPending}
-          label={t("expenses.receiptOptionalLabel", "Receipt (optional)")}
-          hint={t("expenses.receiptHint", "PDF or image, up to 10MB")}
-        />
-      )}
+      <FileDropzone
+        value={receipt ? [receipt] : []}
+        onChange={(files) => setReceipt(files[0] ?? null)}
+        accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
+        maxFiles={1}
+        maxSizeMb={10}
+        disabled={submit.isPending}
+        label={t("expenses.receiptOptionalLabel", "Receipt (optional)")}
+        hint={t("expenses.receiptHint", "PDF or image, up to 10MB")}
+      />
 
       {/*
        * AUTO-APPROVAL, last because it is the least important decision.
