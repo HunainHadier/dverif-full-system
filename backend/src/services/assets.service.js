@@ -322,13 +322,8 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Recompute an asset's status from its open rows.
- *
- * Maintenance outranks assignment deliberately. An asset that is out for repair
- * AND somehow still recorded as held is a data-entry error, and showing it as
- * "assigned" would invite someone to go looking for it in an employee's hands
- * when it is on a bench. Retired is terminal and never overwritten here, because
- * a scrapped asset stays scrapped regardless of stray rows.
+ * Recompute an asset's status from its active assignment. Retired is terminal
+ * and never overwritten here, because a scrapped asset stays scrapped.
  */
 async function syncStatus(conn, orgId, assetUuid) {
   const [[a]] = await conn.query(
