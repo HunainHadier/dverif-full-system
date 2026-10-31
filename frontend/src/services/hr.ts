@@ -234,7 +234,7 @@ export type PayrollSettings = {
   overtime_multiplier: number;
 };
 
-export type MonthlyWorkDay = { date: string; day_type: "working" | "off" };
+export type MonthlyWorkDay = { date: string; schedule_date?: string; day_type: "working" | "off" };
 
 export const orgSalaryService = {
   settings: () => api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings").then((r) => r.data.settings),
