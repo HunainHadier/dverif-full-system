@@ -566,7 +566,7 @@ function ReviewDialog({
   const form = useForm<ReviewForm>({
     defaultValues: { decision: "approved", rejection_reason: "", payment_mode: "payroll" },
   });
-  const { reset, watch, setValue } = form;
+  const { reset, watch } = form;
 
   // Reset on the closed -> open transition, seeded from the claim. Without it,
   // opening this for a second claim keeps the first claim's rejection reason and
