@@ -36,9 +36,24 @@ function MyAssetsPage() {
 
   const columns: DataTableColumn<MyAsset>[] = [
     {
+      key: "asset_tag",
+      header: t("assets.tag"),
+      render: (r) => <span className="font-mono text-xs">{r.asset_tag}</span>,
+    },
+    {
       key: "name",
       header: t("assets.assetName"),
-      render: (r) => <span className="font-medium">{r.name}</span>,
+      render: (r) => (
+        <div className="min-w-0">
+          <p className="truncate font-medium">{r.name}</p>
+          {r.model_details ? <p className="truncate text-xs text-muted-foreground">{r.model_details}</p> : null}
+        </div>
+      ),
+    },
+    {
+      key: "serial_number",
+      header: t("assets.serialNumber"),
+      render: (r) => <span className="font-mono text-xs">{r.serial_number ?? "—"}</span>,
     },
     {
       key: "assigned_at",
