@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Calculator, Download, Eye, FileUp, Lock, Mail, Phone, Pencil, Plus, Save, Trash2, Upload, UserRound, X, BriefcaseBusiness, Building2, CalendarDays } from "lucide-react";
+import { ArrowLeft, Calculator, Download, Eye, FileUp, FileSignature, Lock, Mail, Phone, Pencil, Plus, Save, Trash2, Upload, UserRound, X, BriefcaseBusiness, Building2, CalendarDays } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { EmployeeDocPicker, type StagedDoc } from "@/components/employees/EmployeeDocPicker";
 import { ManageOptionsDialog } from "@/components/employees/ManageOptionsDialog";
@@ -56,6 +56,9 @@ import {
   resolveAssetUrl,
 } from "@/lib/utils";
 import { DverifLoader } from "@/components/common/DvarifLoader";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IssueLetterDialog } from "@/components/hr/IssueLetterDialog";
+import { hrLettersService, letterTemplatesService, HR_LETTER_TYPES, type HrLetterListItem, type HrLetterType } from "@/services";
 
 export const Route = createFileRoute("/_app/org/team/$uuid")({
   validateSearch: (search: Record<string, unknown>): { edit?: boolean; salary?: boolean } => ({
@@ -287,45 +290,67 @@ function EmployeeDetailPage() {
           </CardContent>
         </Card>
       ) : (
-        <DisplayContent
-          key={emp?.uuid}
-          emp={emp}
-          editing={editing}
-          form={form}
-          setForm={setForm}
-          original={original}
-          designationsQ={designationsQ}
-          departmentsQ={departmentsQ}
-          managersQ={managersQ}
-          onManageOptions={setManageType}
-        />
-      )}
+        <Tabs defaultValue="profile" className="space-y-4">
+          <TabsList className="h-auto w-full flex-wrap justify-start">
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
+            {isCurrentEmployee(emp.status) && (
+              <TabsTrigger value="payroll">Payroll</TabsTrigger>
+            )}
+            {!isModuleFlagOff("hr_letters_management") && (
+              <TabsTrigger value="letters" className="gap-1.5">
+                <FileSignature className="h-3.5 w-3.5" /> Letters
+              </TabsTrigger>
+            )}
+          </TabsList>
 
-      {emp && (
-        <DocumentsCard
-          uuid={uuid}
-          docs={docs}
-          docsQ={docsQ}
-          editing={editing}
-          stagedDocs={stagedDocs}
-          setStagedDocs={setStagedDocs}
-          onUpload={() => uploadDocsMut.mutate()}
-          uploading={uploadDocsMut.isPending}
-        />
-      )}
+          <TabsContent value="profile">
+            <DisplayContent
+              key={emp.uuid}
+              emp={emp}
+              editing={editing}
+              form={form}
+              setForm={setForm}
+              original={original}
+              designationsQ={designationsQ}
+              departmentsQ={departmentsQ}
+              managersQ={managersQ}
+              onManageOptions={setManageType}
+            />
+          </TabsContent>
 
-      {/* Payroll cards are hidden for ex-employees: they have no current salary to
-          manage. 'inactive' (deactivated) still gets them — they remain on the
-          roster. This is why isCurrentEmployee, not a bare status check. */}
-      {emp && isCurrentEmployee(emp.status) && (
-        isModuleFlagOff("payroll_management") ? (
-          <ModuleFeatureLockedCard feature="payroll_management" />
-        ) : (
-          <>
-            <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
-            <SalaryComponentsCard uuid={uuid} />
-          </>
-        )
+          <TabsContent value="documents">
+            <DocumentsCard
+              uuid={uuid}
+              docs={docs}
+              docsQ={docsQ}
+              editing={editing}
+              stagedDocs={stagedDocs}
+              setStagedDocs={setStagedDocs}
+              onUpload={() => uploadDocsMut.mutate()}
+              uploading={uploadDocsMut.isPending}
+            />
+          </TabsContent>
+
+          {isCurrentEmployee(emp.status) && (
+            <TabsContent value="payroll" className="space-y-4">
+              {isModuleFlagOff("payroll_management") ? (
+                <ModuleFeatureLockedCard feature="payroll_management" />
+              ) : (
+                <>
+                  <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
+                  <SalaryComponentsCard uuid={uuid} />
+                </>
+              )}
+            </TabsContent>
+          )}
+
+          {!isModuleFlagOff("hr_letters_management") && (
+            <TabsContent value="letters">
+              <EmployeeLettersCard employeeUuid={uuid} employeeName={emp.full_name} />
+            </TabsContent>
+          )}
+        </Tabs>
       )}
 
       {/* One dialog for both lists, mounted once for the page rather than per row,
@@ -339,6 +364,146 @@ function EmployeeDetailPage() {
         type={manageType}
       />
       </div>
+  );
+}
+
+
+function EmployeeLettersCard({ employeeUuid, employeeName }: { employeeUuid: UUID; employeeName: string }) {
+  const qc = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [issueLetter, setIssueLetter] = useState<HrLetterListItem | null>(null);
+  const [templateUuid, setTemplateUuid] = useState("");
+  const [letterType, setLetterType] = useState<HrLetterType>("custom");
+
+  const lettersQ = useQuery({
+    queryKey: ["hr-letters", "employee", employeeUuid],
+    queryFn: () => hrLettersService.list({ employee_uuid: employeeUuid, limit: 100 }),
+  });
+  const templatesQ = useQuery({
+    queryKey: ["hr-letter-templates", "employee-detail"],
+    queryFn: () => letterTemplatesService.list(),
+    enabled: createOpen,
+  });
+
+  const createMut = useMutation({
+    mutationFn: () => hrLettersService.create({
+      employee_uuid: employeeUuid,
+      template_uuid: templateUuid || undefined,
+      letter_type: letterType,
+    }),
+    onSuccess: () => {
+      toast.success("Letter draft created");
+      setCreateOpen(false);
+      setTemplateUuid("");
+      void qc.invalidateQueries({ queryKey: ["hr-letters", "employee", employeeUuid] });
+      void qc.invalidateQueries({ queryKey: ["hr-letters"] });
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, "Could not create letter draft")),
+  });
+
+  const items = lettersQ.data?.items ?? [];
+
+  return (
+    <Card className="border-border/70 shadow-none">
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <div>
+          <CardTitle className="text-base">HR Letters</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">Create, assign and issue letters for {employeeName}.</p>
+        </div>
+        <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-1.5 h-4 w-4" /> Assign Letter
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {lettersQ.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading employee letters…</p>
+        ) : lettersQ.isError ? (
+          <p className="text-sm text-destructive">Unable to load employee letters.</p>
+        ) : items.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-center">
+            <FileSignature className="mx-auto h-7 w-7 text-muted-foreground" />
+            <p className="mt-2 text-sm font-medium">No letters assigned</p>
+            <p className="mt-1 text-xs text-muted-foreground">Use Assign Letter to create the first draft for this employee.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border rounded-lg border">
+            {items.map((letter) => (
+              <div key={letter.uuid} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{letter.title || HR_LETTER_TYPES.find((x) => x.key === letter.letter_type)?.label || letter.letter_type}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {letter.reference_no} · {letter.status} · {formatDate(letter.issued_at ?? letter.created_at)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge variant={letter.status === "issued" ? "default" : letter.status === "revoked" ? "destructive" : "secondary"}>
+                    {letter.status}
+                  </Badge>
+                  {letter.status === "draft" && (
+                    <Button size="sm" variant="outline" onClick={() => setIssueLetter(letter)}>Review & Issue</Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign HR Letter</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Employee</Label>
+              <Input value={employeeName} disabled />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Letter Template</Label>
+              <Select value={templateUuid || "none"} onValueChange={(v) => {
+                const selected = (templatesQ.data?.items ?? []).find((x) => x.uuid === v);
+                setTemplateUuid(v === "none" ? "" : v);
+                if (selected) setLetterType(selected.letter_type);
+              }}>
+                <SelectTrigger><SelectValue placeholder="Select template" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No template</SelectItem>
+                  {(templatesQ.data?.items ?? []).filter((x) => x.is_active).map((tpl) => (
+                    <SelectItem key={tpl.uuid} value={tpl.uuid}>{tpl.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {templatesQ.isLoading ? <p className="text-xs text-muted-foreground">Loading templates…</p> : null}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Letter Type</Label>
+              <Select value={letterType} onValueChange={(v) => setLetterType(v as HrLetterType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {HR_LETTER_TYPES.map((type) => <SelectItem key={type.key} value={type.key}>{type.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateOpen(false)} disabled={createMut.isPending}>Cancel</Button>
+            <Button onClick={() => createMut.mutate()} disabled={createMut.isPending || (templatesQ.isLoading && !templateUuid)} loading={createMut.isPending}>Create Draft</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <IssueLetterDialog
+        letter={issueLetter}
+        open={!!issueLetter}
+        onOpenChange={(open) => !open && setIssueLetter(null)}
+        onIssued={() => {
+          setIssueLetter(null);
+          void qc.invalidateQueries({ queryKey: ["hr-letters", "employee", employeeUuid] });
+          void qc.invalidateQueries({ queryKey: ["hr-letters"] });
+        }}
+      />
+    </Card>
   );
 }
 
