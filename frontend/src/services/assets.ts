@@ -147,7 +147,7 @@ export const assetsService = {
        *
        * The server treats undefined as "leave this field alone" and null as
        * "clear this field". So an update that must be able to REMOVE a vendor,
-       * a cost, a serial or a note has to send null; sending undefined types
+       * a cost or a note has to send null; sending undefined types
        * fine and silently does nothing, which looks like a save that worked.
        */
       purchase_date?: string | null;
