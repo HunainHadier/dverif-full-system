@@ -402,6 +402,12 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const method = policy.salary_calculation_method || "days";
   if (!["hours", "days"].includes(method)) throw new ApiError(409, "Select either working-hours or working-days salary calculation.");
   const lines = [];
+  if (workingDays <= 0 || basic <= 0) return {
+    lines, perDayRate: 0, hourlyRate: 0, perDayHours: shiftHours,
+    totalDeduction: 0, totalAddition: 0, workingDays, divisor: 0,
+    payableRatio: 0, skipReason: workingDays <= 0 ? "no_working_days" : "no_basic_salary",
+    method, expectedHours, workedHours: Number(summary.workedHours || 0),
+  };
   let payableRatio = 1;
   if (method === "hours") {
     const creditedHours = Number(summary.workedHours || 0) + paidLeaveDays * shiftHours;
