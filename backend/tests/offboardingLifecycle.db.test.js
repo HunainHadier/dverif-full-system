@@ -89,7 +89,7 @@ beforeAll(async () => {
     `Offboarding Test ${Date.now()}`,
   ]);
   orgId = org.insertId;
-  // Seeds the working week AND a confirmed payroll policy. Final-pay settlement
+  // Seeds the organization's monthly working calendar and payroll settings. Final-pay settlement
   // reads employee_salary_history and divides by the org's working days, so a suite
   // that settles an exit needs both configured or it 409s before reaching anything
   // it was written to test.
