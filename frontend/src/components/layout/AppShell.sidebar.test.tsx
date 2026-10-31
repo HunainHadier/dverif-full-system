@@ -163,6 +163,7 @@ describe("the org_admin sidebar renders management modules only", () => {
   it("shows every operational module as a link", () => {
     renderSidebarFor(orgAdmin);
     const nav = primaryNav();
+    expect(within(nav).queryByTestId("link-/org/hr-letters")).toBeNull();
     for (const p of [
       "/org/team",
       "/org/leaves",
