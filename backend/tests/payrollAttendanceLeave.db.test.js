@@ -804,6 +804,7 @@ describe.runIf(HAS_DB)("attendance records reach the payslip", () => {
           employee_uuid: emp.uuid,
           date,
           check_in_time: time,
+          check_out_time: "17:00",
           reason: "Biometric device offline",
         },
       }));
@@ -823,17 +824,12 @@ describe.runIf(HAS_DB)("attendance records reach the payslip", () => {
     expect(four.attendance.late_count).toBe(3);
     expect(four.attendance.absent_days).toBe(WORKING_DAYS - 4);
 
-    const lateLine = lineOf(four, "auto_late");
-    expect(lateLine).toBeTruthy();
-    expect(Number(lateLine.amount)).toBe(money(PER_DAY * 0.5));
-    expect(Number(lateLine.basis_value)).toBe(3);
+    expect(lineOf(four, "auto_late")).toBeFalsy();
     expect(Number(lineOf(four, "auto_absenteeism").amount)).toBe(
       money(PER_DAY * (WORKING_DAYS - 4)),
     );
-    // 3 late arrivals x the configured threshold of 3 = one half-day penalty.
-    expect(Number(four.deductions)).toBe(
-      money(PER_DAY * (WORKING_DAYS - 4) + PER_DAY * 0.5),
-    );
+    // Late arrivals are reported, but the removed payroll-policy penalty is not applied.
+    expect(Number(four.deductions)).toBe(money(PER_DAY * (WORKING_DAYS - 4)));
   });
 
   it("attendance on a weekend is recorded but is not a working day", async () => {
@@ -934,6 +930,10 @@ describe.runIf(HAS_DB)("approved overtime reaches the payslip", () => {
   it("pays only APPROVED hours, clamped to the request, and never the rejected ones", async () => {
     const emp = await newEmployee({ name: "OvertimeFlow" });
     await attendAll(emp.uuid);
+    await db.query(
+      "UPDATE attendance_records SET check_out_at='2026-10-20 19:00:00' WHERE employee_uuid=? AND date='2026-10-20'",
+      [emp.uuid],
+    );
 
     const created = await call(createOvertimeRequest, adminReq({
       body: {
@@ -981,14 +981,14 @@ describe.runIf(HAS_DB)("approved overtime reaches the payslip", () => {
     }));
 
     const p = await preview(emp.uuid);
-    expect(p.attendance.approved_overtime_hours).toBe(8);
+    expect(p.attendance.approved_overtime_hours).toBe(2);
     const line = lineOf(p, "auto_overtime");
     expect(line).toBeTruthy();
     expect(line.type).toBe("earning");
-    expect(Number(line.basis_value)).toBe(8);
-    expect(Number(line.amount)).toBe(money(HOURLY * 1.5 * 8));
-    expect(Number(p.allowances)).toBe(money(HOURLY * 1.5 * 8));
-    expect(Number(p.net_salary)).toBe(money(BASIC + HOURLY * 1.5 * 8));
+    expect(Number(line.basis_value)).toBe(2);
+    expect(Number(line.amount)).toBe(money(HOURLY * 1.5 * 2));
+    expect(Number(p.allowances)).toBe(money(HOURLY * 1.5 * 2));
+    expect(Number(p.net_salary)).toBe(money(BASIC + HOURLY * 1.5 * 2));
   });
 });
 
