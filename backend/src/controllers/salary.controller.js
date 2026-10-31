@@ -661,6 +661,81 @@ export async function previewPayroll(req, res) {
   return ok(res, { month: m, year: y, items, totals, count: items.length }, "Payroll preview");
 }
 
+/** Payroll settings and monthly working/off-day calendar. */
+export async function getPayrollSettings(req, res) {
+  const [rows] = await pool.query("SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?", [req.scopeOrgId]);
+  return ok(res, { settings: rows[0] ?? null }, "Payroll settings");
+}
+
+export async function updatePayrollSettings(req, res) {
+  const body = req.body ?? {};
+  const method = String(body.salary_calculation_method ?? "");
+  if (!["hours", "days"].includes(method)) throw new ApiError(400, "Choose either working-hours or working-days salary calculation.");
+  if (typeof body.calculate_overtime !== "boolean") throw new ApiError(400, "calculate_overtime must be true or false.");
+  const validTime = (v) => typeof v === "string" && /^([01]\\d|2[0-3]):[0-5]\\d$/.test(v);
+  if (!validTime(body.shift_start_time) || !validTime(body.shift_end_time) || body.shift_end_time <= body.shift_start_time) {
+    throw new ApiError(400, "Enter valid organization shift start and check-out times; check-out must be later.");
+  }
+  const multiplier = Number(body.overtime_multiplier ?? 1.5);
+  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 5) throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
+  await pool.query(
+    `INSERT INTO organization_payroll_settings
+       (organization_id, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, updated_by_uuid)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE salary_calculation_method=VALUES(salary_calculation_method),
+       calculate_overtime=VALUES(calculate_overtime), shift_start_time=VALUES(shift_start_time),
+       shift_end_time=VALUES(shift_end_time), overtime_multiplier=VALUES(overtime_multiplier),
+       updated_by_uuid=VALUES(updated_by_uuid)`,
+    [req.scopeOrgId, method, body.calculate_overtime ? 1 : 0, body.shift_start_time, body.shift_end_time, multiplier, req.user?.uuid ?? null],
+  );
+  return getPayrollSettings(req, res);
+}
+
+export async function getMonthlyWorkSchedule(req, res) {
+  const month = Number(req.query.month);
+  const year = Number(req.query.year);
+  const { m, y } = payrollService.assertMonthYear(month, year);
+  const [rows] = await pool.query(
+    "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND MONTH(schedule_date)=? AND YEAR(schedule_date)=? ORDER BY schedule_date",
+    [req.scopeOrgId, m, y],
+  );
+  return ok(res, { month: m, year: y, days: rows }, "Monthly working schedule");
+}
+
+export async function saveMonthlyWorkSchedule(req, res) {
+  const month = Number(req.body?.month);
+  const year = Number(req.body?.year);
+  const { m, y } = payrollService.assertMonthYear(month, year);
+  const days = req.body?.days;
+  const total = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (!Array.isArray(days) || days.length !== total) throw new ApiError(400, "Select every date in the month as either a working day or an off day.");
+  const seen = new Set();
+  for (const item of days) {
+    if (!item || !/^\\d{4}-\\d{2}-\\d{2}$/.test(String(item.date)) || !["working", "off"].includes(item.day_type)) throw new ApiError(400, "Each schedule day needs a valid date and working/off selection.");
+    const date = String(item.date);
+    if (date.slice(0, 7) !== `${y}-${String(m).padStart(2, "0")}` || seen.has(date)) throw new ApiError(400, "Schedule dates must be unique and belong to the selected month.");
+    seen.add(date);
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query("DELETE FROM organization_monthly_work_schedules WHERE organization_id=? AND YEAR(schedule_date)=? AND MONTH(schedule_date)=?", [req.scopeOrgId, y, m]);
+    for (const item of days) {
+      await conn.query(
+        "INSERT INTO organization_monthly_work_schedules (organization_id, schedule_date, day_type, updated_by_uuid) VALUES (?, ?, ?, ?)",
+        [req.scopeOrgId, item.date, item.day_type, req.user?.uuid ?? null],
+      );
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+  return getMonthlyWorkSchedule({ ...req, query: { month: m, year: y } }, res);
+}
+
 /** Read the explicitly configured organization payroll policy without exposing other tenants. */
 export async function getPayrollPolicy(req, res) {
   const orgId = req.scopeOrgId;
