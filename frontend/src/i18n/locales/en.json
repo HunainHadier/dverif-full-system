@@ -1176,7 +1176,6 @@
     "retireWarning": "Retiring keeps the record for your audit trail but stops the asset being assigned. You can reinstate it afterwards if this was a mistake.",
     "reinstate": "Reinstate",
     "viewDetails": "View details",
-    "detailDescription": "Category: {{category}}",
     "notFound": "Asset could not be loaded.",
     "custodyHistory": "Custody history",
     "neverAssigned": "Never assigned",
