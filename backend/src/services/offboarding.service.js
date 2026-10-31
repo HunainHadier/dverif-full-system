@@ -453,25 +453,21 @@ export async function clearChecklistItem({ orgId, actorUuid, exitUuid, checklist
 export async function getOutstandingAssets({ orgId, employeeUuid, conn = pool }) {
   assertUuid(employeeUuid, "Employee UUID");
   const [rows] = await conn.query(
-    `SELECT a.uuid AS asset_uuid, a.asset_tag, a.name, a.category_uuid, c.name AS category_name,
-            a.status AS asset_status, a.purchase_cost, a.serial_number,
+    `SELECT a.uuid AS asset_uuid, a.name,
+            a.status AS asset_status, a.purchase_cost,
             g.uuid AS assignment_uuid, g.assigned_at
        FROM asset_assignments g
        JOIN assets a ON a.uuid = g.asset_uuid
-       LEFT JOIN asset_categories c ON c.uuid = a.category_uuid
       WHERE g.organization_id = ?
         AND g.employee_uuid = ?
         AND g.returned_at IS NULL
-      ORDER BY a.asset_tag`,
+      ORDER BY a.name`,
     [orgId, employeeUuid],
   );
 
   const items = rows.map((r) => ({
     asset_uuid: r.asset_uuid,
-    asset_tag: r.asset_tag,
     name: r.name,
-    category_name: r.category_name ?? null,
-    serial_number: r.serial_number ?? null,
     asset_status: r.asset_status,
     purchase_cost: r.purchase_cost === null ? null : Number(r.purchase_cost),
     assigned_at: isoDate(r.assigned_at),
@@ -755,11 +751,11 @@ export async function processSettlement({ orgId, actorUuid, exitUuid, target = "
   const assets = await getOutstandingAssets({ orgId, employeeUuid: settlement.employee_uuid, conn });
   if (assets.count > 0) {
     // Named explicitly. "There is an issue with the checklist" sends someone
-    // hunting; the asset tag sends them to the car park.
+    // hunting; the asset name identifies what HR needs returned.
     throw new ApiError(
       409,
       `Cannot ${target} the settlement: ${assets.count} company asset(s) are still in the employee's custody (${assets.items
-        .map((a) => a.asset_tag)
+        .map((a) => a.name)
         .join(", ")}). Return them first.`,
     );
   }
