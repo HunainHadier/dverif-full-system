@@ -551,7 +551,7 @@ function ExitDetailSheet({
                 <ul className="space-y-2">
                   {assets.data.items.map((a) => (
                     <li key={a.asset_uuid} className="flex items-center justify-between gap-3 rounded-lg border bg-background/80 p-2.5 text-sm">
-                      <span className="font-mono text-xs font-medium">{a.asset_tag} — {a.name}</span>
+                      <span className="font-mono text-xs font-medium">{a.name}</span>
                       <span className="font-mono text-xs text-muted-foreground">{a.purchase_cost == null ? "—" : formatCurrency(a.purchase_cost)}</span>
                     </li>
                   ))}
