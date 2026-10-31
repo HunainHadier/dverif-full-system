@@ -1130,24 +1130,24 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(await salaryRecordOf(emp.uuid)).toHaveLength(0);
   });
 
-  it("preview refuses an org with no confirmed payroll policy", async () => {
+  it("preview refuses an org without payroll settings", async () => {
     const res = await call(previewPayroll, adminReq({
       scopeOrgId: otherOrgId,
       body: { month: MONTH, year: YEAR },
     })).catch((error) => ({ error }));
-    // The other tenant has an employee but no policy: preview must stop, not
-    // invent a deduction formula.
+    // The other tenant has an employee but no payroll settings: preview must stop,
+    // rather than invent a salary calculation method or shift timing.
     expect(res.error?.statusCode).toBe(409);
-    expect(res.error?.message).toMatch(/Payroll policy is not configured/i);
+    expect(res.error?.message).toMatch(/Payroll settings are not configured/i);
   });
 
-  it("preview refuses an org whose working week is not configured", async () => {
+  it("preview refuses an org whose monthly schedule is not configured", async () => {
     const [third] = await db.query("INSERT INTO organizations (uuid, name) VALUES (UUID(), ?)", [
       `Payroll No Week ${runTag}`,
     ]);
     const thirdOrgId = third.insertId;
     orgsToPurge.push(thirdOrgId);
-    // Policy without a work week: exactly one of the two configured inputs.
+    // Settings exist, but no monthly date schedule has been saved.
     await seedPayrollPolicy(db, thirdOrgId);
     const emp = await newEmployee({
       name: "NoWorkWeek",
@@ -1160,7 +1160,7 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
       body: { month: MONTH, year: YEAR, employee_uuids: [emp.uuid] },
     })).catch((error) => ({ error }));
     expect(res.error?.statusCode).toBe(409);
-    expect(res.error?.message).toMatch(/work week is not configured/i);
+    expect(res.error?.message).toMatch(/monthly working schedule is incomplete/i);
   });
 
   it("another tenant's employee cannot be previewed or generated", async () => {
