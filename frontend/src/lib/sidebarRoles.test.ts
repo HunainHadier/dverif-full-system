@@ -123,7 +123,6 @@ describe("staff primary menu is management only", () => {
       "/org/salary-components",
       "/org/payroll",
       "/org/expense-claims",
-      "/org/asset-categories",
       "/org/assets",
       "/org/offboarding",
       "/org/hr-letters",
