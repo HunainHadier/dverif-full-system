@@ -58,7 +58,10 @@ export const ASSET_STATUSES = ["available", "assigned", "maintenance", "retired"
 const RETURN_CONDITIONS = ["good", "damaged", "needs_maintenance"];
 
 const ASSET_COLUMNS = [
+  "asset_tag",
   "name",
+  "model_details",
+  "serial_number",
   "purchase_date",
   "purchase_cost",
   "vendor",
@@ -151,8 +154,9 @@ export async function listAssets({ orgId, page, limit, offset, search, status })
     params.push(status);
   }
   if (search) {
-    clauses.push("a.name LIKE ?");
-    params.push(`%${search}%`);
+    clauses.push("(a.asset_tag LIKE ? OR a.name LIKE ? OR a.model_details LIKE ? OR a.serial_number LIKE ?)");
+    const like = `%${search}%`;
+    params.push(like, like, like, like);
   }
   const where = clauses.join(" AND ");
 
@@ -170,7 +174,7 @@ export async function listAssets({ orgId, page, limit, offset, search, status })
               WHERE m.asset_uuid = a.uuid AND m.status = 'open') AS open_jobs
        FROM assets a
       WHERE ${where}
-      ORDER BY a.name
+      ORDER BY a.asset_tag
       LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );
@@ -234,6 +238,23 @@ export async function getAsset({ orgId, assetUuid }) {
   };
 }
 
+/** Next tag for a new asset: AST-0001, AST-0002, ... within the organization. */
+async function nextAssetTag(conn, orgId) {
+  const [[{ n }]] = await conn.query(
+    "SELECT COUNT(*) AS n FROM assets WHERE organization_id = ?",
+    [orgId],
+  );
+  for (let i = n + 1; i < n + 1000; i += 1) {
+    const candidate = `AST-${String(i).padStart(4, "0")}`;
+    const [[hit]] = await conn.query(
+      "SELECT 1 AS x FROM assets WHERE organization_id=? AND asset_tag=? LIMIT 1",
+      [orgId, candidate],
+    );
+    if (!hit) return candidate;
+  }
+  throw new ApiError(500, "Could not allocate an asset tag");
+}
+
 export async function createAsset({ orgId, actorUuid, data }) {
   const name = String(data.name ?? "").trim();
   if (!name) throw new ApiError(400, "name is required");
@@ -241,6 +262,9 @@ export async function createAsset({ orgId, actorUuid, data }) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+    const tag = data.asset_tag ? String(data.asset_tag).trim() : await nextAssetTag(conn, orgId);
+    if (!tag) throw new ApiError(400, "asset_tag cannot be empty");
+
     const insert = composeInsert(
       {
         organization_id: orgId,
@@ -250,7 +274,10 @@ export async function createAsset({ orgId, actorUuid, data }) {
         created_by_uuid: actorUuid ?? null,
       },
       {
+        asset_tag: tag,
         name,
+        model_details: data.model_details ?? null,
+        serial_number: data.serial_number ?? null,
         purchase_date: data.purchase_date || null,
         purchase_cost: data.purchase_cost ?? null,
         vendor: data.vendor ?? null,
@@ -261,15 +288,22 @@ export async function createAsset({ orgId, actorUuid, data }) {
     );
 
     let assetUuid;
-    const [res] = await conn.query(
-      `INSERT INTO assets (${insert.columns.join(", ")}) VALUES (${insert.placeholders.join(", ")})`,
-      insert.params,
-    );
-    const [[row]] = await conn.query("SELECT uuid FROM assets WHERE id=?", [res.insertId]);
-    assetUuid = row.uuid;
+    try {
+      const [res] = await conn.query(
+        `INSERT INTO assets (${insert.columns.join(", ")}) VALUES (${insert.placeholders.join(", ")})`,
+        insert.params,
+      );
+      const [[row]] = await conn.query("SELECT uuid FROM assets WHERE id=?", [res.insertId]);
+      assetUuid = row.uuid;
+    } catch (e) {
+      if (e.code === "ER_DUP_ENTRY") {
+        throw new ApiError(409, `Asset tag "${tag}" is already used in this organization`);
+      }
+      throw e;
+    }
 
     await conn.commit();
-    audit(actorUuid, "asset.create", "asset", assetUuid, orgId);
+    audit(actorUuid, "asset.create", "asset", assetUuid, orgId, { asset_tag: tag });
     return getAsset({ orgId, assetUuid });
   } catch (e) {
     await conn.rollback();
@@ -287,7 +321,10 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
 
     const update = buildUpdateStrict(
       {
+        asset_tag: data.asset_tag === undefined ? undefined : String(data.asset_tag).trim(),
         name: data.name === undefined ? undefined : String(data.name).trim(),
+        model_details: data.model_details,
+        serial_number: data.serial_number,
         purchase_date: data.purchase_date || null,
         purchase_cost: data.purchase_cost ?? null,
         vendor: data.vendor ?? null,
@@ -298,10 +335,17 @@ export async function updateAsset({ orgId, actorUuid, assetUuid, data }) {
     );
     if (!update.columns.length) throw new ApiError(400, "No fields to update");
 
-    await conn.query(
-      `UPDATE assets ${update.clause} WHERE uuid=? AND organization_id=?`,
-      [...update.params, assetUuid, orgId],
-    );
+    try {
+      await conn.query(
+        `UPDATE assets ${update.clause} WHERE uuid=? AND organization_id=?`,
+        [...update.params, assetUuid, orgId],
+      );
+    } catch (e) {
+      if (e.code === "ER_DUP_ENTRY") {
+        throw new ApiError(409, "That asset tag is already used in this organization");
+      }
+      throw e;
+    }
 
     await conn.commit();
     audit(actorUuid, "asset.update", "asset", assetUuid, orgId);
@@ -492,7 +536,7 @@ export async function listMaintenance({ orgId, assetUuid, status }) {
     params.push(status);
   }
   const [rows] = await pool.query(
-    `SELECT m.*, a.name AS asset_name
+    `SELECT m.*, a.asset_tag, a.name AS asset_name
        FROM asset_maintenance m
        JOIN assets a ON a.uuid = m.asset_uuid
       WHERE ${clauses.join(" AND ")}
@@ -633,7 +677,7 @@ async function employeeForUser(orgId, userUuid) {
  * do I have" wants what is in their hands, and showing a returned laptop as still
  * theirs invites a support ticket about a device they do not have.
  *
- * Only non-sensitive columns are returned: asset name and the
+ * Only non-sensitive columns are returned: tag, model, serial and the
  * assignment date. Deliberately NOT purchase_cost or vendor — an employee has no
  * business seeing what the company paid, and including it would make this
  * endpoint a way to read procurement figures.
@@ -646,8 +690,8 @@ export async function listMyAssets({ orgId, userUuid }) {
   if (!employee) return [];
 
   const [rows] = await pool.query(
-    `SELECT a.uuid, a.name, a.warranty_expires_at,
-            g.assigned_at, g.uuid AS assignment_uuid
+    `SELECT a.uuid, a.asset_tag, a.name, a.model_details, a.serial_number,
+            a.warranty_expires_at, g.assigned_at, g.uuid AS assignment_uuid
        FROM asset_assignments g
        JOIN assets a ON a.uuid = g.asset_uuid
       WHERE g.employee_uuid=? AND g.organization_id=? AND g.returned_at IS NULL
@@ -663,7 +707,10 @@ export async function listMyAssets({ orgId, userUuid }) {
   return rows.map((r) => ({
     uuid: r.uuid,
     assignment_uuid: r.assignment_uuid,
+    asset_tag: r.asset_tag,
     name: r.name,
+    model_details: r.model_details,
+    serial_number: r.serial_number,
     warranty_expires_at: r.warranty_expires_at,
     assigned_at: r.assigned_at,
   }));
