@@ -731,6 +731,7 @@ describe.runIf(HAS_DB)("leave requests reach the payslip", () => {
     const submitted = await call(createLeave, employeeReq(emp, {
       body: {
         leave_type_id: paidTypeId,
+        requested_treatment: "paid",
         start_date: "2026-10-12",
         end_date: "2026-10-12",
         reason: "Sick",
@@ -739,7 +740,7 @@ describe.runIf(HAS_DB)("leave requests reach the payslip", () => {
     const leaveUuid = submitted.body.data.leaveRequest.uuid;
     await call(decideLeave, adminReq({
       params: { uuid: leaveUuid },
-      body: { status: "approved" },
+      body: { status: "approved", approved_treatment: "paid" },
     }));
 
     const after = await preview(emp.uuid);
