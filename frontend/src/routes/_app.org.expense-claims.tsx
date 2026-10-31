@@ -93,6 +93,7 @@ function ExpenseClaimsPage() {
   const [status, setStatus] = useState<ClaimStatus | "">("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ExpenseClaim | null>(null);
+  const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">("approved");
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
 
   const list = useQuery({
@@ -263,7 +264,7 @@ function ExpenseClaimsPage() {
                   r.receipt_satisfied ? t("expenses.approve") : t("expenses.approveNeedsReceipt")
                 }
                 disabled={!r.receipt_satisfied}
-                onClick={() => setReviewing(r)}
+                onClick={() => { setReviewDecision("approved"); setReviewing(r); }}
               >
                 <Check className="h-4 w-4" />
               </Button>
@@ -271,7 +272,7 @@ function ExpenseClaimsPage() {
                 variant="ghost"
                 size="icon"
                 title={t("expenses.reject")}
-                onClick={() => setReviewing(r)}
+                onClick={() => { setReviewDecision("rejected"); setReviewing(r); }}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -426,6 +427,7 @@ function ExpenseClaimsPage() {
 
       <ReviewDialog
         claim={reviewing}
+        initialDecision={reviewDecision}
         onOpenChange={(v) => !v && setReviewing(null)}
         onDone={invalidate}
       />
@@ -646,10 +648,12 @@ type ReviewForm = {
 
 function ReviewDialog({
   claim,
+  initialDecision,
   onOpenChange,
   onDone,
 }: {
   claim: ExpenseClaim | null;
+  initialDecision: "approved" | "rejected";
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
@@ -669,13 +673,13 @@ function ReviewDialog({
   useEffect(() => {
     if (open && !wasOpen.current) {
       reset({
-        decision: "approved",
+        decision: initialDecision,
         rejection_reason: "",
         payment_mode: claim?.payment_mode ?? "payroll",
       });
     }
     wasOpen.current = open;
-  }, [open, claim, reset]);
+  }, [open, claim, reset, initialDecision]);
 
   const decision = watch("decision");
 
@@ -713,39 +717,29 @@ function ReviewDialog({
       onSubmit={(values) => review.mutateAsync(values)}
       form={form}
     >
-      <div className="flex gap-2">
-        {(["approved", "rejected"] as const).map((d) => (
-          <Button
-            key={d}
-            type="button"
-            variant={decision === d ? "default" : "outline"}
-            size="sm"
-            onClick={() => setValue("decision", d)}
-          >
-            {d === "approved" ? t("expenses.approve") : t("expenses.reject")}
-          </Button>
-        ))}
-      </div>
+
 
       {/* The payout route is a decision, not a detail: choosing payroll hands the
           claim to the next run for the month the expense was spent, and choosing
           direct leaves it for a manual transfer. Stated in words under the control
           rather than left as two words to guess. */}
-      <label className="block space-y-1 text-sm">
-        <span className="font-medium">{t("expenses.paymentMode")}</span>
-        <select
-          {...form.register("payment_mode")}
-          className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-        >
-          <option value="payroll">{t("expenses.mode.payroll")}</option>
-          <option value="direct">{t("expenses.mode.direct")}</option>
-        </select>
-        <span className="block text-xs text-muted-foreground">
-          {form.watch("payment_mode") === "payroll"
-            ? t("expenses.modePayrollHint")
-            : t("expenses.modeDirectHint")}
-        </span>
-      </label>
+      {decision === "approved" ? (
+        <label className="block space-y-1 text-sm">
+          <span className="font-medium">{t("expenses.paymentMode")}</span>
+          <select
+            {...form.register("payment_mode")}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            <option value="payroll">{t("expenses.mode.payroll")}</option>
+            <option value="direct">{t("expenses.mode.direct")}</option>
+          </select>
+          <span className="block text-xs text-muted-foreground">
+            {form.watch("payment_mode") === "payroll"
+              ? t("expenses.modePayrollHint")
+              : t("expenses.modeDirectHint")}
+          </span>
+        </label>
+      ) : null}
 
       {decision === "rejected" ? (
         <label className="block space-y-1 text-sm">
