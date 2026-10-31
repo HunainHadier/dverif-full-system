@@ -20,7 +20,6 @@ import { readFileSync } from "node:fs";
  *     "[object File]" and still report success.
  */
 const ASSETS_PAGE = readFileSync("src/routes/_app.org.assets.tsx", "utf8");
-const CATEGORIES_PAGE = readFileSync("src/routes/_app.org.asset-categories.tsx", "utf8");
 const SERVICE = readFileSync("src/services/assets.ts", "utf8");
 const ORG_SERVICE = readFileSync("src/services/org.ts", "utf8");
 const NAV = readFileSync("src/lib/navItems.ts", "utf8");
@@ -78,8 +77,6 @@ describe("edit can actually clear a field", () => {
     // site had nowhere to send one even once someone noticed the bug.
     const body = member(serviceBlock(code(SERVICE), "assetsService"), "update");
     for (const field of [
-      "model_details",
-      "serial_number",
       "purchase_date",
       "purchase_cost",
       "vendor",
@@ -115,12 +112,11 @@ describe("edit can actually clear a field", () => {
 describe("filter changes cannot strand the table on a page past its end", () => {
   const PAGE = code(ASSETS_PAGE);
 
-  it("search, status and category each reset to page 1", () => {
+  it("search and status reset to page 1", () => {
     // Narrowing a filter while sitting on page 4 renders an empty table, which
     // reads as "nothing matches" rather than "there is no page 4 of this".
     expect(PAGE).toMatch(/setSearch\(v\);\s*setPage\(1\);/);
     expect(PAGE).toMatch(/setStatus\([^)]*\);\s*setPage\(1\);/);
-    expect(PAGE).toMatch(/setCategory\([^)]*\);\s*setPage\(1\);/);
   });
 });
 
@@ -350,36 +346,15 @@ describe("notes are readable, not just writable", () => {
   });
 });
 
-describe("asset category page", () => {
-  it("disables delete on a category that still holds assets", () => {
-    expect(CATEGORIES_PAGE).toMatch(/disabled=\{\(r\.asset_count \?\? 0\) > 0\}/);
-  });
-
-  it("surfaces a failed delete instead of closing as if it worked", () => {
-    expect(CATEGORIES_PAGE).toContain("apiErrorMessage(remove.error");
-  });
-
-  it("resets the form on open, so New is not a silent overwrite", () => {
-    expect(CATEGORIES_PAGE).toMatch(/wasOpen\.current/);
-    expect(CATEGORIES_PAGE).toMatch(/reset\(/);
-  });
-});
-
 describe("navigation and access control", () => {
-  it("exposes both pages in the sidebar", () => {
+  it("exposes only the inventory page in the sidebar", () => {
     expect(NAV).toContain('to: "/org/assets"');
-    expect(NAV).toContain('to: "/org/asset-categories"');
+    expect(NAV).not.toContain("/org/asset-categories");
   });
 
-  it("has a route-access row for both, or the sidebar links go nowhere", () => {
+  it("has an access rule for inventory and no category route", () => {
     expect(ACCESS).toContain('"/org/assets"');
-    expect(ACCESS).toContain('"/org/asset-categories"');
-  });
-
-  it("lets staff move stock but reserves category admin for org_admin", () => {
-    // Mirrors the backend's assetMgmt versus assetCategoryMgmt.
-    expect(ACCESS).toMatch(/"\/org\/assets":\s*\{\s*roles:\s*STAFF_ROLES,/);
-    expect(ACCESS).toMatch(/"\/org\/asset-categories":\s*\{\s*roles:\s*\["org_admin"\]\s*\}/);
+    expect(ACCESS).not.toContain("/org/asset-categories");
   });
 
   it("gates the inventory module on manage_assets, not on role alone", () => {
