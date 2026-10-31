@@ -1231,7 +1231,10 @@
     "noPortalAccount": "no portal account",
     "assignNoPortalAccount": "This employee has no portal account, so they will not see this asset on their My Assets page. The assignment still counts as held. Create their login first if they should be able to see it.",
     "employeesTruncated": "Showing {{shown}} of {{total}} employees. Search to narrow the list.",
-    "attachmentDownloadFailed": "Download failed. Your browser may be blocking it."
+    "attachmentDownloadFailed": "Download failed. Your browser may be blocking it.",
+    "tag": "Tag",
+    "modelDetails": "Model details",
+    "serialNumber": "Serial number"
   },
   "myAssets": {
     "title": "My Assets",
