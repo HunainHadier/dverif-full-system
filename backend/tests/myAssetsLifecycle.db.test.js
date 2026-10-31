@@ -114,8 +114,8 @@ async function seedAsset(orgId, employeeUuid) {
   const [[emp]] = await db.query("SELECT uuid FROM employees WHERE uuid=?", [employeeUuid]);
 
   const [a] = await db.query(
-    `INSERT INTO assets (organization_id, name, status) VALUES (?, ?, 'available')`,
-    [orgId, 'ThinkPad'],
+    `INSERT INTO assets (organization_id, asset_tag, name, model_details, serial_number, status) VALUES (?, ?, ?, ?, ?, 'available')`,
+    [orgId, uniq(), 'ThinkPad', 'T14 Gen 3', 'SN-IT-1'],
   );
   const [[row]] = await db.query("SELECT uuid FROM assets WHERE id=?", [a.insertId]);
   return row.uuid;
