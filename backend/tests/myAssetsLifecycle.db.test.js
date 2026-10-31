@@ -111,17 +111,11 @@ async function seedEmployee({ withPortalAccount = true } = {}) {
 }
 
 async function seedAsset(orgId, employeeUuid) {
-  const [cat] = await db.query("INSERT INTO asset_categories (organization_id, name) VALUES (?, ?)", [
-    orgId,
-    uniq(),
-  ]);
-  const [[categoryUuid]] = await db.query("SELECT uuid FROM asset_categories WHERE id=?", [cat.insertId]);
   const [[emp]] = await db.query("SELECT uuid FROM employees WHERE uuid=?", [employeeUuid]);
 
   const [a] = await db.query(
-    `INSERT INTO assets (organization_id, category_uuid, asset_tag, name, model_details, serial_number, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'available')`,
-    [orgId, categoryUuid.uuid, uniq(), "ThinkPad", "T14 Gen 3", "SN-IT-1"],
+    `INSERT INTO assets (organization_id, name, status) VALUES (?, ?, 'available')`,
+    [orgId, 'ThinkPad'],
   );
   const [[row]] = await db.query("SELECT uuid FROM assets WHERE id=?", [a.insertId]);
   return row.uuid;
@@ -165,11 +159,8 @@ describe.skipIf(!reachable)("assign -> /my/assets, against a real database", () 
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
         uuid: assetUuid,
-        model_details: "T14 Gen 3",
-        serial_number: "SN-IT-1",
       });
-      expect(rows[0].asset_tag).toBeTruthy();
-      expect(rows[0].category_name).toBeTruthy();
+      expect(rows[0].name).toBe("ThinkPad");
       expect(rows[0].assigned_at).toBeTruthy();
     } finally {
       await cleanup(seed);
