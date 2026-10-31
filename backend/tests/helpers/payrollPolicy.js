@@ -25,7 +25,7 @@ export async function seedPayrollSettings(conn, orgId, overrides = {}) {
   return settings;
 }
 
-export async function seedPayrollPolicy(conn, orgId, overrides = {}) {
+export async function seedPayrollSettings(conn, orgId, overrides = {}) {
   return seedPayrollSettings(conn, orgId, overrides);
 }
 
