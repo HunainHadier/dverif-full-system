@@ -96,8 +96,8 @@ function OrgAttendanceContent() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [dateFrom, setDateFrom] = useState(localToday());
-  const [dateTo, setDateTo] = useState(localToday());
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [employeeUuid, setEmployeeUuid] = useState("");
   const [ipInput, setIpInput] = useState("");
@@ -124,10 +124,13 @@ function OrgAttendanceContent() {
         limit: PAGE_SIZE,
         search,
         status: status || undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
+        dateFrom: dateFrom || (dateTo ? undefined : localToday()),
+        dateTo: dateTo || (dateFrom ? undefined : localToday()),
         employee_uuid: employeeUuid || undefined,
       }),
+    // Keep the live "today" view fresh as employees check in/out and when a
+    // long-open browser session crosses into a new local calendar day.
+    refetchInterval: !dateFrom && !dateTo ? 60_000 : false,
   });
 
   const addIp = useMutation({
@@ -255,6 +258,9 @@ function OrgAttendanceContent() {
       <Card className="mt-4 border-border/70 shadow-none">
         <CardContent className="p-0">
           <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
+            <p className="w-full text-xs text-muted-foreground lg:basis-full">
+              Showing today's attendance by default. Select a month or date range to view older records.
+            </p>
             <SearchInput
               value={search}
               onChange={(v) => {
@@ -311,8 +317,8 @@ function OrgAttendanceContent() {
                   setDateFrom(`${value}-01`);
                   setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
                 } else {
-                  setDateFrom(localToday());
-                  setDateTo(localToday());
+                  setDateFrom("");
+                  setDateTo("");
                 }
                 setPage(1);
               }}
