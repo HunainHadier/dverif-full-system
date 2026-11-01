@@ -87,7 +87,7 @@ export function OffersPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${(offer.reference_no || `offer-${offer.candidate_uuid.slice(0, 8)}`).replace(/[^\\w.-]+/g, "-")}.pdf`;
+      anchor.download = `${(offer.reference_no || `offer-${offer.candidate_uuid.slice(0, 8)}`).replace(/[^\w.-]+/g, "-")}.pdf`;
       anchor.click();
       URL.revokeObjectURL(url);
     },

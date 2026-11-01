@@ -678,7 +678,7 @@ export async function updatePayrollSettings(req, res) {
   const method = String(body.salary_calculation_method ?? "");
   if (!["hours", "days"].includes(method)) throw new ApiError(400, "Choose either working-hours or working-days salary calculation.");
   if (typeof body.calculate_overtime !== "boolean") throw new ApiError(400, "calculate_overtime must be true or false.");
-  const validTime = (v) => typeof v === "string" && /^([01]\\d|2[0-3]):[0-5]\\d$/.test(v);
+  const validTime = (v) => typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
   if (!validTime(body.shift_start_time) || !validTime(body.shift_end_time) || body.shift_end_time <= body.shift_start_time) {
     throw new ApiError(400, "Enter valid organization shift start and check-out times; check-out must be later.");
   }
@@ -722,7 +722,7 @@ export async function saveMonthlyWorkSchedule(req, res) {
   if (!Array.isArray(days) || days.length !== total) throw new ApiError(400, "Select every date in the month as either a working day or an off day.");
   const seen = new Set();
   for (const item of days) {
-    if (!item || !/^\\d{4}-\\d{2}-\\d{2}$/.test(String(item.date)) || !["working", "off"].includes(item.day_type)) throw new ApiError(400, "Each schedule day needs a valid date and working/off selection.");
+    if (!item || !/^\d{4}-\d{2}-\d{2}$/.test(String(item.date)) || !["working", "off"].includes(item.day_type)) throw new ApiError(400, "Each schedule day needs a valid date and working/off selection.");
     const date = String(item.date);
     if (date.slice(0, 7) !== `${y}-${String(m).padStart(2, "0")}` || seen.has(date)) throw new ApiError(400, "Schedule dates must be unique and belong to the selected month.");
     seen.add(date);

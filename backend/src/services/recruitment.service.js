@@ -1450,7 +1450,7 @@ export async function downloadOfferPdf({ orgId, candidateUuid, conn = pool }) {
     employeeName: context.full_name,
     organizationName: context.organization_name,
   });
-  return { buffer, filename: `${referenceNo.replace(/[^\\w.-]+/g, "-")}.pdf` };
+  return { buffer, filename: `${referenceNo.replace(/[^\w.-]+/g, "-")}.pdf` };
 }
 
 /**
