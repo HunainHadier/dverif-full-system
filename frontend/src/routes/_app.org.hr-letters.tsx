@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   FileSignature,
+  FileText,
   Plus,
   Download,
   ShieldCheck,
@@ -98,8 +99,9 @@ function HrLettersPage() {
       key: "letter_type",
       header: t("letters.type"),
       render: (r) => (
-        <span className="text-sm">
-          {HR_LETTER_TYPES.find((x) => x.key === r.letter_type)?.label ?? r.letter_type}
+        <span className="inline-flex min-w-0 items-center gap-2 text-sm">
+          {r.status === "draft" ? <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Draft document" /> : null}
+          <span className="truncate">{HR_LETTER_TYPES.find((x) => x.key === r.letter_type)?.label ?? r.letter_type}</span>
         </span>
       ),
     },

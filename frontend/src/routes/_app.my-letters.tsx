@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { FileSignature, Download, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -110,30 +111,18 @@ function MyLettersPage() {
         <PageHeader title={t("letters.myTitle")} description={t("letters.myDescription")} />
 
         <DataTableToolbar>
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant={typeFilter === "" ? "default" : "outline"}
-              onClick={() => {
-                setTypeFilter("");
-                setPage(1);
-              }}
-            >
-              {t("letters.all")}
-            </Button>
-            {HR_LETTER_TYPES.slice(0, 4).map((lt) => (
-              <Button
-                key={lt.key}
-                size="sm"
-                variant={typeFilter === lt.key ? "default" : "outline"}
-                onClick={() => {
-                  setTypeFilter(lt.key);
-                  setPage(1);
-                }}
-              >
-                {lt.label}
-              </Button>
-            ))}
+          <div className="flex w-full items-center gap-3 sm:w-auto">
+            <span className="shrink-0 text-sm text-muted-foreground">Filter by type</span>
+            <Select value={typeFilter || "all"} onValueChange={(value) => {
+              setTypeFilter(value === "all" ? "" : value as HrLetterType);
+              setPage(1);
+            }}>
+              <SelectTrigger className="w-full sm:w-64"><SelectValue placeholder="All letter types" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("letters.all")}</SelectItem>
+                {HR_LETTER_TYPES.map((lt) => <SelectItem key={lt.key} value={lt.key}>{lt.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
         </DataTableToolbar>
 
