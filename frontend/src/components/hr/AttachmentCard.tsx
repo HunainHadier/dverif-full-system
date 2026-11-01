@@ -227,7 +227,7 @@ export function AttachmentCard({
 
   return (
     <div
-      className="flex items-center gap-3 rounded-lg border bg-card p-2.5"
+      className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-lg border bg-card p-2.5 sm:grid-cols-[3rem_minmax(0,1fr)_auto]"
       // Hovering arms the preview fetch. Kept as a plain handler rather than a
       // CSS-only affordance so it also fires for keyboard focus.
       onMouseEnter={() => setHovered(true)}
@@ -254,7 +254,7 @@ export function AttachmentCard({
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         {/*
             ALWAYS clickable, and the title says which of the three things it will
             do. It used to be `disabled` for anything that was not an image or a
@@ -266,7 +266,7 @@ export function AttachmentCard({
           type="button"
           onClick={handleOpen}
           disabled={busy !== null}
-          className="block max-w-full truncate text-left text-sm font-medium underline-offset-2 hover:underline disabled:cursor-default disabled:no-underline"
+          className="block max-w-full whitespace-normal break-all text-left text-sm font-medium leading-snug underline-offset-2 hover:underline disabled:cursor-default disabled:no-underline"
           title={
             image
               ? t("assets.attachmentView")
@@ -283,7 +283,7 @@ export function AttachmentCard({
         </p>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="col-span-2 flex w-full shrink-0 items-center justify-end gap-1 sm:col-span-1 sm:w-auto">
         {/*
             Only for what VIEW actually displays. A PDF opens a new tab and an
             unviewable type downloads, so an eye icon beside those would be a
@@ -336,7 +336,7 @@ export function AttachmentCard({
       </div>
 
       {downloadError ? (
-        <p role="alert" className="mt-1 text-xs text-destructive">
+        <p role="alert" className="col-span-full mt-1 break-words text-xs text-destructive">
           {downloadError}
         </p>
       ) : null}
@@ -362,7 +362,7 @@ export function AttachmentCard({
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="truncate">{attachment.file_name}</DialogTitle>
+            <DialogTitle className="break-all pr-8 leading-snug">{attachment.file_name}</DialogTitle>
             <DialogDescription>{t("assets.attachmentPreviewHint")}</DialogDescription>
           </DialogHeader>
 
