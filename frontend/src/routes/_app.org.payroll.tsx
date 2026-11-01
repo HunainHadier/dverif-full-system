@@ -1136,6 +1136,39 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const isScheduleComplete = scheduleDates.every((date) => dayTypes[date] === "working" || dayTypes[date] === "off");
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const weekdayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  /** No requirement that Sat/Sun be off: any weekday can be working. */
+  const setEveryDay = (value: "working" | "off") =>
+    setDayTypes(() => {
+      const next: Record<string, "working" | "off"> = {};
+      for (const date of scheduleDates) next[date] = value;
+      return next;
+    });
+
+  /** Weekend preset, for the common Saturday+Sunday-off week. */
+  const setSatSunOff = () =>
+    setDayTypes(() => {
+      const next: Record<string, "working" | "off"> = {};
+      for (const date of scheduleDates) {
+        // Local midnight on purpose: parsing "YYYY-MM-DDT00:00:00" keeps the
+        // calendar date, while new Date("YYYY-MM-DD") is parsed as UTC and can
+        // land on the previous weekday west of Greenwich.
+        const weekday = new Date(`${date}T00:00:00`).getDay();
+        next[date] = weekday === 0 || weekday === 6 ? "off" : "working";
+      }
+      return next;
+    });
+
+  /** Flip every occurrence of one weekday, so a Fri/Sat or 6-day week is one click. */
+  const toggleWeekday = (weekday: number) =>
+    setDayTypes((s) => {
+      const next = { ...s };
+      const dates = scheduleDates.filter((date) => new Date(`${date}T00:00:00`).getDay() === weekday);
+      const makeWorking = dates.some((date) => next[date] !== "working");
+      for (const date of dates) next[date] = makeWorking ? "working" : "off";
+      return next;
+    });
   return (
     <>
       <Card className="border-border/70 shadow-none">
@@ -1188,7 +1221,27 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
             <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{monthNames.map((name,i)=><SelectItem key={name} value={String(i+1)}>{name}</SelectItem>)}</SelectContent></Select>
             <Input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(Number(e.target.value))} />
           </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d)=><div key={d} className="py-1">{d}</div>)}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Quick set:</span>
+            <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={() => setEveryDay("working")}>All working</Button>
+            <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={() => setEveryDay("off")}>All off</Button>
+            <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={setSatSunOff}>Sat + Sun off</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">No fixed weekend: click a weekday to switch every date of that weekday, or click individual dates.</p>
+          <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
+            {weekdayNames.map((name, weekday) => (
+              <button
+                key={name}
+                type="button"
+                disabled={!canManage}
+                onClick={() => toggleWeekday(weekday)}
+                title={`Toggle every ${name} in this month`}
+                className="cursor-pointer rounded-md py-1 font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {name}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-7 gap-1">
             {Array.from({length:firstWeekday},(_,i)=><div key={"blank"+i} />)}
             {Array.from({length:daysInMonth},(_,i)=>{

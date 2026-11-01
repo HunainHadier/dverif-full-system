@@ -11,6 +11,7 @@ const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalary
   payrollService;
 import * as expenses from "../services/expenses.service.js";
 import { queueNotificationEmail, notificationActionUrl } from "../services/notificationEmail.service.js";
+import { isoDate } from "../utils/dateRange.js";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -704,7 +705,12 @@ export async function getMonthlyWorkSchedule(req, res) {
     "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND MONTH(schedule_date)=? AND YEAR(schedule_date)=? ORDER BY schedule_date",
     [req.scopeOrgId, m, y],
   );
-  return ok(res, { month: m, year: y, days: rows }, "Monthly working schedule");
+  // DATE columns arrive as a JS Date at LOCAL midnight; serialising that to JSON
+  // converts it to UTC and, east of Greenwich, moves it to the previous day. The
+  // editor then shows (and re-saves) a schedule shifted by one day, so a Saturday
+  // marked working reappeared as an off Friday. Return the calendar date as text.
+  const days = rows.map((row) => ({ schedule_date: isoDate(row.schedule_date), day_type: row.day_type }));
+  return ok(res, { month: m, year: y, days }, "Monthly working schedule");
 }
 
 export async function saveMonthlyWorkSchedule(req, res) {
