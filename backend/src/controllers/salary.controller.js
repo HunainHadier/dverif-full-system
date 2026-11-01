@@ -69,8 +69,8 @@ async function findEmployee(employeeUuid, orgId) {
  * is "what actually happened", and an employee disputing a payslip needs to be
  * told which of the two they are looking at.
  */
-async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
-  const basic = await payrollService.proratedBasicForMonth({ employeeUuid, orgId, month: m, year: y, conn });
+async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate = null, conn }) {
+  const basic = await payrollService.proratedBasicForMonth({ employeeUuid, orgId, month: m, year: y, joiningDate, conn });
 
   // Pull ONLY this employee's individually-assigned, active salary components.
   // We use the per-employee amount (esc.amount), NOT the catalog's default_value,
@@ -115,6 +115,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
     orgId,
     month: m,
     year: y,
+    joiningDate,
     conn,
   });
 
@@ -238,7 +239,7 @@ export async function generatePayroll(req, res) {
     if (selected.length) {
       const placeholders = selected.map(() => "?").join(",");
       [employees] = await conn.query(
-        `SELECT uuid FROM employees WHERE organization_id=? AND uuid IN (${placeholders})`,
+        `SELECT uuid, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})`,
         [orgId, ...selected]
       );
       if (!employees.length) {
@@ -246,7 +247,7 @@ export async function generatePayroll(req, res) {
       }
     } else {
       [employees] = await conn.query(
-        "SELECT uuid FROM employees WHERE organization_id=?",
+        "SELECT uuid, joining_date FROM employees WHERE organization_id=?",
         [orgId]
       );
       if (!employees.length) throw new ApiError(404, "No employees in this organization to process");
@@ -362,7 +363,7 @@ export async function generatePayroll(req, res) {
     const createdBy = req.user?.id ?? null;
 
     for (const emp of employees) {
-      const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, conn });
+      const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn });
       if (computed.automatic.skipReason === "no_basic_salary") {
         throw new ApiError(409, `Payroll setup is incomplete for employee ${emp.uuid}: no positive effective basic salary exists for ${MONTHS[m - 1]} ${y}. Add an effective salary record, then preview again.`);
       }
@@ -576,7 +577,7 @@ export async function previewPayroll(req, res) {
   if (selected.length) {
     const placeholders = selected.map(() => "?").join(",");
     [employees] = await pool.query(
-      `SELECT uuid, full_name FROM employees WHERE organization_id=? AND uuid IN (${placeholders})
+      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})
         ORDER BY full_name`,
       [orgId, ...selected]
     );
@@ -585,14 +586,14 @@ export async function previewPayroll(req, res) {
     }
   } else {
     [employees] = await pool.query(
-      `SELECT uuid, full_name FROM employees WHERE organization_id=? ORDER BY full_name`,
+      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? ORDER BY full_name`,
       [orgId]
     );
   }
 
   const items = [];
   for (const emp of employees) {
-    const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, conn: pool });
+    const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn: pool });
     items.push({
       employee_uuid: emp.uuid,
       employee_name: emp.full_name,
