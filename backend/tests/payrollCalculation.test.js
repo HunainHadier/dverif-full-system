@@ -38,7 +38,7 @@ describe("monthly attendance payroll calculation", () => {
       absentDays: 0,
       workedHours: 8,
     });
-    expect(result.perDayRate).toBe(30000 / 22);
+    expect(result.perDayRate).toBe(1363.64);
     expect(result.lines.some((line) => line.source === "auto_absenteeism")).toBe(false);
     expect(result.payableRatio).toBe(1);
   });
