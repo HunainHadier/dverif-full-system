@@ -911,6 +911,10 @@ function OrgPayrollPage() {
           <div className="space-y-3">
             {(preview.data?.items ?? []).map((item) => {
               const a = item.attendance;
+              const isHoursBased = item.rates.salary_calculation_method === "hours";
+              const hoursPerWorkingDay = a.working_days > 0
+                ? a.expected_working_hours / a.working_days
+                : 0;
               const auto = item.lines.filter((l) => l.source !== "component");
               return (
                 <div key={item.employee_uuid} className="rounded-md border p-3 text-sm">
@@ -921,37 +925,45 @@ function OrgPayrollPage() {
                     </span>
                   </div>
 
-                  {/* The four figures the deduction is actually made of. Shown as
-                      counts rather than only as money, because "2 unpaid leave
-                      days" is an explanation and "2818.18" is not. */}
+                  {/* Show the attendance unit that actually drives salary calculation.
+                      The other unit must not make a days-based payroll look hourly
+                      (or an hours-based payroll look daily). */}
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-6">
-                    <div>
-                      <span className="text-muted-foreground">
-                        {t("payroll.previewAttended", "Attended")}
-                      </span>
-                      <p className="font-medium">
-                        {a.attended_days} / {a.elapsed_working_days ?? a.working_days}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        of {a.working_days} scheduled monthly days
-                      </p>
-                    </div>
+                    {isHoursBased ? (
+                      <div>
+                        <span className="text-muted-foreground">Worked hours</span>
+                        <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
+                        <p className="text-[10px] text-muted-foreground">of scheduled monthly hours</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="text-muted-foreground">
+                          {t("payroll.previewAttended", "Attended")}
+                        </span>
+                        <p className="font-medium">
+                          {a.attended_days} / {a.elapsed_working_days ?? a.working_days}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          of {a.working_days} scheduled monthly days
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <span className="text-muted-foreground">
                         {t("payroll.previewUnpaidLeave", "Unpaid leave")}
                       </span>
                       <p className="font-medium">
-                        {a.unpaid_leave_days}
+                        {isHoursBased
+                          ? `${(a.unpaid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs`
+                          : `${a.unpaid_leave_days} day(s)`}
                         {a.paid_leave_days > 0 ? (
                           <span className="ml-1 font-normal text-muted-foreground">
-                            (+{a.paid_leave_days} paid)
+                            (+{isHoursBased
+                              ? `${(a.paid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs paid`
+                              : `${a.paid_leave_days} paid`})
                           </span>
                         ) : null}
                       </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Worked hours</span>
-                      <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Overtime from check-out</span>
@@ -1015,13 +1027,9 @@ function OrgPayrollPage() {
                   ) : null}
 
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {t("payroll.previewRates", {
-                      perDay: `${item.rates.currency} ${money(item.rates.per_day)}`,
-                      hourly: `${item.rates.currency} ${money(item.rates.hourly)}`,
-                      divisor: item.rates.divisor,
-                      basis: item.rates.salary_calculation_method === "hours" ? "scheduled hours" : "working days",
-                      defaultValue: "Salary basis: {{divisor}} {{basis}} · hourly rate {{hourly}}",
-                    })}
+                    {isHoursBased
+                      ? `Salary basis: ${item.rates.divisor} scheduled hours · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
+                      : `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
                           count: a.holidays_in_month,
