@@ -115,6 +115,7 @@ export const orgAttendanceService = {
       dateFrom?: string;
       dateTo?: string;
       status?: string;
+      employee_uuid?: UUID;
     } = {},
   ) => api.get<Paginated<AttendanceRecord>>("/org/attendance", { params }).then((r) => r.data),
   ips: () =>
