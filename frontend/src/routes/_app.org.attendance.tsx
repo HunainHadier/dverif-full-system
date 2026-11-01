@@ -96,10 +96,20 @@ function OrgAttendanceContent() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(localToday());
+  const [dateTo, setDateTo] = useState(localToday());
+  const [monthFilter, setMonthFilter] = useState("");
+  const [employeeUuid, setEmployeeUuid] = useState("");
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
+
+  const employeesQ = useQuery({
+    queryKey: ["orgAttendanceEmployees"],
+    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+  });
+  const employeeOptions = (employeesQ.data?.items ?? []).filter((employee) =>
+    isCurrentEmployee(employee.status),
+  );
 
   const ips = useQuery({
     queryKey: ["orgAllowedIps"],
@@ -107,7 +117,7 @@ function OrgAttendanceContent() {
   });
 
   const records = useQuery({
-    queryKey: ["orgAttendance", page, search, status, dateFrom, dateTo],
+    queryKey: ["orgAttendance", page, search, status, dateFrom, dateTo, employeeUuid],
     queryFn: () =>
       orgAttendanceService.list({
         page,
@@ -116,6 +126,7 @@ function OrgAttendanceContent() {
         status: status || undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
+        employee_uuid: employeeUuid || undefined,
       }),
   });
 
@@ -253,6 +264,25 @@ function OrgAttendanceContent() {
               placeholder={t("attendance.searchEmployee")}
             />
             <Select
+              value={employeeUuid || "all"}
+              onValueChange={(v) => {
+                setEmployeeUuid(v === "all" ? "" : v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-full lg:w-52">
+                <SelectValue placeholder="All employees" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All employees</SelectItem>
+                {employeeOptions.map((employee) => (
+                  <SelectItem key={employee.uuid} value={employee.uuid}>
+                    {employee.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
               value={status}
               onValueChange={(v) => {
                 setStatus(v);
@@ -268,11 +298,33 @@ function OrgAttendanceContent() {
                 <SelectItem value="checked_out">{t("status.checked_out")}</SelectItem>
               </SelectContent>
             </Select>
+            <Input
+              type="month"
+              aria-label="Filter attendance by month"
+              value={monthFilter}
+              onChange={(e) => {
+                const value = e.target.value;
+                setMonthFilter(value);
+                if (value) {
+                  const [year, month] = value.split("-").map(Number);
+                  const lastDay = new Date(year, month, 0).getDate();
+                  setDateFrom(`${value}-01`);
+                  setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
+                } else {
+                  setDateFrom(localToday());
+                  setDateTo(localToday());
+                }
+                setPage(1);
+              }}
+              className="w-full sm:w-44"
+            />
             <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:w-auto">
               <Input
                 type="date"
+                aria-label="Attendance from date"
                 value={dateFrom}
                 onChange={(e) => {
+                  setMonthFilter("");
                   setDateFrom(e.target.value);
                   setPage(1);
                 }}
@@ -281,8 +333,10 @@ function OrgAttendanceContent() {
               <span className="text-xs text-muted-foreground">{t("common.to")}</span>
               <Input
                 type="date"
+                aria-label="Attendance to date"
                 value={dateTo}
                 onChange={(e) => {
+                  setMonthFilter("");
                   setDateTo(e.target.value);
                   setPage(1);
                 }}
