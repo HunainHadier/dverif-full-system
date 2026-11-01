@@ -348,7 +348,7 @@ export function AttachmentCard({
           which sends them looking at the wrong button.
       */}
       {viewError ? (
-        <p role="alert" className="mt-1 text-xs text-destructive">
+        <p role="alert" className="col-span-full mt-1 break-words text-xs text-destructive">
           {viewError}
         </p>
       ) : null}
