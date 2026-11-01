@@ -1309,10 +1309,7 @@ function MonthlySalaryVariablesCard({ uuid }: { uuid: UUID }) {
                 ))}
               </TableBody>
             </Table>
-            <div className="flex flex-wrap justify-end gap-4 text-sm">
-              <span className="text-emerald-600">Variable earnings: {formatAmount(totalAllowances)}</span>
-              <span className="text-rose-600">Variable deductions: {formatAmount(totalDeductions)}</span>
-            </div>
+           
           </>
         )}
         <p className="text-xs text-muted-foreground">
