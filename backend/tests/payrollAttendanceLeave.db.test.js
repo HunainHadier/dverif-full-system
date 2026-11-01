@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { purgeTestOrgs } from "./helpers/dbCleanup.js";
-import { seedPayrollBaseline, seedPayrollPolicy } from "./helpers/payrollPolicy.js";
+import { seedPayrollBaseline, seedPayrollSettings } from "./helpers/payrollSettings.js";
 
 import {
   createSalaryComponent,
@@ -305,9 +305,9 @@ async function attendAll(uuid, skip = []) {
     if (skipped.has(date)) continue;
     await db.query(
       `INSERT INTO attendance_records
-         (uuid, employee_uuid, organization_id, date, check_in_at, status, is_manual, created_at)
-       VALUES (UUID(), ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
-      [uuid, orgId, date, `${date} 08:55:00`],
+         (uuid, employee_uuid, organization_id, date, check_in_at, check_out_at, status, is_manual, created_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, 'checked_in', 'no', NOW())`,
+      [uuid, orgId, date, `${date} 08:55:00`, `${date} 17:00:00`],
     );
   }
 }
@@ -315,9 +315,9 @@ async function attendAll(uuid, skip = []) {
 async function approveLeaveDirect(uuid, leaveTypeId, startDate, endDate) {
   await db.query(
     `INSERT INTO leave_requests
-       (uuid, employee_uuid, leave_type_id, start_date, end_date, status, approved_at)
-     VALUES (UUID(), ?, ?, ?, ?, 'approved', NOW())`,
-    [uuid, leaveTypeId, startDate, endDate],
+       (uuid, employee_uuid, leave_type_id, start_date, end_date, requested_treatment, approved_treatment, status, approved_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'approved', NOW())`,
+    [uuid, leaveTypeId, startDate, endDate, "unpaid", "unpaid"],
   );
 }
 
@@ -731,6 +731,7 @@ describe.runIf(HAS_DB)("leave requests reach the payslip", () => {
     const submitted = await call(createLeave, employeeReq(emp, {
       body: {
         leave_type_id: paidTypeId,
+        requested_treatment: "paid",
         start_date: "2026-10-12",
         end_date: "2026-10-12",
         reason: "Sick",
@@ -739,7 +740,7 @@ describe.runIf(HAS_DB)("leave requests reach the payslip", () => {
     const leaveUuid = submitted.body.data.leaveRequest.uuid;
     await call(decideLeave, adminReq({
       params: { uuid: leaveUuid },
-      body: { status: "approved" },
+      body: { status: "approved", approved_treatment: "paid" },
     }));
 
     const after = await preview(emp.uuid);
@@ -803,6 +804,7 @@ describe.runIf(HAS_DB)("attendance records reach the payslip", () => {
           employee_uuid: emp.uuid,
           date,
           check_in_time: time,
+          check_out_time: "17:00",
           reason: "Biometric device offline",
         },
       }));
@@ -822,17 +824,12 @@ describe.runIf(HAS_DB)("attendance records reach the payslip", () => {
     expect(four.attendance.late_count).toBe(3);
     expect(four.attendance.absent_days).toBe(WORKING_DAYS - 4);
 
-    const lateLine = lineOf(four, "auto_late");
-    expect(lateLine).toBeTruthy();
-    expect(Number(lateLine.amount)).toBe(money(PER_DAY * 0.5));
-    expect(Number(lateLine.basis_value)).toBe(3);
+    expect(lineOf(four, "auto_late")).toBeFalsy();
     expect(Number(lineOf(four, "auto_absenteeism").amount)).toBe(
       money(PER_DAY * (WORKING_DAYS - 4)),
     );
-    // 3 late arrivals x the configured threshold of 3 = one half-day penalty.
-    expect(Number(four.deductions)).toBe(
-      money(PER_DAY * (WORKING_DAYS - 4) + PER_DAY * 0.5),
-    );
+    // Late arrivals are reported, but the removed payroll-policy penalty is not applied.
+    expect(Number(four.deductions)).toBe(money(PER_DAY * (WORKING_DAYS - 4)));
   });
 
   it("attendance on a weekend is recorded but is not a working day", async () => {
@@ -933,6 +930,10 @@ describe.runIf(HAS_DB)("approved overtime reaches the payslip", () => {
   it("pays only APPROVED hours, clamped to the request, and never the rejected ones", async () => {
     const emp = await newEmployee({ name: "OvertimeFlow" });
     await attendAll(emp.uuid);
+    await db.query(
+      "UPDATE attendance_records SET check_out_at='2026-10-20 19:00:00' WHERE employee_uuid=? AND date='2026-10-20'",
+      [emp.uuid],
+    );
 
     const created = await call(createOvertimeRequest, adminReq({
       body: {
@@ -980,14 +981,14 @@ describe.runIf(HAS_DB)("approved overtime reaches the payslip", () => {
     }));
 
     const p = await preview(emp.uuid);
-    expect(p.attendance.approved_overtime_hours).toBe(8);
+    expect(p.attendance.approved_overtime_hours).toBe(2);
     const line = lineOf(p, "auto_overtime");
     expect(line).toBeTruthy();
     expect(line.type).toBe("earning");
-    expect(Number(line.basis_value)).toBe(8);
-    expect(Number(line.amount)).toBe(money(HOURLY * 1.5 * 8));
-    expect(Number(p.allowances)).toBe(money(HOURLY * 1.5 * 8));
-    expect(Number(p.net_salary)).toBe(money(BASIC + HOURLY * 1.5 * 8));
+    expect(Number(line.basis_value)).toBe(2);
+    expect(Number(line.amount)).toBe(money(HOURLY * 1.5 * 2));
+    expect(Number(p.allowances)).toBe(money(HOURLY * 1.5 * 2));
+    expect(Number(p.net_salary)).toBe(money(BASIC + HOURLY * 1.5 * 2));
   });
 });
 
@@ -1002,6 +1003,10 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
       allocations: [{ typeId: unpaidTypeId, days: 10 }],
     });
     await attendAll(emp.uuid, ["2026-10-06", "2026-10-07"]);
+    await db.query(
+      "UPDATE attendance_records SET check_out_at='2026-10-20 19:00:00' WHERE employee_uuid=? AND date='2026-10-20'",
+      [emp.uuid],
+    );
     await approveLeaveDirect(emp.uuid, unpaidTypeId, "2026-10-06", "2026-10-07");
 
     const transport = await createComponent({
@@ -1037,9 +1042,9 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(p.attendance.attended_days).toBe(20);
     expect(p.attendance.absent_days).toBe(0);
     expect(p.attendance.unpaid_leave_days).toBe(2);
-    expect(p.attendance.approved_overtime_hours).toBe(6);
+    expect(p.attendance.approved_overtime_hours).toBe(2);
 
-    const expectedOvertime = money(HOURLY * 1.5 * 6);
+    const expectedOvertime = money(HOURLY * 1.5 * 2);
     expect(Number(p.allowances)).toBe(money(8000 + expectedOvertime));
     expect(Number(p.deductions)).toBe(money(1000 + PER_DAY * 2));
     expect(Number(p.net_salary)).toBe(
@@ -1079,7 +1084,7 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(Number(leaveLine.basis_value)).toBe(2);
     expect(leaveLine.basis_unit).toBe("days");
     const overtimeLine = lines.find((l) => l.source === "auto_overtime");
-    expect(Number(overtimeLine.basis_value)).toBe(6);
+    expect(Number(overtimeLine.basis_value)).toBe(2);
     expect(overtimeLine.basis_unit).toBe("hours");
 
     // A second generate for the same employee/period is refused, not duplicated.
@@ -1130,25 +1135,25 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(await salaryRecordOf(emp.uuid)).toHaveLength(0);
   });
 
-  it("preview refuses an org with no confirmed payroll policy", async () => {
+  it("preview refuses an org without payroll settings", async () => {
     const res = await call(previewPayroll, adminReq({
       scopeOrgId: otherOrgId,
       body: { month: MONTH, year: YEAR },
     })).catch((error) => ({ error }));
-    // The other tenant has an employee but no policy: preview must stop, not
-    // invent a deduction formula.
+    // The other tenant has an employee but no payroll settings: preview must stop,
+    // rather than invent a salary calculation method or shift timing.
     expect(res.error?.statusCode).toBe(409);
-    expect(res.error?.message).toMatch(/Payroll policy is not configured/i);
+    expect(res.error?.message).toMatch(/Payroll settings are not configured/i);
   });
 
-  it("preview refuses an org whose working week is not configured", async () => {
+  it("preview refuses an org whose monthly schedule is not configured", async () => {
     const [third] = await db.query("INSERT INTO organizations (uuid, name) VALUES (UUID(), ?)", [
       `Payroll No Week ${runTag}`,
     ]);
     const thirdOrgId = third.insertId;
     orgsToPurge.push(thirdOrgId);
-    // Policy without a work week: exactly one of the two configured inputs.
-    await seedPayrollPolicy(db, thirdOrgId);
+    // Settings exist, but no monthly date schedule has been saved.
+    await seedPayrollSettings(db, thirdOrgId);
     const emp = await newEmployee({
       name: "NoWorkWeek",
       org: thirdOrgId,
@@ -1160,7 +1165,7 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
       body: { month: MONTH, year: YEAR, employee_uuids: [emp.uuid] },
     })).catch((error) => ({ error }));
     expect(res.error?.statusCode).toBe(409);
-    expect(res.error?.message).toMatch(/work week is not configured/i);
+    expect(res.error?.message).toMatch(/monthly working schedule is incomplete/i);
   });
 
   it("another tenant's employee cannot be previewed or generated", async () => {

@@ -13,27 +13,9 @@ import { CURRENCY } from "../utils/currency.js";
  * leave, never clock in, and work overtime and still be paid identically to a
  * colleague who did none of it. This module is the join.
  *
- * Every deduction rate uses an organization-selected divisor. Working-day counts
- * use the configured week and holiday table; calendar-day and fixed-30 bases are
- * explicit alternatives selected in payroll policy rather than implicit defaults.
+ * Monthly payroll uses the organization's explicit per-date working/off-day calendar,
+ * actual attendance timestamps, shift timings, and final approved leave treatment.
  */
-
-const WEEK_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-
-/** JS getDay(): 0=Sunday. Maps onto the work_week_config column names. */
-const DAY_KEY = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-
-/**
- * Late arrival cutoff is configured per organization. Payroll never assumes a
- * company shift start or grace period.
- */
-const LATE_AFTER_MINUTES = null;
-
-/** Every 3 late arrivals costs half a day's pay. */
-const LATES_PER_HALF_DAY = null;
-
-/** Overtime is paid at this multiple of the hourly rate derived from basic. */
-const OVERTIME_RATE_MULTIPLIER = null;
 
 /**
  * The effective basic salary for a given month.
@@ -63,14 +45,6 @@ export async function effectiveBasicForMonth({ employeeUuid, orgId, month, year,
   );
   return rows.length ? rows[0].basic_salary : 0;
 }
-
-export const PAYROLL_RULES = {
-  LATE_AFTER_MINUTES,
-  LATES_PER_HALF_DAY,
-  OVERTIME_RATE_MULTIPLIER,
-  OVERTIME_RATE_LABEL: null,
-  DEFAULT_WORK_WEEK: null,
-};
 
 // `currency` is NOT one of these. It was, when administrators could type a
 // three-letter code, and its absence here is the point: a currency is no longer
@@ -108,23 +82,6 @@ function monthBounds(month, year) {
 /** Round to 2dp. DECIMAL arrives from mysql2 as a string and must not concat. */
 function money(n) {
   return Math.round(Number(n) * 100) / 100;
-}
-
-/**
- * This organization's explicitly configured working week. No calendar is
- * inferred: payroll must stop until an administrator confirms the schedule.
- */
-export async function getWorkWeek(orgId, conn = pool) {
-  const [rows] = await conn.query(
-    "SELECT mon,tue,wed,thu,fri,sat,sun FROM work_week_config WHERE organization_id=?",
-    [orgId],
-  );
-  if (!rows.length) throw new ApiError(409, "Payroll work week is not configured. Set the organization's working days before payroll calculation.");
-  if (!WEEK_KEYS.some((k) => Number(rows[0][k]) === 1)) throw new ApiError(409, "Payroll work week has no working days. Configure at least one working day.");
-  const row = rows[0];
-  const week = {};
-  for (const k of WEEK_KEYS) week[k] = row[k] ? 1 : 0;
-  return week;
 }
 
 /**
@@ -184,7 +141,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
 
   const [rows] = await conn.query(
     `SELECT lr.start_date, lr.end_date, lt.name AS leave_type,
-            COALESCE(lr.approved_treatment, lr.requested_treatment, CASE WHEN lt.is_paid='no' THEN 'unpaid' ELSE 'paid' END) AS treatment
+            COALESCE(lr.approved_treatment, lr.requested_treatment, 'unpaid') AS treatment
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_uuid=?
@@ -221,7 +178,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
     unpaidLeaveDays: unpaidDays.size,
     paidDates: [...paidDays].sort(),
     unpaidDates: [...unpaidDays].sort(),
-    requests: rows.length,
+    requests: rows,
   };
 }
 
@@ -254,23 +211,27 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   let lateCount = 0;
   let workedHours = 0;
   let actualOvertimeHours = 0;
+  const actualOvertimeByDate = {};
 
   for (const r of rows) {
     const iso = isoDate(r.date);
     if (!working.has(iso)) continue;
-    // An attendance row on a day the employee was on approved leave means the
-    // leave record and the log disagree. The log is the stronger evidence that
-    // they worked, so it counts as present — otherwise the day is deducted as
-    // unpaid leave AND counted as an absence.
-    if (excused.has(iso)) continue;
+    // A workday is complete only when both clock-in and clock-out exist.
+    // If a completed attendance record overlaps approved leave, the attendance
+    // record wins: the day is treated as worked, not as leave or absence.
+    // A check-in-only row must not be treated as a full paid day in days mode.
+    if (!r.check_in_at || !r.check_out_at) continue;
+    const start = new Date(r.check_in_at).getTime();
+    const end = new Date(r.check_out_at).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
     presentDates.add(iso);
-    if (r.check_in_at && r.check_out_at) {
-      const start = new Date(r.check_in_at).getTime();
-      const end = new Date(r.check_out_at).getTime();
-      if (Number.isFinite(start) && Number.isFinite(end) && end > start) workedHours += (end - start) / 3600000;
-      if (overtimeCutoffMinutes !== null && Number.isFinite(end)) {
-        const checkout = minutesPastMidnight(r.check_out_at);
-        if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) actualOvertimeHours += (checkout - Number(overtimeCutoffMinutes)) / 60;
+    workedHours += (end - start) / 3600000;
+    if (overtimeCutoffMinutes !== null) {
+      const checkout = minutesPastMidnight(r.check_out_at);
+      if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) {
+        const extra = (checkout - Number(overtimeCutoffMinutes)) / 60;
+        actualOvertimeHours += extra;
+        actualOvertimeByDate[iso] = extra;
       }
     }
     if (lateCutoffMinutes !== null && minutesPastMidnight(r.check_in_at) > Number(lateCutoffMinutes)) lateCount += 1;
@@ -280,13 +241,14 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   // Never negative: a manually entered attendance row can otherwise push this
   // below zero and then a negative day count becomes a negative deduction, which
   // reads as a pay rise.
-  const excusedCount = [...excused].filter((d) => working.has(d)).length;
+  const excusedCount = [...excused].filter((d) => working.has(d) && !presentDates.has(d)).length;
   const absentDays = Math.max(0, working.size - presentDates.size - excusedCount);
 
   return {
     attendedDays: presentDates.size,
     workedHours: Math.round(workedHours * 100) / 100,
     actualOvertimeHours: Math.round(actualOvertimeHours * 100) / 100,
+    actualOvertimeByDate,
     absentDays,
     lateCount,
     presentDates: [...presentDates].sort(),
@@ -387,12 +349,15 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     workedHours: attendance.workedHours,
     absentDays: attendance.absentDays,
     lateCount: attendance.lateCount,
-    paidLeaveDays: leave.paidLeaveDays,
-    unpaidLeaveDays: leave.unpaidLeaveDays,
-    approvedOvertimeHours: Math.min(overtime.approvedOvertimeHours, attendance.actualOvertimeHours),
+    paidLeaveDays: leave.paidDates.filter((date) => !attendance.presentDates.includes(date)).length,
+    unpaidLeaveDays: leave.unpaidDates.filter((date) => !attendance.presentDates.includes(date)).length,
+    approvedOvertimeHours: money(overtime.requests.reduce((sum, request) => {
+      const date = isoDate(request.work_date);
+      return sum + Math.min(Number(request.approved_hours) || 0, Number(attendance.actualOvertimeByDate[date]) || 0);
+    }, 0)),
     actualOvertimeHours: attendance.actualOvertimeHours,
     requestedOvertimeHours: overtime.requestedOvertimeHours,
-    overtimeRequests: overtime.requests,
+    overtimeRequests: overtime.requests.length,
   };
 }
 
@@ -425,23 +390,54 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const method = policy.salary_calculation_method || "days";
   if (!["hours", "days"].includes(method)) throw new ApiError(409, "Select either working-hours or working-days salary calculation.");
   const lines = [];
-  let payableRatio = 1;
-  if (method === "hours") {
-    const creditedHours = Number(summary.workedHours || 0) + paidLeaveDays * shiftHours;
-    payableRatio = expectedHours > 0 ? Math.min(1, creditedHours / expectedHours) : 0;
-  } else {
-    const payableDays = attendedDays + paidLeaveDays;
-    payableRatio = workingDays > 0 ? Math.min(1, payableDays / workingDays) : 0;
-  }
-  const proratedBasic = money(basic * payableRatio);
-  const baseDeduction = money(Math.max(0, basic - proratedBasic));
-  if (baseDeduction > 0) lines.push({
-    label: method === "hours" ? "Attendance and unpaid time adjustment" : "Attendance and unpaid leave adjustment",
-    type: "deduction", source: "auto_attendance_proration", amount: baseDeduction,
-    basis_value: method === "hours" ? Number(summary.workedHours || 0) : attendedDays + paidLeaveDays,
-    basis_unit: method === "hours" ? "hours" : "days",
-  });
+  if (workingDays <= 0 || basic <= 0) return {
+    lines, perDayRate: 0, hourlyRate: 0, perDayHours: shiftHours,
+    totalDeduction: 0, totalAddition: 0, workingDays, divisor: 0,
+    payableRatio: 0, skipReason: workingDays <= 0 ? "no_working_days" : "no_basic_salary",
+    method, expectedHours, workedHours: Number(summary.workedHours || 0),
+  };
+
+  const perDayRate = money(basic / workingDays);
   const hourlyRate = expectedHours > 0 ? money(basic / expectedHours) : 0;
+  let payableRatio = 1;
+
+  if (method === "days") {
+    const payableDays = Math.min(workingDays, attendedDays + paidLeaveDays);
+    payableRatio = payableDays / workingDays;
+    if (unpaidLeaveDays > 0) lines.push({
+      label: `Unpaid leave (${unpaidLeaveDays} day(s) x ${perDayRate})`,
+      type: "deduction", source: "auto_unpaid_leave",
+      amount: money(perDayRate * unpaidLeaveDays), basis_value: unpaidLeaveDays, basis_unit: "days",
+    });
+    if (absentDays > 0) lines.push({
+      label: `Absence (${absentDays} day(s) x ${perDayRate})`,
+      type: "deduction", source: "auto_absenteeism",
+      amount: money(perDayRate * absentDays), basis_value: absentDays, basis_unit: "days",
+    });
+  } else {
+    const workedHours = Number(summary.workedHours || 0);
+    const creditedHours = workedHours + paidLeaveDays * shiftHours;
+    payableRatio = Math.min(1, creditedHours / expectedHours);
+    const unpaidAmount = money(hourlyRate * shiftHours * unpaidLeaveDays);
+    const absenceAmount = money(hourlyRate * shiftHours * absentDays);
+    if (unpaidAmount > 0) lines.push({
+      label: `Unpaid leave (${unpaidLeaveDays} day(s), ${unpaidLeaveDays * shiftHours} hours)`,
+      type: "deduction", source: "auto_unpaid_leave",
+      amount: unpaidAmount, basis_value: unpaidLeaveDays * shiftHours, basis_unit: "hours",
+    });
+    if (absenceAmount > 0) lines.push({
+      label: `Absence (${absentDays} day(s), ${absentDays * shiftHours} hours)`,
+      type: "deduction", source: "auto_absenteeism",
+      amount: absenceAmount, basis_value: absentDays * shiftHours, basis_unit: "hours",
+    });
+    const shortHours = Math.max(0, expectedHours - creditedHours - unpaidLeaveDays * shiftHours - absentDays * shiftHours);
+    if (shortHours > 0) lines.push({
+      label: `Short working hours (${money(shortHours)} hours)`,
+      type: "deduction", source: "auto_short_hours",
+      amount: money(hourlyRate * shortHours), basis_value: money(shortHours), basis_unit: "hours",
+    });
+  }
+
   const overtimeHours = Number(policy.calculate_overtime) === 1 ? Number(summary.approvedOvertimeHours || 0) : 0;
   const multiplier = Number(policy.overtime_multiplier || 1.5);
   if (overtimeHours > 0 && hourlyRate > 0) lines.push({
@@ -452,11 +448,10 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const totalDeduction = money(lines.filter((l) => l.type === "deduction").reduce((sum, line) => sum + line.amount, 0));
   const totalAddition = money(lines.filter((l) => l.type === "earning").reduce((sum, line) => sum + line.amount, 0));
   return {
-    lines, perDayRate: workingDays ? money(basic / workingDays) : 0, hourlyRate,
-    perDayHours: shiftHours, totalDeduction, totalAddition, workingDays,
-    divisor: method === "hours" ? expectedHours : workingDays,
-    payableRatio, skipReason: workingDays <= 0 ? "no_working_days" : basic <= 0 ? "no_basic_salary" : null,
-    method, expectedHours, workedHours: Number(summary.workedHours || 0),
+    lines, perDayRate, hourlyRate, perDayHours: shiftHours, totalDeduction, totalAddition,
+    workingDays, divisor: method === "hours" ? expectedHours : workingDays,
+    payableRatio, skipReason: null, method, expectedHours,
+    workedHours: Number(summary.workedHours || 0),
   };
 }
 

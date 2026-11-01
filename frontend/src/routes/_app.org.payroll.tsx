@@ -57,7 +57,6 @@ import {
   type SalaryRecord,
   type EmployeeRecord,
   type PayrollSettings,
-  type MonthlyWorkDay,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -395,7 +394,7 @@ function OrgPayrollPage() {
         title={t("nav.payroll")}
         description={t("payroll.description")}
         actions={
-          tab === "records" ? (
+          tab === "components" ? null : tab === "records" ? (
             <div className="flex shrink-0 flex-nowrap gap-2 whitespace-nowrap">
               <Button
                 className="w-40 shrink-0 justify-center"
@@ -1104,7 +1103,7 @@ function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
       const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       next[key] = date.getDay() === 0 || date.getDay() === 6 ? "off" : "working";
     }
-    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date ?? item.date).slice(0, 10)] = item.day_type;
+    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date).slice(0, 10)] = item.day_type;
     setDayTypes(next);
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
@@ -1173,7 +1172,7 @@ function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
             })}
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span>Working days: {Object.values(dayTypes).filter((v)=>v==="working").length}</span><span>Off days: {Object.values(dayTypes).filter((v)=>v==="off").length}</span></div>
-          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || saveSchedule.isPending || Object.keys(dayTypes).length!==daysInMonth}>Save Monthly Schedule</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || Object.keys(dayTypes).length!==daysInMonth}>Save Monthly Schedule</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>

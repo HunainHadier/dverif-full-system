@@ -48,22 +48,6 @@ export async function listLeaveTypes(req, res) {
   return ok(res, { leaveTypes: rows }, "Leave types");
 }
 
-/**
- * Normalise a paid/unpaid marker to the column's enum.
- *
- * Defaults to 'yes' when absent, for the same reason the column itself defaults
- * to 'yes': Annual and Sick are paid by law, and a missing flag must never be
- * read as a reason to dock pay. "no" is the value that has to be asked for.
- */
-function paidFlag(value) {
-  if (value === undefined || value === null || value === "") return "yes";
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  const s = String(value).toLowerCase();
-  if (s === "no" || s === "false" || s === "0") return "no";
-  if (s === "yes" || s === "true" || s === "1") return "yes";
-  throw new ApiError(400, "is_paid must be yes/no");
-}
-
 export async function createLeaveType(req, res) {
   const orgId = await resolveScopeOrgId(req);
   const { name, days_allowed_per_year } = req.body;
@@ -397,7 +381,7 @@ export async function listOrgLeaves(req, res) {
     `SELECT lr.uuid,
             DATE_FORMAT(lr.start_date, '%Y-%m-%d') AS start_date,
             DATE_FORMAT(lr.end_date, '%Y-%m-%d') AS end_date,
-            lr.reason, lr.status,
+            lr.reason, lr.status, lr.requested_treatment, lr.approved_treatment,
             lr.approved_by, lr.approved_at, lr.created_at,
             e.uuid AS employee_uuid, e.full_name AS employee_name,
             e.email AS employee_email, dg.name AS designation,

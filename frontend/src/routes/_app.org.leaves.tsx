@@ -340,6 +340,7 @@ function OrgLeavesContent() {
                                       className="h-7 text-xs"
                                       disabled={isLocked}
                                       onClick={() => {
+                                        setApprovalTreatment("unpaid");
                                         setDecideAction("approved");
                                         setConfirming(r);
                                       }}
@@ -402,7 +403,7 @@ function OrgLeavesContent() {
       </Dialog>
       <ConfirmDialog
         open={!!confirming && !(decideAction === "approved" && confirming.requested_treatment === "paid")}
-        onOpenChange={(o) => !o && setConfirming(null)
+        onOpenChange={(o) => !o && setConfirming(null)}
         title={
           decideAction === "approved" ? t("orgLeaves.approveTitle") : t("orgLeaves.rejectTitle")
         }
