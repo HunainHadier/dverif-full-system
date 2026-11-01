@@ -709,6 +709,57 @@ export async function renderLetterPdf({ orgId, letterUuid }) {
   return { buffer, filename: `${letter.reference_no.replace(/[^\w.-]+/g, "-")}.pdf` };
 }
 
+/** Render an unsaved template with sample values so its author can check the PDF layout. */
+export async function renderTemplatePreviewPdf({ orgId, letterType, name, body }) {
+  letterTypeOrThrow(letterType);
+  const bodyText = String(body ?? "");
+  if (bodyText.length > 65_000) throw new ApiError(400, "body is too long");
+
+  const [rows] = await pool.query(
+    "SELECT name, logo FROM organizations WHERE id=? LIMIT 1",
+    [orgId],
+  );
+  const organization = rows[0];
+  if (!organization) throw new ApiError(404, "Organization not found");
+
+  const issuedAt = new Date();
+  const previewValues = {
+    employee_name: "Sample Employee",
+    designation: "Job Title",
+    department: "Department",
+    joining_date: "01 January 2026",
+    cnic: "35202-1234567-1",
+    organization_name: organization.name,
+    issue_date: issuedAt,
+    letter_date: issuedAt,
+    reference_no: "HR/PREVIEW/0000",
+    current_salary: "PKR 50,000",
+    new_salary: "PKR 60,000",
+    effective_date: "01 January 2026",
+    increment_percentage: "20%",
+    total_experience: "3 years",
+    last_working_date: "31 December 2025",
+    warning_reason: "Policy violation",
+  };
+  const renderedBody = renderTemplate(bodyText, previewValues).text;
+  const letter = {
+    letter_type: letterType,
+    reference_no: "HR/PREVIEW/0000",
+    title: String(name ?? "").trim() || null,
+    body_snapshot: renderedBody,
+    status: "draft",
+    issued_at: issuedAt,
+  };
+  const buffer = await generateHrLetterPdf({
+    letter,
+    employeeName: "Sample Employee",
+    organizationName: organization.name,
+    organizationLogoPath: organizationLogoFile(organization.logo),
+    verifyUrl: null,
+  });
+  return { buffer, filename: "letter-template-preview.pdf" };
+}
+
 /**
  * Public verification.
  *

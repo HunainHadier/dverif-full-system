@@ -201,6 +201,19 @@ export async function previewTemplate(req, res) {
   return ok(res, preview, "Preview");
 }
 
+export async function previewTemplatePdf(req, res) {
+  const { buffer, filename } = await letters.renderTemplatePreviewPdf({
+    orgId: req.scopeOrgId,
+    letterType: req.body?.letterType,
+    name: req.body?.name,
+    body: req.body?.body,
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(buffer);
+}
+
 // ---------------------------------------------------------------------------
 // Public verification (no auth) — mounted in routes/index.js, not here.
 // ---------------------------------------------------------------------------

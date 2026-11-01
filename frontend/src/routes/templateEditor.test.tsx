@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
-import { TemplateFields } from "@/routes/_app.org.letter-templates";
+import {
+  TemplateFields,
+  TemplatePdfPreviewButton,
+} from "@/routes/_app.org.letter-templates";
+import { letterTemplatesService } from "@/services";
 
 /**
  * Guards the template editor's split workspace and its click-to-insert.
@@ -30,14 +34,8 @@ const mergeTags = [
 ];
 
 /**
- * No service mock on purpose.
- *
- * TemplateFields is purely presentational — it takes the form and the tag list
- * as props and touches no API. An earlier version mocked
- * letterTemplatesService.update for no reason; because vi.mock factories are
- * hoisted above the file's own const declarations, referencing the spy threw
- * "Cannot access 'update' before initialization" and the whole suite failed to
- * collect. The page component that DOES call update is covered elsewhere.
+ * The live PDF panel is checked with a focused service spy so this component
+ * test never needs a running API.
  */
 
 function Harness() {
@@ -62,6 +60,61 @@ function Harness() {
 }
 
 beforeEach(() => vi.clearAllMocks());
+afterEach(() => vi.restoreAllMocks());
+
+describe("PDF preview", () => {
+  it("keeps the editor free of preview content and provides a full-height body field", () => {
+    render(<Harness />);
+
+    expect(screen.queryByText("PDF preview")).not.toBeInTheDocument();
+    expect(screen.queryByText("Updating PDF preview...")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("PDF preview")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Letter body")).toHaveClass("flex-1");
+  });
+
+  it("requests an updated PDF and opens it in a new tab", async () => {
+    const preview = vi
+      .spyOn(letterTemplatesService, "previewPdf")
+      .mockResolvedValue(new Blob(["pdf"], { type: "application/pdf" }));
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+    const open = vi.spyOn(window, "open").mockReturnValue({ closed: false } as Window);
+    const request = { letterType: "increment" as const, name: "", body: "" };
+    const { rerender } = render(
+      <TemplatePdfPreviewButton
+        enabled
+        request={request}
+        label="PDF preview"
+        loadingLabel="Updating PDF preview..."
+        unavailableLabel="Could not load preview."
+      />,
+    );
+    const button = screen.getByRole("button", { name: "PDF preview" });
+    expect(button).toBeDisabled();
+
+    rerender(
+      <TemplatePdfPreviewButton
+        enabled
+        request={{ ...request, body: "Dear $employee_name" }}
+        label="PDF preview"
+        loadingLabel="Updating PDF preview..."
+        unavailableLabel="Could not load preview."
+      />,
+    );
+
+    await waitFor(
+      () =>
+        expect(preview).toHaveBeenCalledWith(
+          { letterType: "increment", name: "", body: "Dear $employee_name" },
+          expect.any(AbortSignal),
+        ),
+      { timeout: 2_000 },
+    );
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith("blob:preview", "_blank");
+  });
+});
 
 describe("merge tag palette", () => {
   it("splits tags into automatic and manual groups", () => {

@@ -596,6 +596,16 @@ export const letterTemplatesService = {
       .put<{ template: LetterTemplate }>(`/org/letter-templates/${uuid}`, data)
       .then((r) => normalizeTemplates([r.data.template])[0]),
   remove: (uuid: UUID) => api.delete(`/org/letter-templates/${uuid}`).then((r) => r.data),
+  previewPdf: (
+    data: { letterType: HrLetterType; name: string; body: string },
+    signal?: AbortSignal,
+  ) =>
+    api
+      .post("/org/letter-templates/preview-pdf", data, {
+        responseType: "blob",
+        signal,
+      })
+      .then((r) => r.data as Blob),
   /** Render a template against an employee WITHOUT creating anything. */
   preview: (uuid: UUID, data: { employee_uuid: string; values?: Record<string, string> }) =>
     api.post<TemplatePreview>(`/org/letter-templates/${uuid}/preview`, data).then((r) => ({

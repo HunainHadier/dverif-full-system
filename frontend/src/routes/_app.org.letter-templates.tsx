@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { FileText, Plus, Pencil, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, LoaderCircle, Plus, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { apiErrorMessage } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { insertAtCaret, mergeRefs } from "@/lib/insertAtCaret";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, DataTableToolbar, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
@@ -237,6 +238,18 @@ function TemplateDialog({
   });
 
   const selectedLetterType = form.watch("letterType");
+  const previewName = form.watch("name") ?? "";
+  const previewBody = form.watch("body") ?? "";
+  const previewLetterType = selectedLetterType as LetterTemplate["letter_type"];
+  const previewRequest = useMemo(
+    () => ({
+      letterType: previewLetterType,
+      name: previewName,
+      body: previewBody,
+    }),
+    [previewLetterType, previewName, previewBody],
+  );
+  const debouncedPreview = useDebouncedValue(previewRequest, 500);
   const compatibleMergeTags = (tagsQuery.data?.merge_tags ?? []).filter((tag) =>
     !tag.letter_types?.length || tag.letter_types.includes(selectedLetterType as LetterTemplate["letter_type"]),
   );
@@ -272,6 +285,15 @@ function TemplateDialog({
       description={t("letters.templateFormDescription")}
       submitLabel={t("common.save")}
       cancelLabel={t("common.cancel")}
+      footerExtra={
+        <TemplatePdfPreviewButton
+          enabled={open}
+          request={debouncedPreview}
+          label={t("letters.pdfPreview")}
+          loadingLabel={t("letters.pdfPreviewLoading")}
+          unavailableLabel={t("letters.pdfPreviewUnavailable")}
+        />
+      }
       onSubmit={(values) =>
         save.mutateAsync({
           name: String(values.name ?? "").trim(),
@@ -413,6 +435,129 @@ export function TemplateFields({
           {error || saveFailed}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+export function TemplatePdfPreviewButton({
+  enabled,
+  request,
+  label,
+  loadingLabel,
+  unavailableLabel,
+}: {
+  enabled: boolean;
+  request: {
+    letterType: LetterTemplate["letter_type"];
+    name: string;
+    body: string;
+  };
+  label: string;
+  loadingLabel: string;
+  unavailableLabel: string;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const previewWindow = useRef<Window | null>(null);
+  const currentUrl = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
+    if (!request.body.trim()) {
+      if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+      currentUrl.current = null;
+      setPreviewUrl(null);
+      setIsLoading(false);
+      setError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError("");
+
+    letterTemplatesService
+      .previewPdf(request, controller.signal)
+      .then((blob) => {
+        if (controller.signal.aborted) return;
+        const nextUrl = URL.createObjectURL(blob);
+        const previousUrl = currentUrl.current;
+        currentUrl.current = nextUrl;
+        setPreviewUrl(nextUrl);
+        setIsLoading(false);
+
+        const openWindow = previewWindow.current;
+        if (openWindow && !openWindow.closed) {
+          try {
+            openWindow.location.replace(nextUrl);
+            if (previousUrl) {
+              window.setTimeout(() => URL.revokeObjectURL(previousUrl), 30_000);
+            }
+          } catch {
+            previewWindow.current = null;
+            if (previousUrl) URL.revokeObjectURL(previousUrl);
+          }
+        } else if (previousUrl) {
+          previewWindow.current = null;
+          URL.revokeObjectURL(previousUrl);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(apiErrorMessage(cause, unavailableLabel));
+        setIsLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [enabled, request, unavailableLabel]);
+
+  const openPreview = () => {
+    if (!previewUrl) return;
+
+    const existingWindow = previewWindow.current;
+    if (existingWindow && !existingWindow.closed) {
+      existingWindow.location.replace(previewUrl);
+      return;
+    }
+
+    const openedWindow = window.open(previewUrl, "_blank");
+    if (openedWindow) {
+      previewWindow.current = openedWindow;
+      setError("");
+    } else {
+      setError(unavailableLabel);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {error ? (
+        <span role="alert" className="max-w-56 text-xs text-destructive">
+          {error}
+        </span>
+      ) : null}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={openPreview}
+        disabled={!previewUrl || isLoading}
+        title={isLoading ? loadingLabel : label}
+        aria-label={isLoading ? loadingLabel : label}
+      >
+        {isLoading ? (
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+        ) : (
+          <ExternalLink className="h-4 w-4" />
+        )}
+        {label}
+      </Button>
     </div>
   );
 }

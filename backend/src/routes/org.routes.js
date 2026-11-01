@@ -165,6 +165,7 @@ import {
   createTemplate,
   updateTemplate,
   deleteTemplate,
+  previewTemplatePdf,
   previewTemplate,
   listLetters,
   getLetter,
@@ -386,6 +387,7 @@ router.post("/offboarding/exit-requests/:uuid/complete", separationMgmt, asyncHa
 // uuid matcher. Same defensive pattern used for "/employees/reference".
 router.get("/letter-templates", hrLettersMgmt, asyncHandler(listTemplates));
 router.post("/letter-templates", hrLettersMgmt, asyncHandler(createTemplate));
+router.post("/letter-templates/preview-pdf", hrLettersMgmt, asyncHandler(previewTemplatePdf));
 router.get("/letter-templates/:uuid", hrLettersMgmt, asyncHandler(getTemplate));
 router.put("/letter-templates/:uuid", hrLettersMgmt, asyncHandler(updateTemplate));
 router.delete("/letter-templates/:uuid", hrLettersOwner, asyncHandler(deleteTemplate));
@@ -595,5 +597,3 @@ import {
 } from "../controllers/org/assets.controller.js";
 
 export default router;
-
-

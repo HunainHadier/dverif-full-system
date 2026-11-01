@@ -213,6 +213,21 @@ describe("payslip PDF Ã¢â‚¬â€ itemised lines", () => {
     expect(raw).toContain("late arrivals");
   });
 
+  it("shows a readable source for monthly payroll items", async () => {
+    const pdf = await generatePayslipPdf({
+      record: withLines([
+        { label: "Attendance Bonus", type: "earning", source: "monthly_variable", amount: "1000.00", basis_value: null, basis_unit: null },
+      ]),
+      employeeName: "Ayesha Siddiqui",
+      organizationName: "Dverif Labs",
+    });
+    const raw = pdfText(pdf);
+
+    expect(raw).toContain("Attendance Bonus");
+    expect(raw).toContain("Monthly payroll item");
+    expect(raw).not.toContain("monthly_variable");
+  });
+
   it("still renders a record made before line items existed", async () => {
     // Every record the original payroll flow produced has no lines. Those are the
     // bulk of the data, and an empty "Earnings" heading would be worse than the

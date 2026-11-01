@@ -878,8 +878,9 @@ function drawFooter(doc, generatedDate, pageNumber, pageCount) {
  *
  * `salary_record_lines.source` is a machine token (basic, component,
  * auto_unpaid_leave, auto_absenteeism, auto_late, auto_overtime, auto_expense,
- * manual). These say what produced the line, which is the question the column
- * answers, instead of leaking the raw token onto a payment document.
+ * monthly_variable, manual). These say what produced the line, which is the
+ * question the column answers, instead of leaking the raw token onto a payment
+ * document.
  */
 const SOURCE_LABELS = {
   basic: "Salary record",
@@ -889,6 +890,7 @@ const SOURCE_LABELS = {
   auto_late: "Late arrivals",
   auto_overtime: "Approved overtime",
   auto_expense: "Expense claims",
+  monthly_variable: "Monthly payroll item",
   manual: "Manual adjustment",
 };
 
