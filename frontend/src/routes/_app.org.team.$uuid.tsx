@@ -45,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isCurrentEmployee, orgService, orgEmployeeSalaryService, salaryComponentService, type EmployeeDocument, type EmployeeRecord, type EmployeeSalaryComponent, type SalaryComponent, type SalaryHistoryEntry, type UUID } from "@/services";
+import { isCurrentEmployee, orgService, orgEmployeeSalaryService, salaryComponentService, type EmployeeDocument, type EmployeeRecord, type EmployeeSalaryComponent, type MonthlySalaryVariable, type SalaryComponent, type SalaryHistoryEntry, type UUID } from "@/services";
 import {
   digitsOnly,
   formatCNIC,
@@ -347,6 +347,7 @@ function EmployeeDetailPage() {
               <div className="space-y-6">
                 <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
                 <SalaryComponentsCard uuid={uuid} />
+                <MonthlySalaryVariablesCard uuid={uuid} />
               </div>
             )
           )}
@@ -1170,6 +1171,200 @@ function ComponentTypeBadge({ type }: { type: "allowance" | "deduction" }) {
 
 function formatAmount(amount: string | number) {
   return `Rs. ${Number(amount).toLocaleString("en-PK")}`;
+}
+
+function MonthlySalaryVariablesCard({ uuid }: { uuid: UUID }) {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const { isLocked } = useOrgSubscription();
+  const canManage = user?.org_role === "org_admin" || user?.org_role === "sub_admin";
+  const now = new Date();
+  const [period, setPeriod] = useState(
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+  );
+  const [addOpen, setAddOpen] = useState(false);
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState<"allowance" | "deduction">("allowance");
+  const [amount, setAmount] = useState("");
+  const [toDelete, setToDelete] = useState<MonthlySalaryVariable | null>(null);
+  const [yearText, monthText] = period.split("-");
+  const month = Number(monthText);
+  const year = Number(yearText);
+
+  const itemsQ = useQuery({
+    queryKey: ["org-monthly-salary-variables", uuid, period],
+    queryFn: () => orgEmployeeSalaryService.monthlyVariables(uuid, month, year),
+    enabled: !!uuid && month >= 1 && month <= 12 && year >= 2000,
+  });
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["org-monthly-salary-variables", uuid, period] });
+
+  const addMut = useMutation({
+    mutationFn: () =>
+      orgEmployeeSalaryService.addMonthlyVariable(uuid, {
+        label: label.trim(),
+        type,
+        amount: Number(amount),
+        month,
+        year,
+      }),
+    onSuccess: () => {
+      toast.success("Monthly component added");
+      invalidate();
+      setAddOpen(false);
+      setLabel("");
+      setAmount("");
+      setType("allowance");
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, "Failed to add monthly component")),
+  });
+  const removeMut = useMutation({
+    mutationFn: () => orgEmployeeSalaryService.removeMonthlyVariable(uuid, toDelete!.uuid),
+    onSuccess: () => {
+      toast.success("Monthly component removed");
+      invalidate();
+      setToDelete(null);
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, "Failed to remove monthly component")),
+  });
+
+  const items = itemsQ.data ?? [];
+  const totalAllowances = items
+    .filter((item) => item.type === "allowance")
+    .reduce((sum, item) => sum + Number(item.amount), 0);
+  const totalDeductions = items
+    .filter((item) => item.type === "deduction")
+    .reduce((sum, item) => sum + Number(item.amount), 0);
+
+  return (
+    <Card className="border-border/70 shadow-none">
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">Monthly Variable Components</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              One-time bonus, overtime, special allowance or deduction for a selected payroll month.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              aria-label="Payroll month"
+              type="month"
+              className="w-[165px]"
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+            />
+            {canManage && (
+              <Button
+                size="sm"
+                disabled={isLocked || !period}
+                onClick={() => setAddOpen(true)}
+              >
+                {isLocked ? <Lock className="mr-1.5 h-3.5 w-3.5" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}
+                {isLocked ? "Subscription Required" : "Add for Month"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {itemsQ.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading monthly components…</p>
+        ) : items.length === 0 ? (
+          <p className="py-5 text-center text-sm text-muted-foreground">
+            No variable components added for {period || "this month"}.
+          </p>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Component</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  {canManage ? <TableHead className="text-right">Action</TableHead> : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={item.uuid}>
+                    <TableCell className="font-medium">{item.label}</TableCell>
+                    <TableCell><ComponentTypeBadge type={item.type} /></TableCell>
+                    <TableCell className="text-right">{formatAmount(item.amount)}</TableCell>
+                    {canManage ? (
+                      <TableCell className="text-right">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          disabled={isLocked || removeMut.isPending}
+                          onClick={() => setToDelete(item)}
+                          aria-label={`Remove ${item.label}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    ) : null}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex flex-wrap justify-end gap-4 text-sm">
+              <span className="text-emerald-600">Variable earnings: {formatAmount(totalAllowances)}</span>
+              <span className="text-rose-600">Variable deductions: {formatAmount(totalDeductions)}</span>
+            </div>
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">
+          These amounts are added only to the selected month’s payroll. Generated payslips keep their saved snapshot.
+        </p>
+      </CardContent>
+
+      <Dialog open={addOpen} onOpenChange={(open) => !open && setAddOpen(false)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Add Monthly Variable Component</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Component Name</Label>
+              <Input value={label} maxLength={150} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. November Performance Bonus" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Type</Label>
+              <Select value={type} onValueChange={(value) => setType(value as "allowance" | "deduction")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="allowance">Earning / Allowance</SelectItem>
+                  <SelectItem value="deduction">Deduction</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Amount (PKR)</Label>
+              <Input type="number" min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            </div>
+            <p className="text-xs text-muted-foreground">Payroll month: {period}. This entry will not repeat in other months.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAddOpen(false)} disabled={addMut.isPending}>Cancel</Button>
+            <Button
+              onClick={() => addMut.mutate()}
+              disabled={!label.trim() || label.trim().length > 150 || !(Number(amount) > 0) || addMut.isPending || !period}
+              loading={addMut.isPending}
+            >
+              Add Component
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={!!toDelete}
+        onOpenChange={(open) => !open && setToDelete(null)}
+        title={`Remove "${toDelete?.label ?? ""}"?`}
+        description="This removes the selected month's variable payroll entry. Existing generated payslips remain unchanged."
+        onConfirm={() => toDelete && removeMut.mutate()}
+      />
+    </Card>
+  );
 }
 
 function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
