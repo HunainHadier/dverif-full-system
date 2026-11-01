@@ -59,7 +59,7 @@ export const orgLeavesService = {
   updateType: (id: number, data: { name: string; days_allowed_per_year?: number }) =>
     api.put<{ leaveType: LeaveType }>(`/org/leave-types/${id}`, data).then((r) => r.data.leaveType),
   deleteType: (id: number) => api.delete(`/org/leave-types/${id}`).then((r) => r.data),
-  list: (params: { page?: number; limit?: number; status?: string; search?: string } = {}) =>
+  list: (params: { page?: number; limit?: number; status?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) =>
     api.get<Paginated<LeaveRequest>>("/org/leaves", { params }).then((r) => r.data),
   decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
     api
