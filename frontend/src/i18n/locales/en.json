@@ -538,7 +538,12 @@
     "downloadPdf": "Download PDF",
     "payslipFailed": "Payslip could not be opened",
     "earnings": "Earnings",
-    "noDeductions": "None"
+    "noDeductions": "None",
+    "expenseReimbursement": "Expense reimbursement",
+    "totalEarnings": "Total earnings",
+    "totalDeductions": "Total deductions",
+    "netPayable": "Net salary payable",
+    "netFormula": "Earnings and approved reimbursements minus deductions"
   },
   "payments": {
     "title": "Billing & payments",
