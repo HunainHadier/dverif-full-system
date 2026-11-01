@@ -82,6 +82,11 @@ export const Route = createFileRoute("/_app/org/leaves")({
 
 const PAGE_SIZE = 10;
 
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function OrgLeavesPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -108,6 +113,9 @@ function OrgLeavesContent() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [dateFrom, setDateFrom] = useState(localToday());
+  const [dateTo, setDateTo] = useState(localToday());
+  const [monthFilter, setMonthFilter] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [confirming, setConfirming] = useState<LeaveRequest | null>(null);
   const [decideAction, setDecideAction] = useState<"approved" | "rejected">("approved");
@@ -125,8 +133,8 @@ function OrgLeavesContent() {
   });
 
   const list = useQuery({
-    queryKey: ["orgLeaves", page, search, status],
-    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status }),
+    queryKey: ["orgLeaves", page, search, status, dateFrom, dateTo],
+    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, dateFrom, dateTo }),
   });
 
   const decide = useMutation({
@@ -237,15 +245,18 @@ function OrgLeavesContent() {
 
           <Card className="mt-4 border-border/70 shadow-none">
             <CardContent className="p-0">
-              <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center">
-                <SearchInput
-                  value={search}
-                  onChange={(v) => {
-                    setSearch(v);
-                    setPage(1);
-                  }}
-                  placeholder={t("orgLeaves.searchPlaceholder")}
-                />
+              <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-8">
+                <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:!w-full">
+                  <SearchInput
+                    value={search}
+                    onChange={(v) => {
+                      setSearch(v);
+                      setPage(1);
+                    }}
+                    placeholder={t("orgLeaves.searchPlaceholder")}
+                  />
+                </div>
+                <div className="min-w-0 xl:col-span-2">
                 <Select
                   value={status || "all"}
                   onValueChange={(v) => {
@@ -253,7 +264,7 @@ function OrgLeavesContent() {
                     setPage(1);
                   }}
                 >
-                  <SelectTrigger className="w-full sm:w-44">
+                  <SelectTrigger className="w-full min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -263,6 +274,55 @@ function OrgLeavesContent() {
                     <SelectItem value="all">{t("orgLeaves.all")}</SelectItem>
                   </SelectContent>
                 </Select>
+                </div>
+                <div className="min-w-0 xl:col-span-1">
+                <Input
+                  type="month"
+                  aria-label="Filter leave requests by month"
+                  value={monthFilter}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setMonthFilter(value);
+                    if (value) {
+                      const [year, month] = value.split("-").map(Number);
+                      const lastDay = new Date(year, month, 0).getDate();
+                      setDateFrom(`${value}-01`);
+                      setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
+                    } else {
+                      const today = localToday();
+                      setDateFrom(today);
+                      setDateTo(today);
+                    }
+                    setPage(1);
+                  }}
+                  className="w-full min-w-0"
+                />
+                </div>
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
+                  <Input
+                    type="date"
+                    aria-label="Leave requests from date"
+                    value={dateFrom}
+                    onChange={(e) => {
+                      setMonthFilter("");
+                      setDateFrom(e.target.value);
+                      setPage(1);
+                    }}
+                    className="w-full min-w-0"
+                  />
+                  <span className="text-xs text-muted-foreground">{t("common.to")}</span>
+                  <Input
+                    type="date"
+                    aria-label="Leave requests to date"
+                    value={dateTo}
+                    onChange={(e) => {
+                      setMonthFilter("");
+                      setDateTo(e.target.value);
+                      setPage(1);
+                    }}
+                    className="w-full min-w-0"
+                  />
+                </div>
               </div>
 
               {list.isLoading ? (

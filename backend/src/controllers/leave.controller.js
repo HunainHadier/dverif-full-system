@@ -356,9 +356,23 @@ export async function listOrgLeaves(req, res) {
   const status = typeof req.query.status === "string" && req.query.status.trim()
     ? req.query.status.trim() : "";
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const dateFrom = typeof req.query.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateFrom)
+    ? req.query.dateFrom : "";
+  const dateTo = typeof req.query.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateTo)
+    ? req.query.dateTo : "";
 
   let whereClause = "WHERE e.organization_id = ?";
   const params = [orgId];
+  // Filter requests by overlap with the selected period. With no explicit
+  // period, show leave requests active on the current database date.
+  if (dateFrom || dateTo) {
+    const from = dateFrom || dateTo;
+    const to = dateTo || dateFrom;
+    whereClause += " AND lr.start_date <= ? AND lr.end_date >= ?";
+    params.push(to, from);
+  } else {
+    whereClause += " AND lr.start_date <= CURDATE() AND lr.end_date >= CURDATE()";
+  }
   if (["pending", "approved", "rejected"].includes(status)) {
     whereClause += " AND lr.status = ?";
     params.push(status);
