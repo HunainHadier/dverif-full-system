@@ -30,6 +30,49 @@ import { CURRENCY } from "../utils/currency.js";
  * the payslip it sits beside, with no error anywhere - just a number nobody can
  * reconcile.
  */
+/**
+ * Basic salary earned in a month when one or more salary periods overlap it.
+ * Each monthly salary is prorated by the number of calendar days it was effective.
+ * This keeps a 1 November increment out of October payroll and splits a mid-month
+ * increment fairly across the old and new rates.
+ */
+export function prorateSalaryPeriods({ salaryPeriods, month, year }) {
+  const { m, y } = assertMonthYear(month, year);
+  const { firstDay, lastDay } = monthBounds(m, y);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
+  let total = 0;
+
+  for (const period of salaryPeriods ?? []) {
+    const start = isoDate(period.effective_from);
+    const end = period.effective_to == null ? lastDay : isoDate(period.effective_to);
+    const overlapStart = start > firstDay ? start : firstDay;
+    const overlapEnd = end < lastDay ? end : lastDay;
+    if (overlapStart > overlapEnd) continue;
+
+    const days = dayNumber(overlapEnd) - dayNumber(overlapStart) + 1;
+    total += Number(period.basic_salary) * (days / daysInMonth);
+  }
+
+  return money(total);
+}
+
+/** Return the calendar-day prorated basic salary for a payroll month. */
+export async function proratedBasicForMonth({ employeeUuid, month, year, conn = pool }) {
+  const { m, y } = assertMonthYear(month, year);
+  const { firstDay, lastDay } = monthBounds(m, y);
+  const [salaryPeriods] = await conn.query(
+    `SELECT basic_salary, effective_from, effective_to
+       FROM employee_salary_history
+      WHERE employee_uuid=?
+        AND effective_from <= ?
+        AND (effective_to IS NULL OR effective_to >= ?)
+      ORDER BY effective_from ASC`,
+    [employeeUuid, lastDay, firstDay],
+  );
+  return prorateSalaryPeriods({ salaryPeriods, month: m, year: y });
+}
+
 export async function effectiveBasicForMonth({ employeeUuid, orgId, month, year, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { lastDay } = monthBounds(m, y);

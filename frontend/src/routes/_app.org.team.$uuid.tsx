@@ -882,6 +882,14 @@ function DocumentsCard({
  * caller passes the translated word, because this is a module-scope helper and
  * a component is the only place a `t()` is valid.
  */
+function localDateInputMin(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function formatSalaryPeriod(effectiveFrom: string, effectiveTo: string | null, currentLabel: string): string {
   const fromStr = formatDate(effectiveFrom);
   if (effectiveTo) {
@@ -902,6 +910,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
   const [incrementOpen, setIncrementOpen] = useState(autoOpen);
   const [newSalary, setNewSalary] = useState("");
   const [newEffective, setNewEffective] = useState("");
+  const todayDate = localDateInputMin();
   const [editingEntry, setEditingEntry] = useState<SalaryHistoryEntry | null>(null);
   const [editSalary, setEditSalary] = useState("");
   const [editEffective, setEditEffective] = useState("");
@@ -1054,6 +1063,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
               <Label>Effective From</Label>
               <Input
                 type="date"
+                min={todayDate}
                 value={newEffective}
                 onChange={(e) => setNewEffective(e.target.value)}
               />
@@ -1069,7 +1079,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
             </Button>
             <Button
               onClick={() => incrementMut.mutate()}
-              disabled={Number(newSalary) <= 0 || !newEffective || incrementMut.isPending}
+              disabled={Number(newSalary) <= 0 || !newEffective || newEffective < todayDate || incrementMut.isPending}
               loading={incrementMut.isPending}
             >
               Increment

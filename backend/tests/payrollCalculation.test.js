@@ -70,3 +70,32 @@ describe("monthly attendance payroll calculation", () => {
     expect(result.lines).toEqual([]);
   });
 });
+
+
+describe("salary increment effective-date proration", () => {
+  it("keeps an October payroll on the old salary when the raise starts 1 November", async () => {
+    const { prorateSalaryPeriods } = await import("../src/services/payroll.service.js");
+    const result = prorateSalaryPeriods({
+      month: 10,
+      year: 2026,
+      salaryPeriods: [
+        { basic_salary: 50000, effective_from: "2026-01-01", effective_to: "2026-10-31" },
+        { basic_salary: 60000, effective_from: "2026-11-01", effective_to: null },
+      ],
+    });
+    expect(result).toBe(50000);
+  });
+
+  it("prorates a mid-month increment by calendar days", async () => {
+    const { prorateSalaryPeriods } = await import("../src/services/payroll.service.js");
+    const result = prorateSalaryPeriods({
+      month: 11,
+      year: 2026,
+      salaryPeriods: [
+        { basic_salary: 50000, effective_from: "2026-01-01", effective_to: "2026-11-14" },
+        { basic_salary: 60000, effective_from: "2026-11-15", effective_to: null },
+      ],
+    });
+    expect(result).toBe(55000);
+  });
+});
