@@ -124,6 +124,18 @@ export async function createLetter(req, res) {
   return created(res, { letter }, "Draft letter created");
 }
 
+export async function updateLetter(req, res) {
+  const letter = await letters.updateDraftLetter({
+    orgId: req.scopeOrgId,
+    letterUuid: req.params.uuid,
+    actorUuid: req.user?.uuid,
+    templateUuid: req.body?.template_uuid,
+    letterType: req.body?.letter_type,
+    title: req.body?.title,
+  });
+  return ok(res, { letter }, "Draft letter updated");
+}
+
 export async function issueLetter(req, res) {
   const letter = await letters.issueLetter({
     orgId: req.scopeOrgId,

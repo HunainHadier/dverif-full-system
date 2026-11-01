@@ -70,7 +70,7 @@ async function findEmployee(employeeUuid, orgId) {
  * told which of the two they are looking at.
  */
 async function computeEmployeePayroll({ employeeUuid, orgId, m, y, conn }) {
-  const basic = await effectiveBasicForMonth(employeeUuid, m, y, conn);
+  const basic = await payrollService.proratedBasicForMonth({ employeeUuid, orgId, month: m, year: y, conn });
 
   // Pull ONLY this employee's individually-assigned, active salary components.
   // We use the per-employee amount (esc.amount), NOT the catalog's default_value,

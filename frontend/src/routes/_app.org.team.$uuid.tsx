@@ -882,6 +882,17 @@ function DocumentsCard({
  * caller passes the translated word, because this is a module-scope helper and
  * a component is the only place a `t()` is valid.
  */
+function localDateInputMin(): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function formatSalaryPeriod(effectiveFrom: string, effectiveTo: string | null, currentLabel: string): string {
   const fromStr = formatDate(effectiveFrom);
   if (effectiveTo) {
@@ -902,6 +913,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
   const [incrementOpen, setIncrementOpen] = useState(autoOpen);
   const [newSalary, setNewSalary] = useState("");
   const [newEffective, setNewEffective] = useState("");
+  const todayDate = localDateInputMin();
   const [editingEntry, setEditingEntry] = useState<SalaryHistoryEntry | null>(null);
   const [editSalary, setEditSalary] = useState("");
   const [editEffective, setEditEffective] = useState("");
@@ -1054,6 +1066,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
               <Label>Effective From</Label>
               <Input
                 type="date"
+                min={todayDate}
                 value={newEffective}
                 onChange={(e) => setNewEffective(e.target.value)}
               />
@@ -1069,7 +1082,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
             </Button>
             <Button
               onClick={() => incrementMut.mutate()}
-              disabled={Number(newSalary) <= 0 || !newEffective || incrementMut.isPending}
+              disabled={Number(newSalary) <= 0 || !newEffective || newEffective < todayDate || incrementMut.isPending}
               loading={incrementMut.isPending}
             >
               Increment

@@ -13,6 +13,7 @@ import {
   Send,
   Trash2,
   RotateCcw,
+  Pencil,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -251,6 +252,7 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
    * 400 for any draft using a manual tag (e.g. $new_salary).
    */
   const [issuing, setIssuing] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const download = useMutation({
     mutationFn: () => hrLettersService.downloadPdf(row.uuid),
@@ -301,6 +303,10 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
         <DropdownMenuContent align="end">
           {row.status === "draft" ? (
             <>
+              <DropdownMenuItem onSelect={() => setEditing(true)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Draft
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setIssuing(true)}>
                 <Send className="mr-2 h-4 w-4" />
                 {t("letters.issueLetter")}
@@ -359,6 +365,13 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      <EditDraftDialog
+        row={row}
+        open={editing}
+        onOpenChange={setEditing}
+        onDone={() => qc.invalidateQueries({ queryKey: ["hr-letters"] })}
+      />
+
       <IssueLetterDialog
         letter={row}
         open={issuing}
@@ -405,6 +418,101 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
         </p>
       ) : null}
     </>
+  );
+}
+
+function EditDraftDialog({
+  row,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  row: HrLetterListItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onDone: () => void;
+}) {
+  const { t } = useTranslation();
+  const form = useForm<{ title: string; template_uuid: string; letter_type: string }>({
+    defaultValues: {
+      title: row.title,
+      template_uuid: row.template_uuid ?? "",
+      letter_type: row.letter_type,
+    },
+  });
+
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        title: row.title,
+        template_uuid: row.template_uuid ?? "",
+        letter_type: row.letter_type,
+      });
+    }
+  }, [open, row, form]);
+
+  const options = useQuery({
+    queryKey: ["hr-letter-edit-templates"],
+    enabled: open,
+    queryFn: () => letterTemplatesService.list(),
+  });
+
+  const update = useMutation({
+    mutationFn: (values: { title: string; template_uuid: string; letter_type: string }) =>
+      hrLettersService.update(row.uuid, {
+        title: values.title,
+        template_uuid: values.template_uuid || null,
+        letter_type: values.letter_type as HrLetter["letter_type"],
+      }),
+    onSuccess: () => {
+      onDone();
+      onOpenChange(false);
+    },
+  });
+
+  return (
+    <FormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      form={form}
+      title="Edit Draft"
+      description="Changes are saved to this draft only. Issued letters cannot be edited."
+      submitLabel={t("common.save")}
+      cancelLabel={t("common.cancel")}
+      onSubmit={(values) => update.mutateAsync(values)}
+    >
+      <label className="block space-y-1 text-sm">
+        <span className="font-medium">Letter title</span>
+        <input
+          {...form.register("title", { required: "Title is required" })}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+        />
+      </label>
+      <label className="block space-y-1 text-sm">
+        <span className="font-medium">{t("letters.type")}</span>
+        <select
+          {...form.register("letter_type", { required: true })}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+        >
+          {HR_LETTER_TYPES.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+        </select>
+      </label>
+      <label className="block space-y-1 text-sm">
+        <span className="font-medium">{t("letters.template")}</span>
+        <select
+          {...form.register("template_uuid")}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+        >
+          <option value="">{t("letters.noTemplate")}</option>
+          {(options.data?.items ?? []).map((template) => (
+            <option key={template.uuid} value={template.uuid}>{template.name}</option>
+          ))}
+        </select>
+      </label>
+      {update.isError ? (
+        <p className="text-xs text-destructive">{apiErrorMessage(update.error, t("letters.saveFailed"))}</p>
+      ) : null}
+    </FormDialog>
   );
 }
 
