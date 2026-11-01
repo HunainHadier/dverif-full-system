@@ -1404,7 +1404,7 @@ CREATE TABLE IF NOT EXISTS `salary_record_lines` (
   `year` smallint(5) unsigned NOT NULL,
   `label` varchar(150) NOT NULL,
   `type` enum('earning','deduction') NOT NULL,
-  `source` enum('basic','component','auto_unpaid_leave','auto_absenteeism','auto_late','auto_overtime','auto_expense','manual') NOT NULL,
+  `source` enum('basic','component','monthly_variable','auto_unpaid_leave','auto_absenteeism','auto_late','auto_overtime','auto_expense','manual') NOT NULL,
   `amount` decimal(14,2) NOT NULL DEFAULT 0.00,
   `basis_value` decimal(10,2) DEFAULT NULL,
   `basis_unit` enum('days','hours','late_arrivals','claims') DEFAULT NULL,
