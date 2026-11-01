@@ -111,6 +111,7 @@ import {
 import {
   listMonthlySalaryVariables,
   createMonthlySalaryVariable,
+  updateMonthlySalaryVariable,
   deleteMonthlySalaryVariable,
 } from "../controllers/org/monthlySalaryVariables.controller.js";
 import {
@@ -318,6 +319,7 @@ router.put("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncH
 router.delete("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(removeEmployeeSalaryComponent));
 router.get("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(listMonthlySalaryVariables));
 router.post("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(createMonthlySalaryVariable));
+router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(updateMonthlySalaryVariable));
 router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";

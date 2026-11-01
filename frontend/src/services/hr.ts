@@ -411,6 +411,17 @@ export const orgEmployeeSalaryService = {
         data,
       )
       .then((r) => r.data.item),
+  updateMonthlyVariable: (
+    employeeUuid: UUID,
+    variableUuid: UUID,
+    data: { label: string; type: "allowance" | "deduction"; amount: number; month: number; year: number },
+  ) =>
+    api
+      .put<{ item: MonthlySalaryVariable }>(
+        `/org/employees/${employeeUuid}/monthly-salary-variables/${variableUuid}`,
+        data,
+      )
+      .then((r) => r.data.item),
   removeMonthlyVariable: (employeeUuid: UUID, variableUuid: UUID) =>
     api
       .delete(`/org/employees/${employeeUuid}/monthly-salary-variables/${variableUuid}`)
