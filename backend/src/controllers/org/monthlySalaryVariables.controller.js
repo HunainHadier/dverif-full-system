@@ -66,6 +66,54 @@ export async function createMonthlySalaryVariable(req, res) {
   return created(res, { item: rows[0] }, "Monthly salary component added");
 }
 
+export async function updateMonthlySalaryVariable(req, res) {
+  const employee = await employeeInOrg(req.params.uuid, req.scopeOrgId);
+  assertUuid(req.params.variableUuid, "Monthly component UUID");
+  const [existingRows] = await pool.query(
+    `SELECT uuid, label, type, amount, month, year
+       FROM monthly_salary_variables
+      WHERE uuid=? AND organization_id=? AND employee_uuid=?`,
+    [req.params.variableUuid, req.scopeOrgId, employee.uuid],
+  );
+  if (!existingRows.length) throw new ApiError(404, "Monthly salary component not found");
+
+  const existing = existingRows[0];
+  const body = req.body || {};
+  const label = body.label === undefined ? existing.label : String(body.label).trim();
+  const type = body.type === undefined ? existing.type : body.type;
+  const amount = body.amount === undefined ? Number(existing.amount) : Number(body.amount);
+  const { month, year } = periodFields(body.month ?? existing.month, body.year ?? existing.year);
+
+  if (!label || label.length > 150) throw new ApiError(400, "Component name is required (maximum 150 characters)");
+  if (!["allowance", "deduction"].includes(type)) throw new ApiError(400, "type must be allowance or deduction");
+  if (!Number.isFinite(amount) || amount <= 0) throw new ApiError(400, "amount must be greater than zero");
+  const rounded = Math.round(amount * 100) / 100;
+
+  await pool.query(
+    `UPDATE monthly_salary_variables
+        SET label=?, type=?, amount=?, month=?, year=?
+      WHERE uuid=? AND organization_id=? AND employee_uuid=?`,
+    [label, type, rounded, month, year, req.params.variableUuid, req.scopeOrgId, employee.uuid],
+  );
+  const [rows] = await pool.query(
+    "SELECT uuid, label, type, amount, month, year, created_at FROM monthly_salary_variables WHERE uuid=? AND organization_id=? AND employee_uuid=?",
+    [req.params.variableUuid, req.scopeOrgId, employee.uuid],
+  );
+  logAudit({
+    ...getActorFromReq(req),
+    action: "payroll.monthly_variable.update",
+    entityType: "employee",
+    entityId: employee.uuid,
+    details: {
+      variable_uuid: req.params.variableUuid,
+      before: { label: existing.label, type: existing.type, amount: Number(existing.amount), month: existing.month, year: existing.year },
+      after: { label, type, amount: rounded, month, year },
+    },
+    req,
+  });
+  return ok(res, { item: rows[0] }, "Monthly salary component updated");
+}
+
 export async function deleteMonthlySalaryVariable(req, res) {
   const employee = await employeeInOrg(req.params.uuid, req.scopeOrgId);
   assertUuid(req.params.variableUuid, "Monthly component UUID");
