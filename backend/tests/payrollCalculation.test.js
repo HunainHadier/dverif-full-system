@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAutomaticLines } from "../src/services/payroll.service.js";
+import { computeAutomaticLines, filterWorkingDatesThrough } from "../src/services/payroll.service.js";
 
 const settings = {
   salary_calculation_method: "days",
@@ -25,6 +25,39 @@ function calc(overrides = {}) {
 }
 
 describe("monthly attendance payroll calculation", () => {
+  it("does not count future scheduled workdays as absences", () => {
+    const dates = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"];
+    expect(filterWorkingDatesThrough(dates, "2026-11-01")).toEqual(["2026-11-01"]);
+
+    const result = calc({
+      workingDays: 22,
+      elapsedWorkingDays: 1,
+      attendedDays: 1,
+      paidLeaveDays: 0,
+      unpaidLeaveDays: 0,
+      absentDays: 0,
+      workedHours: 8,
+    });
+    expect(result.perDayRate).toBe(30000 / 22);
+    expect(result.lines.some((line) => line.source === "auto_absenteeism")).toBe(false);
+    expect(result.payableRatio).toBe(1);
+  });
+
+  it("does not deduct future scheduled hours in hours mode", () => {
+    const result = calc({
+      workingDays: 22,
+      elapsedWorkingDays: 1,
+      attendedDays: 1,
+      paidLeaveDays: 0,
+      unpaidLeaveDays: 0,
+      absentDays: 0,
+      workedHours: 8,
+      policy: { ...settings, salary_calculation_method: "hours" },
+    });
+    expect(result.expectedHours).toBe(176);
+    expect(result.lines.some((line) => line.source === "auto_short_hours")).toBe(false);
+    expect(result.payableRatio).toBe(1);
+  });
   it("prorates monthly salary by working days and credits paid leave", () => {
     const result = calc();
     expect(result.payableRatio).toBe(0.9);

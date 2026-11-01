@@ -588,6 +588,8 @@ export const hrLettersService = {
    * values here overrides what the draft stored, which is how a user fixes a
    * draft after seeing the preview.
    */
+  update: (uuid: UUID, data: { title: string; template_uuid: string | null; letter_type: HrLetterType }) =>
+    api.put<{ letter: HrLetter }>(`/org/hr-letters/${uuid}`, data).then((r) => r.data.letter),
   issue: (uuid: UUID, values: Record<string, string> = {}) =>
     api
       .post<{ letter: HrLetter }>(`/org/hr-letters/${uuid}/issue`, { values })

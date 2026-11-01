@@ -163,6 +163,7 @@ import {
   listLetters,
   getLetter,
   createLetter,
+  updateLetter,
   issueLetter,
   revokeLetter,
   revertLetter,
@@ -384,6 +385,7 @@ router.post("/letter-templates/:uuid/preview", hrLettersMgmt, asyncHandler(previ
 router.get("/hr-letters", hrLettersMgmt, asyncHandler(listLetters));
 router.post("/hr-letters", hrLettersMgmt, asyncHandler(createLetter));
 router.get("/hr-letters/:uuid", hrLettersMgmt, asyncHandler(getLetter));
+router.put("/hr-letters/:uuid", hrLettersMgmt, asyncHandler(updateLetter));
 router.post("/hr-letters/:uuid/issue", hrLettersMgmt, asyncHandler(issueLetter));
 router.post("/hr-letters/:uuid/revoke", hrLettersMgmt, asyncHandler(revokeLetter));
 router.post("/hr-letters/:uuid/re-draft", hrLettersMgmt, asyncHandler(revertLetter));

@@ -401,6 +401,53 @@ export async function createDraftLetter({ orgId, actorUuid, employeeUuid, templa
   return getLetter({ orgId, letterUuid: row.uuid, mergedValues: merged, conn });
 }
 
+/**
+ * Edit a draft letter's editable fields. Issued letters are immutable; revoked
+ * letters must first be explicitly reverted to draft.
+ */
+export async function updateDraftLetter({
+  orgId,
+  letterUuid,
+  actorUuid,
+  templateUuid,
+  letterType,
+  title,
+}) {
+  assertUuid(letterUuid, "Letter UUID");
+  const existing = await loadLetterForOrg({ orgId, letterUuid });
+  if (existing.status !== "draft") {
+    throw new ApiError(409, "Only a draft letter can be edited");
+  }
+
+  const nextTemplateUuid = templateUuid === undefined
+    ? existing.template_uuid
+    : (templateUuid || null);
+  if (nextTemplateUuid) {
+    assertUuid(nextTemplateUuid, "Template UUID");
+    await getTemplate({ orgId, templateUuid: nextTemplateUuid });
+  }
+
+  const nextLetterType = letterType === undefined
+    ? existing.letter_type
+    : letterTypeOrThrow(letterType);
+  const nextTitle = title === undefined ? existing.title : String(title).trim();
+  if (!nextTitle) throw new ApiError(400, "title is required");
+
+  const [result] = await pool.query(
+    `UPDATE hr_letters
+        SET template_uuid=?, letter_type=?, title=?, updated_at=NOW()
+      WHERE uuid=? AND organization_id=? AND status='draft'`,
+    [nextTemplateUuid, nextLetterType, nextTitle, letterUuid, orgId],
+  );
+  if (!result.affectedRows) throw new ApiError(409, "This letter is no longer a draft");
+
+  auditTemplate(actorUuid, "hr_letter.update_draft", orgId, letterUuid, {
+    letterType: nextLetterType,
+    templateUuid: nextTemplateUuid,
+  });
+  return getLetter({ orgId, letterUuid });
+}
+
 export async function listLetters({ orgId, page, limit, offset, employeeUuid, letterType, status, search }) {
   const clauses = ["l.organization_id = ?"];
   const params = [orgId];

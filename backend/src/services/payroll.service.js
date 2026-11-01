@@ -57,6 +57,23 @@ export function prorateSalaryPeriods({ salaryPeriods, month, year }) {
   return money(total);
 }
 
+/** Keep only working dates that have occurred as of the payroll run date. */
+export function filterWorkingDatesThrough(workingDates, asOfDate) {
+  return (workingDates ?? []).filter((date) => date <= asOfDate);
+}
+
+/** Current calendar date in the organization's Pakistan business timezone. */
+function payrollAsOfDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 /** Return the calendar-day prorated basic salary for a payroll month. */
 export async function proratedBasicForMonth({ employeeUuid, month, year, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
@@ -359,12 +376,16 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
   const { m, y } = assertMonthYear(month, year);
   const activePolicy = policy ?? await getPayrollSettings(orgId, conn);
   const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
+  // Keep the full-month schedule as the salary divisor, but only evaluate dates
+  // that have occurred. Otherwise a payroll generated on the 1st would treat the
+  // remaining working days as absences (and hours-mode shortfalls).
+  const elapsedWorkingDates = filterWorkingDatesThrough(calendar.workingDates, payrollAsOfDate());
 
   const leave = await getApprovedLeaveForMonth({
     employeeUuid,
     month: m,
     year: y,
-    workingDates: calendar.workingDates,
+    workingDates: elapsedWorkingDates,
     conn,
   });
 
@@ -372,7 +393,7 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     employeeUuid,
     month: m,
     year: y,
-    workingDates: calendar.workingDates,
+    workingDates: elapsedWorkingDates,
     // BOTH kinds of leave excuse the day. Paid leave is not a deduction, but the
     // employee still did not clock in, so without this a paid sick-leave day is
     // counted as an absence and docked. That is the bug this argument prevents.
@@ -389,6 +410,7 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     month: m,
     year: y,
     workingDays: calendar.workingDays,
+    elapsedWorkingDays: elapsedWorkingDates.length,
     calendarDays: new Date(Date.UTC(y, m, 0)).getUTCDate(),
     policy: activePolicy,
     holidayCount: calendar.holidays.size,
@@ -431,6 +453,11 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const workingDays = Number(summary.workingDays) || 0;
   const shiftHours = Number(policy.hours_per_workday) || 0;
   const expectedHours = workingDays * shiftHours;
+  const elapsedWorkingDays = Math.min(
+    workingDays,
+    Math.max(0, Number(summary.elapsedWorkingDays ?? workingDays) || 0),
+  );
+  const elapsedExpectedHours = elapsedWorkingDays * shiftHours;
   const paidLeaveDays = Number(summary.paidLeaveDays) || 0;
   const unpaidLeaveDays = Number(summary.unpaidLeaveDays) || 0;
   const attendedDays = Number(summary.attendedDays) || 0;
@@ -450,8 +477,8 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   let payableRatio = 1;
 
   if (method === "days") {
-    const payableDays = Math.min(workingDays, attendedDays + paidLeaveDays);
-    payableRatio = payableDays / workingDays;
+    const payableDays = Math.min(elapsedWorkingDays, attendedDays + paidLeaveDays);
+    payableRatio = elapsedWorkingDays > 0 ? payableDays / elapsedWorkingDays : 1;
     if (unpaidLeaveDays > 0) lines.push({
       label: `Unpaid leave (${unpaidLeaveDays} day(s) x ${perDayRate})`,
       type: "deduction", source: "auto_unpaid_leave",
@@ -465,7 +492,9 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   } else {
     const workedHours = Number(summary.workedHours || 0);
     const creditedHours = workedHours + paidLeaveDays * shiftHours;
-    payableRatio = Math.min(1, creditedHours / expectedHours);
+    payableRatio = elapsedExpectedHours > 0
+      ? Math.min(1, creditedHours / elapsedExpectedHours)
+      : 1;
     const unpaidAmount = money(hourlyRate * shiftHours * unpaidLeaveDays);
     const absenceAmount = money(hourlyRate * shiftHours * absentDays);
     if (unpaidAmount > 0) lines.push({
@@ -478,7 +507,9 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
       type: "deduction", source: "auto_absenteeism",
       amount: absenceAmount, basis_value: absentDays * shiftHours, basis_unit: "hours",
     });
-    const shortHours = Math.max(0, expectedHours - creditedHours - unpaidLeaveDays * shiftHours - absentDays * shiftHours);
+    // Future scheduled hours are not absences or short-hours. The hourly rate
+    // still uses the FULL month divisor; only the shortfall window stops at today.
+    const shortHours = Math.max(0, elapsedExpectedHours - creditedHours - unpaidLeaveDays * shiftHours - absentDays * shiftHours);
     if (shortHours > 0) lines.push({
       label: `Short working hours (${money(shortHours)} hours)`,
       type: "deduction", source: "auto_short_hours",
