@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Info, Lock, Plus, ShieldCheck, Trash2, UserCheck } from "lucide-react";
+import { Check, ChevronsUpDown, Info, Lock, Plus, ShieldCheck, Trash2, UserCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { authStore } from "@/lib/auth";
@@ -37,6 +37,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Table,
   TableBody,
@@ -100,6 +102,7 @@ function OrgAttendanceContent() {
   const [dateTo, setDateTo] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [employeeUuid, setEmployeeUuid] = useState("");
+  const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
 
@@ -257,74 +260,114 @@ function OrgAttendanceContent() {
 
       <Card className="mt-4 border-border/70 shadow-none">
         <CardContent className="p-0">
-          <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
-            <p className="w-full text-xs text-muted-foreground lg:basis-full">
+          <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-6">
+            <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-6">
               Showing today's attendance by default. Select a month or date range to view older records.
             </p>
-            <SearchInput
-              value={search}
-              onChange={(v) => {
-                setSearch(v);
-                setPage(1);
-              }}
-              placeholder={t("attendance.searchEmployee")}
-            />
-            <Select
-              value={employeeUuid || "all"}
-              onValueChange={(v) => {
-                setEmployeeUuid(v === "all" ? "" : v);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full lg:w-52">
-                <SelectValue placeholder="All employees" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All employees</SelectItem>
-                {employeeOptions.map((employee) => (
-                  <SelectItem key={employee.uuid} value={employee.uuid}>
-                    {employee.full_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={status}
-              onValueChange={(v) => {
-                setStatus(v);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full lg:w-40">
-                <SelectValue placeholder={t("attendance.allStatuses")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">{t("attendance.allStatuses")}</SelectItem>
-                <SelectItem value="checked_in">{t("status.checked_in")}</SelectItem>
-                <SelectItem value="checked_out">{t("status.checked_out")}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              type="month"
-              aria-label="Filter attendance by month"
-              value={monthFilter}
-              onChange={(e) => {
-                const value = e.target.value;
-                setMonthFilter(value);
-                if (value) {
-                  const [year, month] = value.split("-").map(Number);
-                  const lastDay = new Date(year, month, 0).getDate();
-                  setDateFrom(`${value}-01`);
-                  setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
-                } else {
-                  setDateFrom("");
-                  setDateTo("");
-                }
-                setPage(1);
-              }}
-              className="w-full sm:w-44"
-            />
-            <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:w-auto">
+            <div className="min-w-0 sm:col-span-2 xl:col-span-2 [&>div]:w-full [&>div]:sm:w-full">
+              <SearchInput
+                value={search}
+                onChange={(v) => {
+                  setSearch(v);
+                  setPage(1);
+                }}
+                placeholder={t("attendance.searchEmployee")}
+              />
+            </div>
+            <div className="min-w-0">
+              <Popover open={employeePickerOpen} onOpenChange={setEmployeePickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={employeePickerOpen}
+                    className="w-full min-w-0 justify-between font-normal"
+                  >
+                    <span className="truncate">
+                      {employeeOptions.find((employee) => employee.uuid === employeeUuid)?.full_name ?? "All employees"}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] min-w-[240px] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search employee..." />
+                    <CommandList>
+                      <CommandEmpty>No employee found.</CommandEmpty>
+                      <CommandGroup>
+                        <CommandItem
+                          value="all employees"
+                          onSelect={() => {
+                            setEmployeeUuid("");
+                            setPage(1);
+                            setEmployeePickerOpen(false);
+                          }}
+                        >
+                          <Check className={`mr-2 h-4 w-4 ${!employeeUuid ? "opacity-100" : "opacity-0"}`} />
+                          All employees
+                        </CommandItem>
+                        {employeeOptions.map((employee) => (
+                          <CommandItem
+                            key={employee.uuid}
+                            value={`${employee.full_name} ${employee.email ?? ""}`}
+                            onSelect={() => {
+                              setEmployeeUuid(employee.uuid);
+                              setPage(1);
+                              setEmployeePickerOpen(false);
+                            }}
+                          >
+                            <Check className={`mr-2 h-4 w-4 ${employeeUuid === employee.uuid ? "opacity-100" : "opacity-0"}`} />
+                            <span className="truncate">{employee.full_name}</span>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="min-w-0">
+              <Select
+                value={status || "all"}
+                onValueChange={(v) => {
+                  setStatus(v === "all" ? "" : v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full min-w-0">
+                  <SelectValue placeholder={t("attendance.allStatuses")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("attendance.allStatuses")}</SelectItem>
+                  <SelectItem value="checked_in">{t("status.checked_in")}</SelectItem>
+                  <SelectItem value="checked_out">{t("status.checked_out")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0">
+              <Input
+                type="month"
+                aria-label="Filter attendance by month"
+                value={monthFilter}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setMonthFilter(value);
+                  if (value) {
+                    const [year, month] = value.split("-").map(Number);
+                    const lastDay = new Date(year, month, 0).getDate();
+                    setDateFrom(`${value}-01`);
+                    setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
+                  } else {
+                    setDateFrom("");
+                    setDateTo("");
+                  }
+                  setPage(1);
+                }}
+                className="w-full min-w-0"
+              />
+            </div>
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
               <Input
                 type="date"
                 aria-label="Attendance from date"
@@ -334,7 +377,7 @@ function OrgAttendanceContent() {
                   setDateFrom(e.target.value);
                   setPage(1);
                 }}
-                className="w-full min-w-0 lg:w-40"
+                className="w-full min-w-0"
               />
               <span className="text-xs text-muted-foreground">{t("common.to")}</span>
               <Input
@@ -346,7 +389,7 @@ function OrgAttendanceContent() {
                   setDateTo(e.target.value);
                   setPage(1);
                 }}
-                className="w-full min-w-0 lg:w-40"
+                className="w-full min-w-0"
               />
             </div>
           </div>
