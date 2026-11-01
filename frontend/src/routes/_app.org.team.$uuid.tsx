@@ -1226,6 +1226,7 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
   const assignedIds = new Set(assignments.map((a) => a.salary_component_id));
   const available = catalog.filter((c) => !assignedIds.has(c.id));
   const selectedCatalog = catalog.find((c) => String(c.id) === compId);
+  const selectedMonthlyCatalog = catalog.find((c) => c.name === monthlyLabel);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["org-employee-salary-components", uuid] });
     qc.invalidateQueries({ queryKey: ["org-monthly-salary-variables", uuid] });
@@ -1234,10 +1235,10 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
   const addMut = useMutation({
     mutationFn: () => {
       if (monthlyOnly) {
-        if (!monthlyLabel.trim() || !period) throw new Error("Enter a component name and month.");
+        if (!selectedMonthlyCatalog || !period) throw new Error("Select a salary component and applicable month.");
         return orgEmployeeSalaryService.addMonthlyVariable(uuid, {
-          label: monthlyLabel.trim(),
-          type: monthlyType,
+          label: selectedMonthlyCatalog.name,
+          type: selectedMonthlyCatalog.type,
           amount: Number(amount),
           month,
           year,
@@ -1278,9 +1279,10 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
   const editMonthlyMut = useMutation({
     mutationFn: () => {
       if (!editingMonthly) throw new Error("Select a monthly component to edit.");
+      const selected = catalog.find((component) => component.name === editMonthlyLabel);
       return orgEmployeeSalaryService.updateMonthlyVariable(uuid, editingMonthly.uuid, {
         label: editMonthlyLabel.trim(),
-        type: editMonthlyType,
+        type: selected?.type ?? editMonthlyType,
         amount: Number(editMonthlyAmount),
         month: editMonth,
         year: editYear,
@@ -1475,11 +1477,16 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
               <>
                 <div className="space-y-1.5">
                   <Label>Component Name</Label>
-                  <Select value={monthlyLabel} onValueChange={setMonthlyLabel}>
-                    <SelectTrigger><SelectValue placeholder="Select a component name" /></SelectTrigger>
+                  <Select value={monthlyLabel} onValueChange={(value) => {
+                    const component = catalog.find((item) => item.name === value);
+                    setMonthlyLabel(value);
+                    if (component) setMonthlyType(component.type);
+                    setAmount("");
+                  }}>
+                    <SelectTrigger><SelectValue placeholder="Select from Salary Component Settings" /></SelectTrigger>
                     <SelectContent>
                       {catalog.length === 0 ? (
-                        <div className="px-2 py-3 text-center text-sm text-muted-foreground">No salary components available. Add components in Salary Component Settings first.</div>
+                        <div className="px-2 py-3 text-center text-sm text-muted-foreground">No salary components available. Create components in Payroll → Salary Components first.</div>
                       ) : catalog.map((component) => (
                         <SelectItem key={component.id} value={component.name}>{component.name}</SelectItem>
                       ))}
@@ -1488,13 +1495,10 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Type</Label>
-                  <Select value={monthlyType} onValueChange={(value) => setMonthlyType(value as "allowance" | "deduction")}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="allowance">Allowance / Earning</SelectItem>
-                      <SelectItem value="deduction">Deduction</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm">
+                    {selectedMonthlyCatalog ? (selectedMonthlyCatalog.type === "allowance" ? "Allowance / Earning" : "Deduction") : "Select a component first"}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Type is taken from the central salary component catalogue.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Applicable Month</Label>
@@ -1522,7 +1526,7 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setAddOpen(false)} disabled={addMut.isPending}>Cancel</Button>
-            <Button onClick={() => addMut.mutate()} disabled={addMut.isPending || !amount || Number(amount) < (monthlyOnly ? 0.01 : 0) || (monthlyOnly ? !monthlyLabel.trim() || !period : !compId)} loading={addMut.isPending}>
+            <Button onClick={() => addMut.mutate()} disabled={addMut.isPending || !amount || Number(amount) < (monthlyOnly ? 0.01 : 0) || (monthlyOnly ? !selectedMonthlyCatalog || !period : !compId)} loading={addMut.isPending}>
               Add Component
             </Button>
           </DialogFooter>
@@ -1550,21 +1554,28 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>Component Name</Label>
-              <Select value={editMonthlyLabel} onValueChange={setEditMonthlyLabel}>
-                <SelectTrigger><SelectValue placeholder="Select a component name" /></SelectTrigger>
+              <Select value={editMonthlyLabel} onValueChange={(value) => {
+                const component = catalog.find((item) => item.name === value);
+                setEditMonthlyLabel(value);
+                if (component) setEditMonthlyType(component.type);
+              }}>
+                <SelectTrigger><SelectValue placeholder="Select from Salary Component Settings" /></SelectTrigger>
                 <SelectContent>
                   {catalog.map((component) => (
                     <SelectItem key={component.id} value={component.name}>{component.name}</SelectItem>
                   ))}
+                  {editMonthlyLabel && !catalog.some((component) => component.name === editMonthlyLabel) ? (
+                    <SelectItem value={editMonthlyLabel}>{editMonthlyLabel} (existing entry)</SelectItem>
+                  ) : null}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Type</Label>
-              <Select value={editMonthlyType} onValueChange={(value) => setEditMonthlyType(value as "allowance" | "deduction")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="allowance">Allowance / Earning</SelectItem><SelectItem value="deduction">Deduction</SelectItem></SelectContent>
-              </Select>
+              <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm">
+                {catalog.find((component) => component.name === editMonthlyLabel)?.type === "allowance" || (!catalog.some((component) => component.name === editMonthlyLabel) && editMonthlyType === "allowance") ? "Allowance / Earning" : "Deduction"}
+              </div>
+              <p className="text-xs text-muted-foreground">Type is taken from the central salary component catalogue.</p>
             </div>
             <div className="space-y-1.5"><Label>Amount (PKR)</Label><Input type="number" min="0.01" step="0.01" value={editMonthlyAmount} onChange={(e) => setEditMonthlyAmount(e.target.value)} /></div>
             <div className="space-y-1.5"><Label>Applicable Month</Label><Input type="month" value={editMonthlyPeriod} onChange={(e) => setEditMonthlyPeriod(e.target.value)} /></div>
