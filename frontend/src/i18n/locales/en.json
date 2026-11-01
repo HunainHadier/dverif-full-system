@@ -1214,8 +1214,7 @@
     "employeesTruncated": "Showing {{shown}} of {{total}} employees. Search to narrow the list.",
     "attachmentDownloadFailed": "Download failed. Your browser may be blocking it.",
     "tag": "Tag",
-    "modelDetails": "Model details",
-    "serialNumber": "Serial number"
+    "modelDetails": "Model details"
   },
   "myAssets": {
     "title": "My Assets",

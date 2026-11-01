@@ -105,7 +105,6 @@ describe("/my-assets", () => {
   it("shows the asset name and assignment details without removed metadata", () => {
     expect(MY_ASSETS).toContain("assets.assetName");
     expect(MY_ASSETS).toContain("assets.tag");
-    expect(MY_ASSETS).toContain("assets.serialNumber");
     expect(MY_ASSETS).toContain("assets.assignedDate");
     expect(MY_ASSETS).not.toContain("category_name");
   });

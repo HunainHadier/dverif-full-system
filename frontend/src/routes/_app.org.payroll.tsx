@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users, CalendarDays, Clock } from "lucide-react";
+import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users, CalendarDays, Clock, SlidersHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
@@ -96,7 +96,7 @@ function OrgPayrollPage() {
   const { user } = useAuth();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
 
-  const [tab, setTab] = useState<"employees" | "records" | "components">("employees");
+  const [tab, setTab] = useState<"employees" | "records" | "components" | "policies">("employees");
 
   // Records (history) filters
   const [page, setPage] = useState(1);
@@ -394,7 +394,7 @@ function OrgPayrollPage() {
         title={t("nav.payroll")}
         description={t("payroll.description")}
         actions={
-          tab === "components" ? null : tab === "records" ? (
+          tab === "components" || tab === "policies" ? null : tab === "records" ? (
             <div className="flex shrink-0 flex-nowrap gap-2 whitespace-nowrap">
               <Button
                 className="w-40 shrink-0 justify-center"
@@ -436,14 +436,13 @@ function OrgPayrollPage() {
         }
       />
 
-      <div className="mt-3 grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <PayrollConfigurationSidebar canManage={perms.isOrgAdmin} />
+      <div className="mt-3">
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as "employees" | "records" | "components")}
+        onValueChange={(v) => setTab(v as "employees" | "records" | "components" | "policies")}
         className="mt-0 min-w-0"
       >
-        <TabsList>
+        <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="employees">
             <Users className="mr-1.5 h-4 w-4" />
             {t("payroll.employeesTab", "Employees")}
@@ -453,6 +452,10 @@ function OrgPayrollPage() {
             {t("payroll.recordsTab", "Payroll Records")}
           </TabsTrigger>
           <TabsTrigger value="components">Salary Components</TabsTrigger>
+          <TabsTrigger value="policies">
+            <SlidersHorizontal className="mr-1.5 h-4 w-4" />
+            Policies
+          </TabsTrigger>
         </TabsList>
 
         {/* ---------------- Employee selection table ---------------- */}
@@ -766,6 +769,7 @@ function OrgPayrollPage() {
           </Card>
         </TabsContent>
         <TabsContent value="components"><SalaryComponentsManager /></TabsContent>
+        <TabsContent value="policies"><PayrollPoliciesPanel canManage={perms.isOrgAdmin} /></TabsContent>
       </Tabs>
       </div>
 
@@ -1067,7 +1071,7 @@ function OrgPayrollPage() {
 }
 
 
-function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
+function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const now = new Date();
@@ -1124,34 +1128,46 @@ function PayrollConfigurationSidebar({ canManage }: { canManage: boolean }) {
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   return (
     <>
-      <Card className="h-fit border-border/70 shadow-none">
-        <CardContent className="space-y-4 p-4">
-          <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose one salary calculation method.</p></div>
-          <div className="space-y-3">
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <Checkbox checked={settingsForm.salary_calculation_method === "hours"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "hours" }))} />
-              <span>Calculate salary according to working hours</span>
-            </label>
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <Checkbox checked={settingsForm.calculate_overtime} disabled={!canManage} onCheckedChange={(v) => setSettingsForm((s) => ({ ...s, calculate_overtime: v === true }))} />
-              <span>Calculate overtime according to the working hours</span>
-            </label>
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <Checkbox checked={settingsForm.salary_calculation_method === "days"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "days" }))} />
-              <span>Calculate salary according to working days</span>
-            </label>
-          </div>
-          <div className="space-y-2 border-t pt-3">
-            <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
-              <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
+      <Card className="border-border/70 shadow-none">
+        <CardContent className="grid gap-4 p-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+          {/* Working days — left, its own panel so it does not bury the policies. */}
+          <div className="flex h-fit flex-col gap-3 rounded-md border border-border p-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <CalendarDays className="h-4 w-4" /> Working Days
             </div>
+            <p className="text-xs text-muted-foreground">
+              Set every date as a working day or an off day separately for each month.
+            </p>
+            <Button className="w-full" variant="outline" disabled={!canManage} onClick={() => setScheduleOpen(true)}>
+              Set Working Days
+            </Button>
           </div>
-          {canManage ? <Button className="w-full" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}
-          <div className="border-t pt-3">
-            <Button className="w-full" variant="outline" disabled={!canManage} onClick={() => setScheduleOpen(true)}><CalendarDays className="mr-2 h-4 w-4" /> Set Working Days</Button>
-            <p className="mt-2 text-xs text-muted-foreground">Set every date as a working day or an off day separately for each month.</p>
+
+          {/* Policies — right. */}
+          <div className="space-y-4">
+            <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose one salary calculation method.</p></div>
+            <div className="space-y-3">
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox checked={settingsForm.salary_calculation_method === "hours"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "hours" }))} />
+                <span>Calculate salary according to working hours</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox checked={settingsForm.calculate_overtime} disabled={!canManage} onCheckedChange={(v) => setSettingsForm((s) => ({ ...s, calculate_overtime: v === true }))} />
+                <span>Calculate overtime according to the working hours</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox checked={settingsForm.salary_calculation_method === "days"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "days" }))} />
+                <span>Calculate salary according to working days</span>
+              </label>
+            </div>
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
+                <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
+              </div>
+            </div>
+            {canManage ? <Button className="w-full sm:w-auto" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}
           </div>
         </CardContent>
       </Card>

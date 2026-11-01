@@ -50,11 +50,7 @@ function MyAssetsPage() {
         </div>
       ),
     },
-    {
-      key: "serial_number",
-      header: t("assets.serialNumber"),
-      render: (r) => <span className="font-mono text-xs">{r.serial_number ?? "—"}</span>,
-    },
+ 
     {
       key: "assigned_at",
       header: t("assets.assignedDate"),

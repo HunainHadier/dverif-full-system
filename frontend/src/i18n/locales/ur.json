@@ -1214,8 +1214,7 @@
     "employeesTruncated": "{{total}} میں سے {{shown}} کارمندے دکھایے جا رہے ہیں۔ فہرست محدود کرنے کے لیے تلاش کریں۔",
     "attachmentDownloadFailed": "ڈاؤن لوڈ ناکام۔ شاید آپ کا براؤزر اسے روک رہا ہے۔",
     "tag": "ٹیگ",
-    "modelDetails": "ماڈل کی تفصیل",
-    "serialNumber": "سیریل نمبر"
+    "modelDetails": "ماڈل کی تفصیل"
   },
   "myAssets": {
     "title": "میرے اثاثات",

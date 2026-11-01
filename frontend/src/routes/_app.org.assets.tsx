@@ -497,7 +497,6 @@ function AssetDetailDrawer({
                 Asset Information
               </h3>
               <dl className="grid grid-cols-2 gap-4 text-sm">
-                <Detail label={t("assets.serialNumber")}>{asset.serial_number ?? "—"}</Detail>
                 <Detail label={t("assets.purchaseDate")}>
                   {asset.purchase_date ? formatDate(asset.purchase_date) : "—"}
                 </Detail>
@@ -993,7 +992,7 @@ function ActionDialog({
             <span className="font-medium">{t("assets.conditionOnReturn")}</span>
             <select
               value={condition}
-              onChange={(e) => setCondition(e.target.value)}
+              onChange={(e) => setCondition(e.target.value as AssetReturnCondition)}
               className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
             >
               <option value="good">{t("assets.condition.good")}</option>
