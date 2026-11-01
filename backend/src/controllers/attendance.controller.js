@@ -7,6 +7,11 @@ import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { ipMatches, isValidIpRule } from "../utils/ipMatch.js";
 import { normalizeIp } from "../utils/ip.js";
 import ipaddr from "ipaddr.js";
+import { isoDate } from "../utils/leaveBalance.js";
+
+function serializeAttendanceDate(row) {
+  return row?.date ? { ...row, date: isoDate(row.date) } : row;
+}
 
 const RECORD_SELECT = `
   SELECT ar.uuid, ar.employee_uuid, ar.organization_id, ar.check_in_at, ar.check_out_at,
@@ -152,7 +157,7 @@ export async function myAttendanceHistory(req, res) {
      ORDER BY ar.date DESC, ar.check_in_at DESC LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  return ok(res, paginatedResponse(rows, total, page, limit), "Attendance records");
+  return ok(res, paginatedResponse(rows.map(serializeAttendanceDate), total, page, limit), "Attendance records");
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +206,7 @@ export async function checkIn(req, res) {
     details: { ip: normalizeIp(req.ip) },
     req,
   });
-  return created(res, { record: rows[0] }, "Checked in successfully");
+  return created(res, { record: serializeAttendanceDate(rows[0]) }, "Checked in successfully");
 }
 
 export async function checkOut(req, res) {
@@ -230,7 +235,7 @@ export async function checkOut(req, res) {
     details: { ip: normalizeIp(req.ip) },
     req,
   });
-  return ok(res, { record: rows[0] }, "Checked out successfully");
+  return ok(res, { record: serializeAttendanceDate(rows[0]) }, "Checked out successfully");
 }
 
 export async function todayStatus(req, res) {
@@ -240,7 +245,7 @@ export async function todayStatus(req, res) {
      FROM attendance_records WHERE employee_uuid=? AND date=CURDATE()`,
     [emp.uuid]
   );
-  return ok(res, { record: rows[0] ?? null }, "Today's attendance");
+  return ok(res, { record: serializeAttendanceDate(rows[0]) ?? null }, "Today's attendance");
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +353,7 @@ export async function manualEntry(req, res) {
     req,
   });
 
-  return created(res, { record: rows[0] }, "Manual attendance entry added");
+  return created(res, { record: serializeAttendanceDate(rows[0]) }, "Manual attendance entry added");
 }
 
 // ---------------------------------------------------------------------------
@@ -478,5 +483,5 @@ export async function listOrgAttendance(req, res) {
     `${RECORD_SELECT} ${whereClause} ORDER BY ar.date DESC, ar.check_in_at DESC LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  return ok(res, paginatedResponse(rows, total, page, limit), "Attendance records");
+  return ok(res, paginatedResponse(rows.map(serializeAttendanceDate), total, page, limit), "Attendance records");
 }

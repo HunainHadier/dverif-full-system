@@ -4,11 +4,12 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CalendarClock, Video } from "lucide-react";
+import { CalendarClock, Video, Eye } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -54,6 +55,7 @@ export function InterviewsPage() {
   const qc = useQueryClient();
   const [scheduling, setScheduling] = useState(false);
   const [feedbackFor, setFeedbackFor] = useState<Interview | null>(null);
+  const [detailsFor, setDetailsFor] = useState<Interview | null>(null);
   const [search, setSearch] = useState("");
 
   const list = useQuery({
@@ -149,11 +151,6 @@ export function InterviewsPage() {
       ),
     },
     {
-      key: "location",
-      header: t("recruitment.interviewLocation"),
-      render: (i) => <span className="text-sm">{i.location ?? "—"}</span>,
-    },
-    {
       key: "status",
       header: t("recruitment.status"),
       render: (i) => (
@@ -188,6 +185,10 @@ export function InterviewsPage() {
       header: t("recruitment.actions"),
       render: (i) => (
         <div className="flex items-center justify-end gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setDetailsFor(i)}>
+            <Eye className="mr-1 h-3.5 w-3.5" />
+            Details
+          </Button>
           {i.status === "scheduled" ? (
             <>
               <Button variant="ghost" size="sm" onClick={() => setFeedbackFor(i)}>
@@ -290,6 +291,8 @@ export function InterviewsPage() {
         onDone={invalidate}
       />
 
+      <InterviewDetailsDialog interview={detailsFor} onOpenChange={(open) => !open && setDetailsFor(null)} />
+
       <FeedbackDialog
         interview={feedbackFor}
         onOpenChange={(v) => !v && setFeedbackFor(null)}
@@ -300,6 +303,32 @@ export function InterviewsPage() {
 }
 
 // ---------------------------------------------------------------------------
+
+function InterviewDetailsDialog({ interview, onOpenChange }: { interview: Interview | null; onOpenChange: (open: boolean) => void }) {
+  const { t } = useTranslation();
+  return (
+    <Dialog open={!!interview} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Interview details</DialogTitle>
+          <DialogDescription>Full meeting information and interview conclusion.</DialogDescription>
+        </DialogHeader>
+        {interview ? (
+          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+            <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">Candidate</p><p className="break-words font-medium">{interview.candidate_name || "—"}</p></div>
+            <div className="min-w-0 rounded-md border p-3"><p className="text-xs text-muted-foreground">Interviewer</p><p className="break-words font-medium">{interview.interviewer_name || "Unassigned"}</p>{interview.interviewer_designation ? <p className="break-words text-xs text-muted-foreground">{interview.interviewer_designation}</p> : null}</div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">Date and time</p><p className="font-medium">{formatDateTime(interview.scheduled_at)}</p></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">Mode</p><p className="font-medium capitalize">{interview.mode || "—"}</p></div>
+            <div className="min-w-0 rounded-md border p-3 sm:col-span-2"><p className="text-xs text-muted-foreground">Meeting point</p><p className="break-words font-medium">{interview.location || "Not specified"}</p></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">Status</p><Badge variant={interview.status === "completed" ? "secondary" : interview.status === "cancelled" ? "destructive" : "outline"}>{t(`recruitment.interviewStatusLabel.${interview.status}`)}</Badge></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">Outcome</p><Badge variant={interview.outcome === "passed" ? "default" : interview.outcome === "failed" ? "destructive" : "outline"}>{t(`recruitment.interviewOutcomeLabel.${interview.outcome}`)}</Badge></div>
+            <div className="rounded-md border p-3 sm:col-span-2"><p className="text-xs text-muted-foreground">Feedback / conclusion</p><p className="whitespace-pre-wrap break-words">{interview.feedback_notes || "No feedback recorded yet."}</p>{interview.rating !== null ? <p className="mt-2 text-xs text-muted-foreground">Rating: {interview.rating}/5</p> : null}</div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 type ScheduleForm = {
   candidate_uuid: string;

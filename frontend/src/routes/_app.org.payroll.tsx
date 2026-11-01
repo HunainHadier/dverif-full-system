@@ -780,7 +780,7 @@ function OrgPayrollPage() {
           if (!o) setPeriodOpen(false);
         }}
       >
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("payroll.generateTitle")}</DialogTitle>
             <DialogDescription>
@@ -791,7 +791,7 @@ function OrgPayrollPage() {
               })}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">{t("payroll.payrollMonth", "Month")}</label>
               <Select value={String(genMonth)} onValueChange={(v) => setGenMonth(Number(v))}>
@@ -835,8 +835,8 @@ function OrgPayrollPage() {
             </div>
           ) : null}
 
-          <DialogFooter className="gap-2">
-            <Button
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+            <Button className="w-full whitespace-normal sm:w-auto"
               variant="ghost"
               onClick={() => setPeriodOpen(false)}
               disabled={generate.isPending || regenerate.isPending || preview.isPending}
@@ -846,7 +846,7 @@ function OrgPayrollPage() {
             {/* Preview sits between Cancel and Generate on purpose: the numbers are
                 the thing being agreed, so seeing them must not require committing
                 to them. */}
-            <Button
+            <Button className="w-full whitespace-normal sm:w-auto"
               variant="outline"
               onClick={() =>
                 preview.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
@@ -857,7 +857,7 @@ function OrgPayrollPage() {
               {t("payroll.preview", { defaultValue: "Preview" })}
             </Button>
             {selectedHasExisting ? (
-              <Button
+              <Button className="w-full whitespace-normal sm:w-auto"
                 variant="destructive"
                 onClick={() => setRegenerateOpen(true)}
                 disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent}
@@ -866,7 +866,7 @@ function OrgPayrollPage() {
                 {t("payroll.regenerateSelected", { count: alreadyGeneratedSelected.length })}
               </Button>
             ) : (
-              <Button
+              <Button className="w-full whitespace-normal sm:w-auto"
                 onClick={() =>
                   generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
                 }
@@ -887,7 +887,7 @@ function OrgPayrollPage() {
           setPreviewOpen(o);
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {t("payroll.previewTitle", { defaultValue: "Payroll preview" })}
@@ -930,7 +930,10 @@ function OrgPayrollPage() {
                         {t("payroll.previewAttended", "Attended")}
                       </span>
                       <p className="font-medium">
-                        {a.attended_days} / {a.working_days}
+                        {a.attended_days} / {a.elapsed_working_days ?? a.working_days}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        of {a.working_days} scheduled monthly days
                       </p>
                     </div>
                     <div>
@@ -1134,6 +1137,10 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
   );
   const isScheduleComplete = scheduleDates.every((date) => dayTypes[date] === "working" || dayTypes[date] === "off");
+  const weekendWorkingCount = scheduleDates.filter((date) => {
+    const weekday = new Date(`${date}T00:00:00`).getDay();
+    return (weekday === 0 || weekday === 6) && dayTypes[date] === "working";
+  }).length;
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const weekdayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -1225,9 +1232,14 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
             <span className="text-xs text-muted-foreground">Quick set:</span>
             <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={() => setEveryDay("working")}>All working</Button>
             <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={() => setEveryDay("off")}>All off</Button>
-            <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={setSatSunOff}>Sat + Sun off</Button>
+            <Button type="button" size="sm" variant="outline" disabled={!canManage} onClick={setSatSunOff}>Apply Mon–Fri schedule</Button>
           </div>
-          <p className="text-xs text-muted-foreground">No fixed weekend: click a weekday to switch every date of that weekday, or click individual dates.</p>
+          {weekendWorkingCount > 0 ? (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+              {weekendWorkingCount} Saturday/Sunday date(s) are currently marked as working. If your organization follows a Monday–Friday week, apply the Mon–Fri schedule before saving payroll settings.
+            </p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">You can still customize any weekday or individual date after applying the preset.</p>
           <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
             {weekdayNames.map((name, weekday) => (
               <button

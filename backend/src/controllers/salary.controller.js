@@ -604,6 +604,7 @@ export async function previewPayroll(req, res) {
       lines: computed.lines,
       attendance: {
         working_days: computed.summary.workingDays,
+        elapsed_working_days: computed.summary.elapsedWorkingDays,
         attended_days: computed.summary.attendedDays,
         worked_hours: computed.summary.workedHours,
         expected_working_hours: computed.automatic.expectedHours,

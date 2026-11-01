@@ -19,9 +19,9 @@ const DVERIF_LOGO = resolve(BACKEND_ROOT, "assets/dverif-logo.png");
 const PAGE_MARGIN = 46;
 
 /* Panel geometry — declared once, read by drawPanel and panelHeight. */
-const PANEL_HEAD_H = 24;
-const PANEL_ROW_H = 24;
-const PANEL_TOTAL_H = 28;
+const PANEL_HEAD_H = 22;
+const PANEL_ROW_H = 22;
+const PANEL_TOTAL_H = 26;
 
 /* ---------- helpers ---------- */
 
@@ -198,8 +198,8 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
   doc.rect(x, y, width, headH).fill(BRAND);
   doc.restore();
   doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#ffffff")
-    .text(title.toUpperCase(), x + padX, y + 8, { lineBreak: false, characterSpacing: 0.8 });
-  doc.text("AMOUNT", amountX, y + 8, { width: amountW, align: "right", lineBreak: false, characterSpacing: 0.8 });
+    .text(title.toUpperCase(), x + padX, y + 7, { lineBreak: false, characterSpacing: 0.8 });
+  doc.text("AMOUNT", amountX, y + 7, { width: amountW, align: "right", lineBreak: false, characterSpacing: 0.8 });
 
   // rows
   for (let i = 0; i < Math.max(rows.length, 1); i += 1) {
@@ -210,11 +210,11 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
 
     // Line 1: label | amount, in separate columns.
     doc.font("Helvetica").fontSize(9.5).fillColor(INK)
-      .text(row.label, x + padX, rowY + 4, {
+      .text(row.label, x + padX, rowY + 3, {
         width: labelW, height: 11, lineBreak: false, ellipsis: true,
       });
     doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-      .text(row.amount, amountX, rowY + 4, {
+      .text(row.amount, amountX, rowY + 3, {
         width: amountW, height: 11, align: "right", lineBreak: false,
       });
 
@@ -222,8 +222,8 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
     const meta = [row.source, row.basis].filter(Boolean).join("  ·  ");
     if (meta) {
       doc.font("Helvetica").fontSize(7.5).fillColor("#8a93a6")
-        .text(meta, x + padX, rowY + 15, {
-          width: width - padX * 2, height: 8, lineBreak: false, ellipsis: true,
+        .text(meta, x + padX, rowY + 14, {
+          width: width - padX * 2, height: 7, lineBreak: false, ellipsis: true,
         });
     }
   }
@@ -236,35 +236,35 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
   doc.restore();
   doc.moveTo(x, totalY).lineTo(x + width, totalY).lineWidth(0.8).strokeColor(RULE).stroke();
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-    .text(totalLabel, x + padX, totalY + 9, { width: labelW, lineBreak: false });
+    .text(totalLabel, x + padX, totalY + 8, { width: labelW, lineBreak: false });
   doc.font("Helvetica-Bold").fontSize(10).fillColor(BRAND)
-    .text(totalAmount, amountX, totalY + 9, { width: amountW, align: "right", lineBreak: false });
+    .text(totalAmount, amountX, totalY + 8, { width: amountW, align: "right", lineBreak: false });
 
   return y + headH + bodyH + totalH;
 }
 
 function drawNetSalary(doc, netAmount, y) {
   const width = doc.page.width - PAGE_MARGIN * 2;
-  const height = 60;
+  const height = 54;
   doc.roundedRect(PAGE_MARGIN, y, width, height, 10).fill(BRAND);
   doc.roundedRect(PAGE_MARGIN, y, 6, height, 3).fill(BRAND_DARK);
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#cfe1ff")
-    .text("NET SALARY PAYABLE", PAGE_MARGIN + 24, y + 16, { lineBreak: false, characterSpacing: 0.8 });
+    .text("NET SALARY PAYABLE", PAGE_MARGIN + 24, y + 13, { lineBreak: false, characterSpacing: 0.8 });
   doc.font("Helvetica").fontSize(8).fillColor("#cfe1ff")
-    .text("Salary and approved reimbursements less deductions", PAGE_MARGIN + 24, y + 33, { lineBreak: false });
-  doc.font("Helvetica-Bold").fontSize(21).fillColor("#ffffff")
-    .text(money(netAmount), PAGE_MARGIN + 24, y + 20, {
+    .text("Salary and approved reimbursements less deductions", PAGE_MARGIN + 24, y + 29, { lineBreak: false });
+  doc.font("Helvetica-Bold").fontSize(19).fillColor("#ffffff")
+    .text(money(netAmount), PAGE_MARGIN + 24, y + 17, {
       width: width - 48,
       align: "right",
       lineBreak: false,
     });
 
-  const wordsY = y + height + 10;
+  const wordsY = y + height + 8;
   doc.font("Helvetica-Bold").fontSize(8).fillColor(MUTED)
     .text("AMOUNT IN WORDS", PAGE_MARGIN, wordsY, { lineBreak: false, characterSpacing: 0.5 });
   doc.font("Helvetica-Oblique").fontSize(9.5).fillColor(INK)
     .text(amountInWords(netAmount), PAGE_MARGIN, wordsY + 12, { width });
-  return wordsY + 32;
+  return wordsY + 30;
 }
 
 function drawFooter(doc, generatedDate, pageNumber, pageCount) {
@@ -428,7 +428,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   ].filter(([, value]) => displayValue(value)).map(([label, value]) => ({ label, value: displayValue(value) }));
   if (fields.length) y = drawEmployeeCard(doc, fields, y);
 
-  y += 22;
+  y += 14;
 
   const basic = Number(record.basic_salary ?? 0) || 0;
   const allowances = Number(record.allowances ?? 0) || 0;
@@ -486,7 +486,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   const panelsHeight = stack
     ? panelHeight(earningsRows) + 14 + panelHeight(deductionRows) + 22
     : Math.max(panelHeight(earningsRows), panelHeight(deductionRows)) + 22;
-  const netBlockHeight = 60 + 10 + 32;
+  const netBlockHeight = 54 + 8 + 30;
   const footerTop = doc.page.height - 92;
   if (y + 16 + panelsHeight + netBlockHeight > footerTop - 12) {
     doc.addPage();
