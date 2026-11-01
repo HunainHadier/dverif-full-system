@@ -110,6 +110,30 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     else allowances += amt;
   }
 
+  // Month-specific variable items (bonus, overtime, one-off deductions, etc.).
+  // These are separate from recurring employee assignments and are included only
+  // for the exact payroll period being previewed/generated.
+  const [monthlyVariables] = await conn.query(
+    `SELECT label, type, amount
+       FROM monthly_salary_variables
+      WHERE organization_id=? AND employee_uuid=? AND month=? AND year=?
+      ORDER BY id`,
+    [orgId, employeeUuid, m, y],
+  );
+  const monthlyVariableLines = monthlyVariables.map((item) => {
+    const amount = moneyField(item.amount, item.label);
+    if (item.type === "deduction") deductions += amount;
+    else allowances += amount;
+    return {
+      label: item.label,
+      type: item.type === "deduction" ? "deduction" : "earning",
+      source: "monthly_variable",
+      amount,
+      basis_value: null,
+      basis_unit: null,
+    };
+  });
+
   const summary = await getMonthlyAttendanceAndLeaveSummary({
     employeeUuid,
     orgId,
@@ -147,6 +171,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
   const lines = [
     { label: "Basic monthly salary", type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
     ...componentLines,
+    ...monthlyVariableLines,
     ...automatic.lines,
     // Reimbursement is money COMING to the employee, so it is an earning alongside
     // allowances rather than a negative anywhere. Folding it into the deduction

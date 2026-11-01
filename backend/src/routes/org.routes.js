@@ -109,6 +109,11 @@ import {
   removeEmployeeSalaryComponent,
 } from "../controllers/org/employeeSalaryComponents.controller.js";
 import {
+  listMonthlySalaryVariables,
+  createMonthlySalaryVariable,
+  deleteMonthlySalaryVariable,
+} from "../controllers/org/monthlySalaryVariables.controller.js";
+import {
   addAllowedIp,
   getAllowedIps,
   listOrgAttendance,
@@ -311,6 +316,9 @@ router.get("/employees/:uuid/salary-components", payrollMgmt, asyncHandler(listE
 router.post("/employees/:uuid/salary-components", payrollMgmt, asyncHandler(assignEmployeeSalaryComponent));
 router.put("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(updateEmployeeSalaryComponent));
 router.delete("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(removeEmployeeSalaryComponent));
+router.get("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(listMonthlySalaryVariables));
+router.post("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(createMonthlySalaryVariable));
+router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
