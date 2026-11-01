@@ -251,7 +251,7 @@ function drawNetSalary(doc, netAmount, y) {
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#cfe1ff")
     .text("NET SALARY PAYABLE", PAGE_MARGIN + 24, y + 16, { lineBreak: false, characterSpacing: 0.8 });
   doc.font("Helvetica").fontSize(8).fillColor("#cfe1ff")
-    .text("Total earnings minus deductions", PAGE_MARGIN + 24, y + 33, { lineBreak: false });
+    .text("Salary and approved reimbursements less deductions", PAGE_MARGIN + 24, y + 33, { lineBreak: false });
   doc.font("Helvetica-Bold").fontSize(21).fillColor("#ffffff")
     .text(money(netAmount), PAGE_MARGIN + 24, y + 20, {
       width: width - 48,
@@ -454,11 +454,23 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   const anyLines = earnings.length + deductions.length > 0;
 
   const earningsRows = anyLines && earnings.length
-    ? earnings
+    ? [...earnings]
     : [
         { label: "Basic salary", amount: money(record.basic_salary), source: null, basis: null },
         { label: "Allowances (total)", amount: money(record.allowances), source: null, basis: null },
       ];
+
+  // Reimbursement is stored separately from contractual allowances. Older
+  // records may have the numeric total but no itemised auto_expense line, so
+  // show it explicitly rather than making the earnings total look unexplained.
+  if (expenseReimbursement > 0 && !earningsRows.some((row) => row.source === "Expense claims")) {
+    earningsRows.push({
+      label: "Expense reimbursement",
+      amount: money(expenseReimbursement),
+      source: "Approved expense claims",
+      basis: null,
+    });
+  }
   const deductionRows = anyLines && deductions.length
     ? deductions
     : [{ label: "Deductions (total)", amount: money(record.deductions), source: null, basis: null }];
