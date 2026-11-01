@@ -486,20 +486,20 @@ function MyClaimDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-x-hidden overflow-y-auto overscroll-contain p-4 sm:max-w-xl sm:p-6">
+        <DialogHeader className="min-w-0 pr-8">
+          <DialogTitle className="break-words leading-snug [overflow-wrap:anywhere]">
             {claim
               ? `${claim.expense_name || "—"} · ${formatCurrency(claim.amount)}`
               : t("loading")}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             {claim ? formatDate(claim.expense_date) : t("loading")}
           </DialogDescription>
         </DialogHeader>
 
         {claim ? (
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {/* Status + Payment Mode Banner */}
             <div
               className={`flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 ${
@@ -525,7 +525,7 @@ function MyClaimDialog({
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {t("expenses.expenseDate")} &amp; Details
               </h3>
-              <dl className="grid grid-cols-2 gap-3 text-sm">
+              <dl className="grid grid-cols-1 gap-3 text-sm min-[380px]:grid-cols-2">
                 <div>
                   <dt className="text-xs text-muted-foreground">{t("expenses.expenseDate")}</dt>
                   <dd className="font-medium text-foreground">{formatDate(claim.expense_date)}</dd>
@@ -545,7 +545,7 @@ function MyClaimDialog({
 
             {/* Description */}
             {claim.description ? (
-              <div className="rounded-xl border bg-muted/30 p-3 text-sm text-foreground whitespace-pre-wrap">
+              <div className="min-w-0 rounded-xl border bg-muted/30 p-3 text-sm text-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                 {claim.description}
               </div>
             ) : null}
@@ -556,7 +556,7 @@ function MyClaimDialog({
                 <p className="text-xs font-medium text-destructive mb-1">
                   {t("expenses.rejectionReason")}
                 </p>
-                <p className="whitespace-pre-wrap text-sm">{claim.rejection_reason}</p>
+                <p className="whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere]">{claim.rejection_reason}</p>
                 <p className="mt-2 text-xs text-muted-foreground">{t("expenses.resubmitHint")}</p>
               </div>
             ) : null}
@@ -570,7 +570,7 @@ function MyClaimDialog({
 
             {/* Receipts Section */}
             <div className="rounded-xl border bg-card p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-semibold">
                   {t("expenses.receipts")}
                 </p>
