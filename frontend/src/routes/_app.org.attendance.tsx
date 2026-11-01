@@ -260,11 +260,11 @@ function OrgAttendanceContent() {
 
       <Card className="mt-4 border-border/70 shadow-none">
         <CardContent className="p-0">
-          <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-6">
-            <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-6">
+          <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-12">
+            <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-12">
               Showing today's attendance by default. Select a month or date range to view older records.
             </p>
-            <div className="min-w-0 sm:col-span-2 xl:col-span-2 [&>div]:w-full [&>div]:sm:w-full">
+            <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:w-full [&>div]:sm:w-full">
               <SearchInput
                 value={search}
                 onChange={(v) => {
@@ -274,7 +274,7 @@ function OrgAttendanceContent() {
                 placeholder={t("attendance.searchEmployee")}
               />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 xl:col-span-2">
               <Popover open={employeePickerOpen} onOpenChange={setEmployeePickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -327,7 +327,7 @@ function OrgAttendanceContent() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 xl:col-span-2">
               <Select
                 value={status || "all"}
                 onValueChange={(v) => {
@@ -345,7 +345,7 @@ function OrgAttendanceContent() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 xl:col-span-2">
               <Input
                 type="month"
                 aria-label="Filter attendance by month"
@@ -367,7 +367,7 @@ function OrgAttendanceContent() {
                 className="w-full min-w-0"
               />
             </div>
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-3">
               <Input
                 type="date"
                 aria-label="Attendance from date"
