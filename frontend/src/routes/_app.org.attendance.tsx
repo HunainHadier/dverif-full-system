@@ -264,7 +264,7 @@ function OrgAttendanceContent() {
             <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-12">
               Showing today's attendance by default. Select a month or date range to view older records.
             </p>
-            <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:w-full [&>div]:sm:w-full">
+            <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:!w-full">
               <SearchInput
                 value={search}
                 onChange={(v) => {
