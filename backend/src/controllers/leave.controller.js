@@ -356,9 +356,9 @@ export async function listOrgLeaves(req, res) {
   const status = typeof req.query.status === "string" && req.query.status.trim()
     ? req.query.status.trim() : "";
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-  const dateFrom = typeof req.query.dateFrom === "string" && /^\\d{4}-\\d{2}-\\d{2}$/.test(req.query.dateFrom)
+  const dateFrom = typeof req.query.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateFrom)
     ? req.query.dateFrom : "";
-  const dateTo = typeof req.query.dateTo === "string" && /^\\d{4}-\\d{2}-\\d{2}$/.test(req.query.dateTo)
+  const dateTo = typeof req.query.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateTo)
     ? req.query.dateTo : "";
 
   let whereClause = "WHERE e.organization_id = ?";
