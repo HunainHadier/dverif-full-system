@@ -168,6 +168,7 @@ export type PayrollLine = {
     | "auto_unpaid_leave"
     | "auto_absenteeism"
       | "auto_overtime"
+    | "monthly_variable"
     | "manual";
   amount: number;
   basis_value: number | null;
