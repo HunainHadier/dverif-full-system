@@ -117,6 +117,7 @@ function OrgLeavesContent() {
     editing: null,
   });
   const [deletingType, setDeletingType] = useState<LeaveType | null>(null);
+  const [visibleLeaveTypes, setVisibleLeaveTypes] = useState(5);
 
   const types = useQuery({
     queryKey: ["orgLeaveTypes"],
@@ -188,7 +189,7 @@ function OrgLeavesContent() {
                 <p className="text-sm text-muted-foreground">{t("orgLeaves.noTypesYet")}</p>
               ) : (
                 <div className="divide-y divide-border rounded-md border border-border">
-                  {(types.data ?? []).map((lt) => (
+                  {(types.data ?? []).slice(0, visibleLeaveTypes).map((lt) => (
                     <div key={lt.id} className="flex items-center justify-between px-3 py-2">
                       <div className="flex items-center gap-2 text-sm">
                         <span className="font-medium text-foreground">{lt.name}</span>
@@ -219,6 +220,18 @@ function OrgLeavesContent() {
                   ))}
                 </div>
               )}
+              {(types.data ?? []).length > visibleLeaveTypes ? (
+                <div className="mt-3 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setVisibleLeaveTypes((current) => current + 5)}
+                  >
+                    Show more ({Math.min(5, (types.data ?? []).length - visibleLeaveTypes)})
+                  </Button>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
