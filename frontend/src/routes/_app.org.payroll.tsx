@@ -1107,7 +1107,13 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
       const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       next[key] = date.getDay() === 0 || date.getDay() === 6 ? "off" : "working";
     }
-    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date).slice(0, 10)] = item.day_type;
+    const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
+    for (const item of scheduleQ.data?.days ?? []) {
+      const scheduleDate = String(item.schedule_date ?? "").slice(0, 10);
+      if (scheduleDate.slice(0, 7) === monthPrefix && Object.prototype.hasOwnProperty.call(next, scheduleDate)) {
+        next[scheduleDate] = item.day_type;
+      }
+    }
     setDayTypes(next);
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
@@ -1118,12 +1124,16 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const saveSchedule = useMutation({
     mutationFn: () => orgSalaryService.saveSchedule({
       month, year,
-      days: Object.entries(dayTypes).map(([date, day_type]) => ({ date, day_type })),
+      days: scheduleDates.map((date) => ({ date, day_type: dayTypes[date] })),
     }),
     onSuccess: () => { toast.success("Monthly working schedule saved"); qc.invalidateQueries({ queryKey: ["orgPayrollSchedule", month, year] }); setScheduleOpen(false); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save monthly schedule"),
   });
   const daysInMonth = new Date(year, month, 0).getDate();
+  const scheduleDates = Array.from({ length: daysInMonth }, (_, i) =>
+    `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+  );
+  const isScheduleComplete = scheduleDates.every((date) => dayTypes[date] === "working" || dayTypes[date] === "off");
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   return (
@@ -1188,7 +1198,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
             })}
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span>Working days: {Object.values(dayTypes).filter((v)=>v==="working").length}</span><span>Off days: {Object.values(dayTypes).filter((v)=>v==="off").length}</span></div>
-          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || Object.keys(dayTypes).length!==daysInMonth}>Save Monthly Schedule</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || !isScheduleComplete}>Save Monthly Schedule</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>
