@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAutomaticLines, filterWorkingDatesThrough } from "../src/services/payroll.service.js";
+import { computeAutomaticLines, filterWorkingDatesFrom, filterWorkingDatesThrough, prorateSalaryPeriods } from "../src/services/payroll.service.js";
 
 const settings = {
   salary_calculation_method: "days",
@@ -130,5 +130,39 @@ describe("salary increment effective-date proration", () => {
       ],
     });
     expect(result).toBe(55333.33);
+  });
+});
+
+
+describe("employee joining-date payroll eligibility", () => {
+  it("excludes scheduled dates before the employee joined", () => {
+    const dates = ["2026-10-01", "2026-10-02", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-30"];
+    expect(filterWorkingDatesFrom(dates, "2026-10-22")).toEqual([
+      "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-30",
+    ]);
+  });
+
+  it("keeps the organization's shared schedule intact while prorating the employee's salary from joining date", () => {
+    const result = prorateSalaryPeriods({
+      month: 10,
+      year: 2026,
+      joiningDate: "2026-10-22",
+      salaryPeriods: [
+        { basic_salary: 30000, effective_from: "2026-01-01", effective_to: null },
+      ],
+    });
+    expect(result).toBe(9677.42);
+  });
+
+  it("does not change full-month salary when the employee joined before the month", () => {
+    const result = prorateSalaryPeriods({
+      month: 10,
+      year: 2026,
+      joiningDate: "2026-09-30",
+      salaryPeriods: [
+        { basic_salary: 30000, effective_from: "2026-01-01", effective_to: null },
+      ],
+    });
+    expect(result).toBe(30000);
   });
 });
