@@ -1487,7 +1487,7 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
                     <SelectContent>
                       {catalog.length === 0 ? (
                         <div className="px-2 py-3 text-center text-sm text-muted-foreground">No salary components available. Create components in Payroll → Salary Components first.</div>
-                      ) : catalog.map((component) => (
+                      ) : available.map((component) => (
                         <SelectItem key={component.id} value={component.name}>{component.name}</SelectItem>
                       ))}
                     </SelectContent>
