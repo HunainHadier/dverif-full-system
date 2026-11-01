@@ -278,6 +278,7 @@ describe("payslip PDF Ã¢â‚¬â€ itemised lines", () => {
     const raw = pdfText(pdf);
     expect(raw).toContain("NET SALARY PAYABLE");
     expect(raw).toContain("Allowance 11");
+    expect(raw).toContain("Page 2 of 2");
   });
 });
 
