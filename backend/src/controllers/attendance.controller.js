@@ -444,9 +444,20 @@ function buildRecordFilters(query) {
   const search = typeof query.search === "string" ? query.search.trim() : "";
   const dateFrom = typeof query.dateFrom === "string" ? query.dateFrom.trim() : "";
   const dateTo = typeof query.dateTo === "string" ? query.dateTo.trim() : "";
+  const employeeUuid = typeof query.employee_uuid === "string" ? query.employee_uuid.trim() : "";
 
   const clauses = [];
   const params = [];
+  if (employeeUuid) {
+    assertUuid(employeeUuid, "Employee UUID");
+    clauses.push("ar.employee_uuid = ?");
+    params.push(employeeUuid);
+  }
+  // No date filter means today's attendance only. Explicit date ranges remain
+  // available for monthly and custom-period reporting.
+  if (!dateFrom && !dateTo) {
+    clauses.push("ar.date = CURDATE()");
+  }
   if (["checked_in", "checked_out"].includes(status)) {
     clauses.push("ar.status = ?");
     params.push(status);
