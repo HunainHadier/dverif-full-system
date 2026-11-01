@@ -318,7 +318,7 @@ router.put("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncH
 router.delete("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(removeEmployeeSalaryComponent));
 router.get("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(listMonthlySalaryVariables));
 router.post("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(createMonthlySalaryVariable));
-router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmtOwner, asyncHandler(deleteMonthlySalaryVariable));
+router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
