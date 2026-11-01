@@ -93,92 +93,139 @@ function PayslipDialog({ record, onClose }: { record: SalaryRecord; onClose: () 
   const lines = record.lines ?? [];
   const earnings = lines.filter((l) => l.type === "earning");
   const deductions = lines.filter((l) => l.type === "deduction");
+  const reimbursement = Number(record.expense_reimbursement ?? 0) || 0;
+  const totalEarnings =
+    (Number(record.basic_salary) || 0) +
+    (Number(record.allowances) || 0) +
+    reimbursement;
+  const hasExpenseLine = earnings.some((line) => line.source === "auto_expense");
 
   const renderLine = (line: SalaryRecordLine) => {
     const basis = basisLabel(line.basis_value, line.basis_unit);
     const source = line.source ? LINE_SOURCE_LABELS[line.source] ?? line.source : null;
     return (
-      <div key={`${line.type}-${line.label}`} className="border-b border-border pb-2">
-        <div className="flex justify-between gap-2">
-          <span className="text-sm text-foreground">{line.label}</span>
-          <span className="whitespace-nowrap text-sm font-medium">{money(line.amount)}</span>
+      <div key={`${line.type}-${line.label}`} className="flex min-w-0 items-start justify-between gap-3 py-2.5">
+        <div className="min-w-0">
+          <p className="break-words text-sm font-medium text-foreground">{line.label}</p>
+          {source || basis ? (
+            <p className="mt-0.5 break-words text-xs text-muted-foreground">
+              {[source, basis].filter(Boolean).join(" · ")}
+            </p>
+          ) : null}
         </div>
-        {/*
-         * PROVENANCE UNDER THE NAME, not beside it. "Transport allowance" with
-         "Salary component" and "15,000" beneath it answers the question the
-         three-line summary could not: what is this and where did it come from.
-         The basis joins when the line was derived from a count, so "Absent days
-         3" reads as three days rather than three units of money.
-         */}
-        {source || basis ? (
-          <span className="text-xs text-muted-foreground">
-            {[source, basis].filter(Boolean).join(" · ")}
-          </span>
-        ) : null}
+        <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums">
+          {money(line.amount)}
+        </span>
       </div>
     );
   };
 
+  const renderSimpleRow = (label: string, amount: string | number, key: string) => (
+    <div key={key} className="flex min-w-0 items-start justify-between gap-3 py-2.5">
+      <span className="min-w-0 break-words text-sm text-foreground">{label}</span>
+      <span className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums">
+        {money(amount)}
+      </span>
+    </div>
+  );
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-x-hidden overflow-y-auto overscroll-contain p-4 sm:max-w-2xl sm:p-6">
+        <DialogHeader className="min-w-0 pr-8">
+          <DialogTitle className="break-words leading-snug">
             {t("orgPayroll.period", "Period")}: {getMonthName(record.month)} {record.year}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             {record.employee_name ?? ""} — Payslip
           </DialogDescription>
         </DialogHeader>
-        {/*
-         * ITEMISED WHEN THE LINES EXIST, aggregated when they do not.
-         *
-         * A record predating `salary_record_lines` has none, and an empty
-         * "Earnings" heading is worse than the total it replaced. Those records
-         * keep the four-number view; every record since shows each line.
-         */}
-        {lines.length ? (
-          <div className="space-y-4">
-            <section className="space-y-2">
+
+        <section className="rounded-xl bg-primary p-4 text-primary-foreground sm:p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] opacity-80">
+            {t("orgPayroll.netPayable", "Net salary payable")}
+          </p>
+          <p className="mt-2 break-words text-2xl font-bold tracking-tight tabular-nums sm:text-3xl">
+            Rs. {money(record.net_salary)}
+          </p>
+          <p className="mt-1 text-xs opacity-80">
+            {t("orgPayroll.netFormula", "Earnings and approved reimbursements minus deductions")}
+          </p>
+        </section>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { label: t("orgPayroll.basic", "Basic"), value: money(record.basic_salary) },
+            { label: t("orgPayroll.allowances", "Allowances"), value: money(record.allowances) },
+            { label: t("orgPayroll.expenseReimbursement", "Expense reimbursement"), value: money(reimbursement) },
+            { label: t("orgPayroll.deductions", "Deductions"), value: money(record.deductions) },
+          ].map((item) => (
+            <div key={item.label} className="min-w-0 rounded-lg border bg-card p-3">
+              <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
+              <p className="mt-1 break-words text-sm font-semibold tabular-nums">{item.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <section className="min-w-0 rounded-xl border bg-card p-3 sm:p-4">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("orgPayroll.earnings", "Earnings")}
               </h4>
-              {earnings.map(renderLine)}
-            </section>
-            <section className="space-y-2">
+              <span className="text-xs font-semibold tabular-nums">{money(totalEarnings)}</span>
+            </div>
+            <div className="divide-y divide-border">
+              {lines.length ? (
+                <>
+                  {earnings.map(renderLine)}
+                  {!hasExpenseLine && reimbursement > 0
+                    ? renderSimpleRow(t("orgPayroll.expenseReimbursement", "Expense reimbursement"), reimbursement, "expense-reimbursement")
+                    : null}
+                  {!earnings.length && reimbursement <= 0
+                    ? <p className="py-2 text-sm text-muted-foreground">—</p>
+                    : null}
+                </>
+              ) : (
+                <>
+                  {renderSimpleRow(t("orgPayroll.basic", "Basic"), record.basic_salary, "basic")}
+                  {renderSimpleRow(t("orgPayroll.allowances", "Allowances"), record.allowances, "allowances")}
+                  {reimbursement > 0
+                    ? renderSimpleRow(t("orgPayroll.expenseReimbursement", "Expense reimbursement"), reimbursement, "expense-reimbursement")
+                    : null}
+                </>
+              )}
+            </div>
+            <div className="mt-2 flex justify-between gap-3 border-t border-border pt-3 text-sm font-semibold">
+              <span>{t("orgPayroll.totalEarnings", "Total earnings")}</span>
+              <span className="whitespace-nowrap tabular-nums">{money(totalEarnings)}</span>
+            </div>
+          </section>
+
+          <section className="min-w-0 rounded-xl border bg-card p-3 sm:p-4">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("orgPayroll.deductions", "Deductions")}
               </h4>
-              {deductions.length ? deductions.map(renderLine) : (
-                <p className="text-sm text-muted-foreground">{t("orgPayroll.noDeductions", "None")}</p>
+              <span className="text-xs font-semibold tabular-nums">{money(record.deductions)}</span>
+            </div>
+            <div className="divide-y divide-border">
+              {lines.length ? (
+                deductions.length ? deductions.map(renderLine) : (
+                  <p className="py-2 text-sm text-muted-foreground">{t("orgPayroll.noDeductions", "None")}</p>
+                )
+              ) : (
+                renderSimpleRow(t("orgPayroll.deductions", "Deductions"), record.deductions, "deductions")
               )}
-            </section>
-            <div className="flex justify-between rounded-md bg-primary/10 px-3 py-2">
-              <span className="text-sm font-semibold text-foreground">{t("orgPayroll.net", "Net Salary")}</span>
-              <span className="text-sm font-bold text-primary">{money(record.net_salary)}</span>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex justify-between border-b border-border pb-2">
-              <span className="text-sm text-muted-foreground">{t("orgPayroll.basic", "Basic")}</span>
-              <span className="text-sm font-medium">{money(record.basic_salary)}</span>
+            <div className="mt-2 flex justify-between gap-3 border-t border-border pt-3 text-sm font-semibold">
+              <span>{t("orgPayroll.totalDeductions", "Total deductions")}</span>
+              <span className="whitespace-nowrap tabular-nums">{money(record.deductions)}</span>
             </div>
-            <div className="flex justify-between border-b border-border pb-2">
-              <span className="text-sm text-muted-foreground">{t("orgPayroll.allowances", "Allowances")}</span>
-              <span className="text-sm font-medium">{money(record.allowances)}</span>
-            </div>
-            <div className="flex justify-between border-b border-border pb-2">
-              <span className="text-sm text-muted-foreground">{t("orgPayroll.deductions", "Deductions")}</span>
-              <span className="text-sm font-medium">{money(record.deductions)}</span>
-            </div>
-            <div className="flex justify-between rounded-md bg-primary/10 px-3 py-2">
-              <span className="text-sm font-semibold text-foreground">{t("orgPayroll.net", "Net Salary")}</span>
-              <span className="text-sm font-bold text-primary">{money(record.net_salary)}</span>
-            </div>
-          </div>
-        )}
-        <p className="pt-1 text-xs text-muted-foreground">
+          </section>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
           For queries about your payslip, please contact your organization admin.
         </p>
       </DialogContent>
@@ -235,6 +282,7 @@ function PayrollPage() {
                     <TableHead>{t("orgPayroll.period", "Period")}</TableHead>
                     <TableHead>{t("orgPayroll.basic", "Basic")}</TableHead>
                     <TableHead>{t("orgPayroll.allowances", "Allowances")}</TableHead>
+                    <TableHead>{t("orgPayroll.expenseReimbursement", "Expense reimbursement")}</TableHead>
                     <TableHead>{t("orgPayroll.deductions", "Deductions")}</TableHead>
                     <TableHead>{t("orgPayroll.net", "Net Salary")}</TableHead>
                     <TableHead className="text-right">
@@ -256,6 +304,9 @@ function PayrollPage() {
                       </TableCell>
                       <TableCell data-label="Allowances" className="text-muted-foreground">
                         {money(r.allowances)}
+                      </TableCell>
+                      <TableCell data-label="Expense reimbursement" className="text-muted-foreground">
+                        {money(r.expense_reimbursement ?? 0)}
                       </TableCell>
                       <TableCell data-label="Deductions" className="text-muted-foreground">
                         {money(r.deductions)}
