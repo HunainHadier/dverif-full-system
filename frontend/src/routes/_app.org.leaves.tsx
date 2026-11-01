@@ -245,8 +245,8 @@ function OrgLeavesContent() {
 
           <Card className="mt-4 border-border/70 shadow-none">
             <CardContent className="p-0">
-              <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="min-w-0 sm:col-span-2 [&>div]:w-full [&>div]:sm:w-full">
+              <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-8">
+                <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:w-full [&>div]:sm:w-full">
                   <SearchInput
                     value={search}
                     onChange={(v) => {
@@ -256,6 +256,7 @@ function OrgLeavesContent() {
                     placeholder={t("orgLeaves.searchPlaceholder")}
                   />
                 </div>
+                <div className="min-w-0 xl:col-span-2">
                 <Select
                   value={status || "all"}
                   onValueChange={(v) => {
@@ -273,6 +274,8 @@ function OrgLeavesContent() {
                     <SelectItem value="all">{t("orgLeaves.all")}</SelectItem>
                   </SelectContent>
                 </Select>
+                </div>
+                <div className="min-w-0 xl:col-span-1">
                 <Input
                   type="month"
                   aria-label="Filter leave requests by month"
@@ -294,6 +297,7 @@ function OrgLeavesContent() {
                   }}
                   className="w-full min-w-0"
                 />
+                </div>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
                   <Input
                     type="date"
