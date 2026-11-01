@@ -393,6 +393,37 @@ export const orgEmployeeSalaryService = {
         `/org/employees/${employeeUuid}/salary-components/${assignUuid}`,
       )
       .then((r) => r.data.assignments),
+  monthlyVariables: (employeeUuid: UUID, month: number, year: number) =>
+    api
+      .get<{ items: MonthlySalaryVariable[] }>(
+        `/org/employees/${employeeUuid}/monthly-salary-variables`,
+        { params: { month, year } },
+      )
+      .then((r) => r.data.items),
+  addMonthlyVariable: (
+    employeeUuid: UUID,
+    data: { label: string; type: "allowance" | "deduction"; amount: number; month: number; year: number },
+  ) =>
+    api
+      .post<{ item: MonthlySalaryVariable }>(
+        `/org/employees/${employeeUuid}/monthly-salary-variables`,
+        data,
+      )
+      .then((r) => r.data.item),
+  removeMonthlyVariable: (employeeUuid: UUID, variableUuid: UUID) =>
+    api
+      .delete(`/org/employees/${employeeUuid}/monthly-salary-variables/${variableUuid}`)
+      .then((r) => r.data),
+};
+
+export type MonthlySalaryVariable = {
+  uuid: UUID;
+  label: string;
+  type: "allowance" | "deduction";
+  amount: number | string;
+  month: number;
+  year: number;
+  created_at: string;
 };
 
 /* ======================== HR LETTERS ======================== */
