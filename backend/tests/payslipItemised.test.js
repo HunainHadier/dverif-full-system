@@ -228,6 +228,17 @@ describe("payslip PDF Ã¢â‚¬â€ itemised lines", () => {
     expect(raw).toContain("Allowances (total)");
   });
 
+  it("shows expense reimbursement on legacy records even when itemised lines are absent", async () => {
+    const pdf = await generatePayslipPdf({
+      record: { ...RECORD, expense_reimbursement: "2000.00" },
+      employeeName: "Ayesha Siddiqui",
+      organizationName: "Dverif Labs",
+    });
+    const raw = pdfText(pdf);
+    expect(raw).toContain("Expense reimbursement");
+    expect(raw).toContain("Total earnings");
+  });
+
   it("keeps the stored total as the total, rather than re-deriving it from the lines", async () => {
     // The lines explain the total; they are not the authority on it. Summing them
     // here could produce a figure that disagrees with what was actually paid if a
