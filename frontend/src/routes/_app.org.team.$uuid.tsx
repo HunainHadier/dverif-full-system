@@ -1475,7 +1475,16 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
               <>
                 <div className="space-y-1.5">
                   <Label>Component Name</Label>
-                  <Input value={monthlyLabel} maxLength={150} onChange={(e) => setMonthlyLabel(e.target.value)} placeholder="e.g. November Performance Bonus" />
+                  <Select value={monthlyLabel} onValueChange={setMonthlyLabel}>
+                    <SelectTrigger><SelectValue placeholder="Select a component name" /></SelectTrigger>
+                    <SelectContent>
+                      {catalog.length === 0 ? (
+                        <div className="px-2 py-3 text-center text-sm text-muted-foreground">No salary components available. Add components in Salary Component Settings first.</div>
+                      ) : catalog.map((component) => (
+                        <SelectItem key={component.id} value={component.name}>{component.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Type</Label>
@@ -1539,7 +1548,17 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Edit Monthly Component</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-1.5"><Label>Component Name</Label><Input value={editMonthlyLabel} maxLength={150} onChange={(e) => setEditMonthlyLabel(e.target.value)} /></div>
+            <div className="space-y-1.5">
+              <Label>Component Name</Label>
+              <Select value={editMonthlyLabel} onValueChange={setEditMonthlyLabel}>
+                <SelectTrigger><SelectValue placeholder="Select a component name" /></SelectTrigger>
+                <SelectContent>
+                  {catalog.map((component) => (
+                    <SelectItem key={component.id} value={component.name}>{component.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1.5">
               <Label>Type</Label>
               <Select value={editMonthlyType} onValueChange={(value) => setEditMonthlyType(value as "allowance" | "deduction")}>
