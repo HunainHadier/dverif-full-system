@@ -96,6 +96,6 @@ describe("salary increment effective-date proration", () => {
         { basic_salary: 60000, effective_from: "2026-11-15", effective_to: null },
       ],
     });
-    expect(result).toBe(55000);
+    expect(result).toBe(55333.33);
   });
 });

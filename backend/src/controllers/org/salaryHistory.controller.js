@@ -129,9 +129,7 @@ export async function incrementEmployeeSalary(req, res) {
 
     if (activeRows.length) {
       const active = activeRows[0];
-      const activeStart = active.effective_from instanceof Date
-        ? active.effective_from.toISOString().slice(0, 10)
-        : String(active.effective_from).slice(0, 10);
+      const activeStart = isoDate(active.effective_from);
 
       if (effectiveFrom <= activeStart) {
         throw new ApiError(
@@ -191,8 +189,7 @@ export async function incrementEmployeeSalary(req, res) {
 }
 
 function asDateStr(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
+  return isoDate(value);
 }
 
 async function fetchEmployeeHistory(conn, employeeUuid) {
