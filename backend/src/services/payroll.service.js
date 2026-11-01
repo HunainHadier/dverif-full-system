@@ -192,7 +192,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
  * as unpaid absence. An employee on approved leave has no attendance row either,
  * which is the other half of the same double-count.
  */
-export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, lateCutoffMinutes = null, overtimeCutoffMinutes = null, conn = pool }) {
+export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, lateCutoffMinutes = null, overtimeCutoffMinutes = null, excludeOvertimeFromRegularHours = false, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
   assertUuid(employeeUuid, "Employee UUID");
@@ -225,15 +225,19 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
     const end = new Date(r.check_out_at).getTime();
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
     presentDates.add(iso);
-    workedHours += (end - start) / 3600000;
+    const elapsedHours = (end - start) / 3600000;
+    let overtimeForDate = 0;
     if (overtimeCutoffMinutes !== null) {
       const checkout = minutesPastMidnight(r.check_out_at);
       if (checkout !== null && checkout > Number(overtimeCutoffMinutes)) {
-        const extra = (checkout - Number(overtimeCutoffMinutes)) / 60;
-        actualOvertimeHours += extra;
-        actualOvertimeByDate[iso] = extra;
+        overtimeForDate = (checkout - Number(overtimeCutoffMinutes)) / 60;
+        actualOvertimeHours += overtimeForDate;
+        actualOvertimeByDate[iso] = overtimeForDate;
       }
     }
+    // Overtime is a separate earning only when enabled; otherwise all elapsed
+    // attendance hours remain part of the working-hours salary calculation.
+    workedHours += Math.max(0, elapsedHours - (excludeOvertimeFromRegularHours ? overtimeForDate : 0));
     if (lateCutoffMinutes !== null && minutesPastMidnight(r.check_in_at) > Number(lateCutoffMinutes)) lateCount += 1;
   }
 
@@ -296,7 +300,7 @@ export async function getApprovedOvertimeForMonth({ employeeUuid, month, year, c
   return {
     approvedOvertimeHours: money(approved),
     requestedOvertimeHours: money(requested),
-    requests: rows.length,
+    requests: rows,
   };
 }
 
@@ -332,6 +336,7 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     excludedDates: [...leave.paidDates, ...leave.unpaidDates],
     lateCutoffMinutes: timeToMinutes(activePolicy.shift_start_time),
     overtimeCutoffMinutes: timeToMinutes(activePolicy.shift_end_time),
+    excludeOvertimeFromRegularHours: Number(activePolicy.calculate_overtime) === 1,
     conn,
   });
 

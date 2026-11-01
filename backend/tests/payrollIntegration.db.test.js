@@ -365,6 +365,8 @@ describe.runIf(HAS_DB)("payroll auto-computation reads leave and attendance", ()
     // figure instead would pay 2 hours nobody approved.
     expect(summary.approvedOvertimeHours).toBe(2);
     expect(summary.requestedOvertimeHours).toBe(8);
+    // Two overtime hours are kept out of regular salary hours so they are not paid twice.
+    expect(summary.workedHours).toBe(8);
 
     const c = compute(summary);
     const line = c.lines.find((l) => l.source === "auto_overtime");

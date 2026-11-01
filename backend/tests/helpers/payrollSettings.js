@@ -25,10 +25,6 @@ export async function seedPayrollSettings(conn, orgId, overrides = {}) {
   return settings;
 }
 
-export async function seedPayrollSettings(conn, orgId, overrides = {}) {
-  return seedPayrollSettings(conn, orgId, overrides);
-}
-
 export async function seedMonthlySchedule(conn, orgId, year = 2026, month = null) {
   const months = month ? [month] : Array.from({ length: 12 }, (_, i) => i + 1);
   for (const m of months) {
