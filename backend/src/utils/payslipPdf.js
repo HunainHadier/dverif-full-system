@@ -19,9 +19,9 @@ const DVERIF_LOGO = resolve(BACKEND_ROOT, "assets/dverif-logo.png");
 const PAGE_MARGIN = 46;
 
 /* Panel geometry — declared once, read by drawPanel and panelHeight. */
-const PANEL_HEAD_H = 26;
-const PANEL_ROW_H = 27;
-const PANEL_TOTAL_H = 30;
+const PANEL_HEAD_H = 24;
+const PANEL_ROW_H = 24;
+const PANEL_TOTAL_H = 28;
 
 /* ---------- helpers ---------- */
 
@@ -145,7 +145,7 @@ function drawEmployeeCard(doc, fields, y) {
     const pair = fields.slice(i, i + 2);
     doc.font("Helvetica-Bold").fontSize(10.5);
     const heights = pair.map((f) => doc.heightOfString(f.value, { width: colW, lineGap: 2 }));
-    rows.push({ pair, height: 14 + Math.max(...heights) + 10 });
+    rows.push({ pair, height: 14 + Math.max(...heights) + 6 });
   }
   const cardH = pad + rows.reduce((sum, r) => sum + r.height, 0) + pad - 10;
   doc.roundedRect(PAGE_MARGIN, y, contentW, cardH, 8)
@@ -198,8 +198,8 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
   doc.rect(x, y, width, headH).fill(BRAND);
   doc.restore();
   doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#ffffff")
-    .text(title.toUpperCase(), x + padX, y + 9, { lineBreak: false, characterSpacing: 0.8 });
-  doc.text("AMOUNT", amountX, y + 9, { width: amountW, align: "right", lineBreak: false, characterSpacing: 0.8 });
+    .text(title.toUpperCase(), x + padX, y + 8, { lineBreak: false, characterSpacing: 0.8 });
+  doc.text("AMOUNT", amountX, y + 8, { width: amountW, align: "right", lineBreak: false, characterSpacing: 0.8 });
 
   // rows
   for (let i = 0; i < Math.max(rows.length, 1); i += 1) {
@@ -210,20 +210,20 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
 
     // Line 1: label | amount, in separate columns.
     doc.font("Helvetica").fontSize(9.5).fillColor(INK)
-      .text(row.label, x + padX, rowY + 5, {
-        width: labelW, height: 12, lineBreak: false, ellipsis: true,
+      .text(row.label, x + padX, rowY + 4, {
+        width: labelW, height: 11, lineBreak: false, ellipsis: true,
       });
     doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-      .text(row.amount, amountX, rowY + 5, {
-        width: amountW, height: 12, align: "right", lineBreak: false,
+      .text(row.amount, amountX, rowY + 4, {
+        width: amountW, height: 11, align: "right", lineBreak: false,
       });
 
     // Line 2: "source  ·  basis" as a single full-width muted string.
     const meta = [row.source, row.basis].filter(Boolean).join("  ·  ");
     if (meta) {
       doc.font("Helvetica").fontSize(7.5).fillColor("#8a93a6")
-        .text(meta, x + padX, rowY + 17, {
-          width: width - padX * 2, height: 9, lineBreak: false, ellipsis: true,
+        .text(meta, x + padX, rowY + 15, {
+          width: width - padX * 2, height: 8, lineBreak: false, ellipsis: true,
         });
     }
   }
@@ -236,16 +236,16 @@ function drawPanel(doc, { x, y, width, title, rows, totalLabel, totalAmount }) {
   doc.restore();
   doc.moveTo(x, totalY).lineTo(x + width, totalY).lineWidth(0.8).strokeColor(RULE).stroke();
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-    .text(totalLabel, x + padX, totalY + 10, { width: labelW, lineBreak: false });
+    .text(totalLabel, x + padX, totalY + 9, { width: labelW, lineBreak: false });
   doc.font("Helvetica-Bold").fontSize(10).fillColor(BRAND)
-    .text(totalAmount, amountX, totalY + 10, { width: amountW, align: "right", lineBreak: false });
+    .text(totalAmount, amountX, totalY + 9, { width: amountW, align: "right", lineBreak: false });
 
   return y + headH + bodyH + totalH;
 }
 
 function drawNetSalary(doc, netAmount, y) {
   const width = doc.page.width - PAGE_MARGIN * 2;
-  const height = 64;
+  const height = 60;
   doc.roundedRect(PAGE_MARGIN, y, width, height, 10).fill(BRAND);
   doc.roundedRect(PAGE_MARGIN, y, 6, height, 3).fill(BRAND_DARK);
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#cfe1ff")
@@ -271,7 +271,7 @@ function drawFooter(doc, generatedDate, pageNumber, pageCount) {
   const pageWidth = doc.page.width;
   const right = pageWidth - PAGE_MARGIN;
   const contentW = pageWidth - PAGE_MARGIN * 2;
-  const y = doc.page.height - 108;
+  const y = doc.page.height - 92;
 
   // allow drawing inside the bottom margin without triggering a new page
   const savedBottom = doc.page.margins.bottom;
@@ -429,9 +429,6 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   if (fields.length) y = drawEmployeeCard(doc, fields, y);
 
   y += 22;
-  doc.font("Helvetica-Bold").fontSize(8.5).fillColor(BRAND)
-    .text("SALARY BREAKDOWN", PAGE_MARGIN, y, { lineBreak: false, characterSpacing: 0.6 });
-  y += 16;
 
   const basic = Number(record.basic_salary ?? 0) || 0;
   const allowances = Number(record.allowances ?? 0) || 0;
@@ -482,6 +479,29 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
    * they are short.
    */
   const stack = anyLines || Math.max(earningsRows.length, deductionRows.length) > 3;
+
+  // Keep the net-pay banner and the fixed footer from occupying the same space.
+  // Long itemised payslips continue on a fresh page before the breakdown starts;
+  // the employee and period are already identified on page one.
+  const panelsHeight = stack
+    ? panelHeight(earningsRows) + 14 + panelHeight(deductionRows) + 22
+    : Math.max(panelHeight(earningsRows), panelHeight(deductionRows)) + 22;
+  const netBlockHeight = 60 + 10 + 32;
+  const footerTop = doc.page.height - 92;
+  if (y + 16 + panelsHeight + netBlockHeight > footerTop - 12) {
+    doc.addPage();
+    y = PAGE_MARGIN;
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(INK)
+      .text(organization, PAGE_MARGIN, y, { width: contentW, lineBreak: false, ellipsis: true });
+    y += 16;
+    doc.font("Helvetica").fontSize(8.5).fillColor(MUTED)
+      .text(`Salary breakdown continued · ${period}`, PAGE_MARGIN, y, { lineBreak: false });
+    y += 22;
+  }
+
+  doc.font("Helvetica-Bold").fontSize(8.5).fillColor(BRAND)
+    .text("SALARY BREAKDOWN", PAGE_MARGIN, y, { lineBreak: false, characterSpacing: 0.6 });
+  y += 16;
 
   if (stack) {
     const earningsEnd = drawPanel(doc, {
