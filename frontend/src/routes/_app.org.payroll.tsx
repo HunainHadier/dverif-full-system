@@ -930,7 +930,10 @@ function OrgPayrollPage() {
                         {t("payroll.previewAttended", "Attended")}
                       </span>
                       <p className="font-medium">
-                        {a.attended_days} / {a.working_days}
+                        {a.attended_days} / {a.elapsed_working_days ?? a.working_days}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        of {a.working_days} scheduled monthly days
                       </p>
                     </div>
                     <div>
