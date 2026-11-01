@@ -538,7 +538,12 @@
     "downloadPdf": "Download PDF",
     "payslipFailed": "Payslip could not be opened",
     "earnings": "Earnings",
-    "noDeductions": "None"
+    "noDeductions": "None",
+    "expenseReimbursement": "اخراجات کی واپسی",
+    "totalEarnings": "کل آمدنی",
+    "totalDeductions": "کل کٹوتیاں",
+    "netPayable": "قابلِ ادائیگی خالص تنخواہ",
+    "netFormula": "آمدنی اور منظور شدہ اخراجات کی واپسی، منہا کٹوتیاں"
   },
   "payments": {
     "title": "بلنگ اور ادائیگیاں",
