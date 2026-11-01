@@ -36,7 +36,7 @@ import { CURRENCY } from "../utils/currency.js";
  * This keeps a 1 November increment out of October payroll and splits a mid-month
  * increment fairly across the old and new rates.
  */
-export function prorateSalaryPeriods({ salaryPeriods, month, year }) {
+export function prorateSalaryPeriods({ salaryPeriods, month, year, joiningDate = null }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -46,7 +46,9 @@ export function prorateSalaryPeriods({ salaryPeriods, month, year }) {
   for (const period of salaryPeriods ?? []) {
     const start = isoDate(period.effective_from);
     const end = period.effective_to == null ? lastDay : isoDate(period.effective_to);
-    const overlapStart = start > firstDay ? start : firstDay;
+    const employmentStart = joiningDate ? isoDate(joiningDate) : firstDay;
+    const monthStart = start > firstDay ? start : firstDay;
+    const overlapStart = monthStart > employmentStart ? monthStart : employmentStart;
     const overlapEnd = end < lastDay ? end : lastDay;
     if (overlapStart > overlapEnd) continue;
 
@@ -58,6 +60,12 @@ export function prorateSalaryPeriods({ salaryPeriods, month, year }) {
 }
 
 /** Keep only working dates that have occurred as of the payroll run date. */
+export function filterWorkingDatesFrom(workingDates, startDate) {
+  if (!startDate) return [...(workingDates ?? [])];
+  const firstEligibleDate = isoDate(startDate);
+  return (workingDates ?? []).filter((date) => date >= firstEligibleDate);
+}
+
 export function filterWorkingDatesThrough(workingDates, asOfDate) {
   return (workingDates ?? []).filter((date) => date <= asOfDate);
 }
@@ -75,7 +83,7 @@ function payrollAsOfDate() {
 }
 
 /** Return the calendar-day prorated basic salary for a payroll month. */
-export async function proratedBasicForMonth({ employeeUuid, month, year, conn = pool }) {
+export async function proratedBasicForMonth({ employeeUuid, month, year, joiningDate = null, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
   const [salaryPeriods] = await conn.query(
@@ -87,7 +95,7 @@ export async function proratedBasicForMonth({ employeeUuid, month, year, conn = 
       ORDER BY effective_from ASC`,
     [employeeUuid, lastDay, firstDay],
   );
-  return prorateSalaryPeriods({ salaryPeriods, month: m, year: y });
+  return prorateSalaryPeriods({ salaryPeriods, month: m, year: y, joiningDate });
 }
 
 export async function effectiveBasicForMonth({ employeeUuid, orgId, month, year, conn = pool }) {
@@ -372,14 +380,15 @@ export async function getApprovedOvertimeForMonth({ employeeUuid, month, year, c
  * same definition of "a working day" and computing it three times is how they end
  * up disagreeing.
  */
-export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, policy = null, conn = pool }) {
+export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const activePolicy = policy ?? await getPayrollSettings(orgId, conn);
   const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
-  // Keep the full-month schedule as the salary divisor, but only evaluate dates
-  // that have occurred. Otherwise a payroll generated on the 1st would treat the
-  // remaining working days as absences (and hours-mode shortfalls).
-  const elapsedWorkingDates = filterWorkingDatesThrough(calendar.workingDates, payrollAsOfDate());
+  // A new employee is not eligible for scheduled days before their joining date.
+  // Clamp the employee-specific payroll calendar without changing the org's
+  // shared monthly schedule, then exclude future dates from absence/hour checks.
+  const eligibleWorkingDates = filterWorkingDatesFrom(calendar.workingDates, joiningDate);
+  const elapsedWorkingDates = filterWorkingDatesThrough(eligibleWorkingDates, payrollAsOfDate());
 
   const leave = await getApprovedLeaveForMonth({
     employeeUuid,
@@ -409,9 +418,10 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
   return {
     month: m,
     year: y,
-    workingDays: calendar.workingDays,
+    workingDays: eligibleWorkingDates.length,
     elapsedWorkingDays: elapsedWorkingDates.length,
     calendarDays: new Date(Date.UTC(y, m, 0)).getUTCDate(),
+    joiningDate: joiningDate ? isoDate(joiningDate) : null,
     policy: activePolicy,
     holidayCount: calendar.holidays.size,
     week: calendar.week,
