@@ -1,0 +1,62 @@
+name: Fix monthly payroll schedule editor
+
+on:
+  push:
+    branches:
+      - feat/payroll-calendar-based-calculation
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/payroll-calendar-based-calculation
+
+      - name: Patch monthly schedule editor
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("frontend/src/routes/_app.org.payroll.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          old_effect = '    for (const item of scheduleQ.data?.days ?? []) next[String(item.schedule_date).slice(0, 10)] = item.day_type;\n'
+          new_effect = '''    for (const item of scheduleQ.data?.days ?? []) {\n      const scheduleDate = String(item.schedule_date ?? item.date ?? "").slice(0, 10);\n      if (scheduleDate.slice(0, 7) === `${year}-${String(month).padStart(2, "0")}`) {\n        next[scheduleDate] = item.day_type;\n      }\n    }\n'''
+          if old_effect not in text:
+              raise SystemExit("Expected schedule overlay code was not found")
+          text = text.replace(old_effect, new_effect, 1)
+
+          old_save = '''  const saveSchedule = useMutation({\n    mutationFn: () => orgSalaryService.saveSchedule({\n      month, year,\n      days: Object.entries(dayTypes).map(([date, day_type]) => ({ date, day_type })),\n    }),\n'''
+          new_save = '''  const scheduleDates = Array.from({ length: daysInMonth }, (_, i) =>\n    `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,\n  );\n  const isScheduleComplete = scheduleDates.every(\n    (date) => dayTypes[date] === "working" || dayTypes[date] === "off",\n  );\n  const saveSchedule = useMutation({\n    mutationFn: () => orgSalaryService.saveSchedule({\n      month, year,\n      days: scheduleDates.map((date) => ({ date, day_type: dayTypes[date] })),\n    }),\n'''
+          if old_save not in text:
+              raise SystemExit("Expected save schedule code was not found")
+          text = text.replace(old_save, new_save, 1)
+
+          old_button = 'disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || Object.keys(dayTypes).length!==daysInMonth}'
+          new_button = 'disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || !isScheduleComplete}'
+          if old_button not in text:
+              raise SystemExit("Expected save button condition was not found")
+          text = text.replace(old_button, new_button, 1)
+
+          path.write_text(text, encoding="utf-8")
+
+      - name: Verify and commit fix
+        shell: bash
+        run: |
+          grep -n "scheduleDates\|isScheduleComplete\|scheduleDate.slice" frontend/src/routes/_app.org.payroll.tsx
+          cd frontend
+          npm ci
+          npm run typecheck
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/routes/_app.org.payroll.tsx .github/workflows/fix-monthly-schedule.yml
+          git commit -m "fix(payroll): allow full month schedule editing" || exit 0
+          git rm .github/workflows/fix-monthly-schedule.yml
+          git commit -m "chore: remove temporary payroll schedule fix workflow"
+          git push origin feat/payroll-calendar-based-calculation
