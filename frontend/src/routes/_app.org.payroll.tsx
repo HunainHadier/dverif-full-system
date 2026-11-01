@@ -911,6 +911,10 @@ function OrgPayrollPage() {
           <div className="space-y-3">
             {(preview.data?.items ?? []).map((item) => {
               const a = item.attendance;
+              const isHoursBased = item.rates.salary_calculation_method === "hours";
+              const hoursPerWorkingDay = a.working_days > 0
+                ? a.expected_working_hours / a.working_days
+                : 0;
               const auto = item.lines.filter((l) => l.source !== "component");
               return (
                 <div key={item.employee_uuid} className="rounded-md border p-3 text-sm">
@@ -925,7 +929,7 @@ function OrgPayrollPage() {
                       The other unit must not make a days-based payroll look hourly
                       (or an hours-based payroll look daily). */}
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-6">
-                    {item.rates.salary_calculation_method === "hours" ? (
+                    {isHoursBased ? (
                       <div>
                         <span className="text-muted-foreground">Worked hours</span>
                         <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
@@ -949,10 +953,14 @@ function OrgPayrollPage() {
                         {t("payroll.previewUnpaidLeave", "Unpaid leave")}
                       </span>
                       <p className="font-medium">
-                        {a.unpaid_leave_days}
+                        {isHoursBased
+                          ? `${(a.unpaid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs`
+                          : `${a.unpaid_leave_days} day(s)`}
                         {a.paid_leave_days > 0 ? (
                           <span className="ml-1 font-normal text-muted-foreground">
-                            (+{a.paid_leave_days} paid)
+                            (+{isHoursBased
+                              ? `${(a.paid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs paid`
+                              : `${a.paid_leave_days} paid`})
                           </span>
                         ) : null}
                       </p>
@@ -1019,7 +1027,7 @@ function OrgPayrollPage() {
                   ) : null}
 
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {item.rates.salary_calculation_method === "hours"
+                    {isHoursBased
                       ? `Salary basis: ${item.rates.divisor} scheduled hours · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
                       : `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
                     {a.holidays_in_month > 0
