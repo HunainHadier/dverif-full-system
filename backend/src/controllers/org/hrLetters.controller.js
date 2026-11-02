@@ -132,6 +132,7 @@ export async function updateLetter(req, res) {
     templateUuid: req.body?.template_uuid,
     letterType: req.body?.letter_type,
     title: req.body?.title,
+    values: req.body?.values,
   });
   return ok(res, { letter }, "Draft letter updated");
 }

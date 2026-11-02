@@ -516,6 +516,8 @@ export type TemplatePreview = {
    * and the letter cannot be issued at all.
    */
   missing_manual: string[];
+  /** Tags used by the template, including values already saved on a draft. */
+  editable_tags: string[];
   /** Tag -> friendly label, e.g. cnic -> "CNIC". Presentation only. */
   tag_labels?: Record<string, string>;
 };
@@ -616,6 +618,7 @@ export const letterTemplatesService = {
       unresolved: toStringArray(r.data.unresolved),
       unknown: toStringArray(r.data.unknown),
       missing_manual: toStringArray(r.data.missing_manual),
+      editable_tags: toStringArray(r.data.editable_tags),
       // A JSON column, so it can arrive as a string. Normalise, and tolerate its
       // absence so an older backend does not break the dialog.
       tag_labels: normaliseTagLabels(r.data.tag_labels),
@@ -633,6 +636,7 @@ export const hrLettersService = {
       search?: string;
     } = {},
   ) => api.get<Paginated<HrLetterListItem>>("/org/hr-letters", { params }).then((r) => r.data),
+  get: (uuid: UUID) => api.get<{ letter: HrLetter }>(`/org/hr-letters/${uuid}`).then((r) => r.data.letter),
   create: (data: {
     employee_uuid: string;
     template_uuid?: string;
@@ -645,7 +649,12 @@ export const hrLettersService = {
    * values here overrides what the draft stored, which is how a user fixes a
    * draft after seeing the preview.
    */
-  update: (uuid: UUID, data: { title: string; template_uuid: string | null; letter_type: HrLetterType }) =>
+  update: (uuid: UUID, data: Partial<{
+    title: string;
+    template_uuid: string | null;
+    letter_type: HrLetterType;
+    values: Record<string, string>;
+  }>) =>
     api.put<{ letter: HrLetter }>(`/org/hr-letters/${uuid}`, data).then((r) => r.data.letter),
   issue: (uuid: UUID, values: Record<string, string> = {}) =>
     api

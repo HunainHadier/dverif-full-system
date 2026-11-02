@@ -27,7 +27,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
  * /issue directly therefore produced a hard 400 for every draft whose template
  * uses a manual tag (e.g. $new_salary on an increment letter) — the user was
  * asked to confirm issuing a letter that could not be issued. This dialog closes
- * that loop: preview -> fill -> issue.
+ * that loop: preview -> fill -> save as draft or issue.
  *
  * Issuance is one-way, so the preview is shown before anything is committed.
  */
@@ -36,11 +36,13 @@ export function IssueLetterDialog({
   open,
   onOpenChange,
   onIssued,
+  onDraftSaved,
 }: {
   letter: HrLetterListItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onIssued: () => void;
+  onDraftSaved: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -63,6 +65,7 @@ export function IssueLetterDialog({
    * corrected rather than re-typed, and the caret never vanishes.
    */
   const [fields, setFields] = useState<string[]>([]);
+  const seededLetterUuid = useRef<string | null>(null);
 
   /**
    * Debounce the preview: without it every keystroke fired a POST, which both
@@ -70,6 +73,13 @@ export function IssueLetterDialog({
    * the user was mid-word.
    */
   const debouncedValues = useDebouncedValue(values, 400);
+
+  const savedLetter = useQuery({
+    queryKey: ["hr-letter", letter?.uuid],
+    queryFn: () => hrLettersService.get(letter!.uuid),
+    enabled: open && Boolean(letter) && letter?.payload == null,
+  });
+  const draftReady = letter?.payload != null || Boolean(savedLetter.data);
 
   const {
     data: preview,
@@ -108,19 +118,31 @@ export function IssueLetterDialog({
     });
   }, [preview?.missing_manual]);
 
-  /**
-   * Re-seed from the draft's stored payload on the closed->open transition
-   * only. Seeding on every `open`/uuid change would wipe what the user is
-   * typing whenever the parent re-rendered.
-   */
-  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open && !wasOpen.current) {
-      setValues({ ...(letter?.payload ?? {}) });
-      setFields([]);
+    const savedManualTags = preview?.editable_tags?.filter((tag) =>
+      Object.prototype.hasOwnProperty.call(values, tag),
+    );
+    if (!savedManualTags?.length) return;
+    setFields((prev) => {
+      const next = new Set(prev);
+      for (const tag of savedManualTags) next.add(tag);
+      return next.size === prev.length ? prev : [...next];
+    });
+  }, [preview?.editable_tags, values]);
+
+  useEffect(() => {
+    if (!open) {
+      seededLetterUuid.current = null;
+      return;
     }
-    wasOpen.current = open;
-  }, [open, letter?.uuid, letter?.payload]);
+    if (!letter || seededLetterUuid.current === letter.uuid) return;
+
+    const payload = letter.payload ?? savedLetter.data?.payload ?? (savedLetter.data ? {} : null);
+    if (payload == null) return;
+    setValues({ ...payload });
+    setFields([]);
+    seededLetterUuid.current = letter.uuid;
+  }, [open, letter, savedLetter.data]);
 
   const issue = useMutation({
     mutationFn: () => hrLettersService.issue(letter!.uuid, values),
@@ -131,6 +153,18 @@ export function IssueLetterDialog({
       void qc.invalidateQueries({ queryKey: ["hr-letters"] });
     },
     onError: (e: Error) => toast.error(t("letters.issueFailedToast"), { description: e.message }),
+  });
+
+  const saveDraft = useMutation({
+    mutationFn: () => hrLettersService.update(letter!.uuid, { values }),
+    onSuccess: (updatedLetter) => {
+      qc.setQueryData(["hr-letter", letter!.uuid], updatedLetter);
+      toast.success(t("letters.draftSaved"));
+      onOpenChange(false);
+      onDraftSaved();
+      void qc.invalidateQueries({ queryKey: ["hr-letters"] });
+    },
+    onError: (e: Error) => toast.error(t("letters.draftSaveFailed"), { description: e.message }),
   });
 
   /** Tags referenced but with no source at all — a template bug, not user input. */
@@ -150,7 +184,7 @@ export function IssueLetterDialog({
    * `isPending` is used instead: only the very first preview blocks, before
    * there is any basis for a decision.
    */
-  const blocked = unresolved.length > 0 || unknown.length > 0 || isPending;
+  const blocked = unresolved.length > 0 || unknown.length > 0 || isPending || !draftReady;
 
   /**
    * Turn `$new_salary` into "New salary".
@@ -177,6 +211,13 @@ export function IssueLetterDialog({
           <DialogTitle>{t("letters.issueLetter")}</DialogTitle>
           <DialogDescription>{t("letters.issueDescription")}</DialogDescription>
         </DialogHeader>
+
+        {savedLetter.isError && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{t("letters.draftLoadFailed")}</AlertDescription>
+          </Alert>
+        )}
 
         {!hasTemplate ? (
           <Alert variant="destructive">
@@ -206,6 +247,7 @@ export function IssueLetterDialog({
                       id={`tag-${tag}`}
                       value={values[tag] ?? ""}
                       placeholder={t("letters.tagPlaceholder")}
+                      disabled={!draftReady}
                       onChange={(e) => setValues((prev) => ({ ...prev, [tag]: e.target.value }))}
                     />
                   </div>
@@ -242,12 +284,24 @@ export function IssueLetterDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={issue.isPending}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={issue.isPending || saveDraft.isPending}
+          >
             {t("hr.formDialog.cancel")}
           </Button>
           <Button
+            variant="outline"
+            onClick={() => saveDraft.mutate()}
+            disabled={!draftReady || saveDraft.isPending || issue.isPending}
+          >
+            {saveDraft.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {t("letters.saveDraft")}
+          </Button>
+          <Button
             onClick={() => issue.mutate()}
-            disabled={blocked || !hasTemplate || issue.isPending}
+            disabled={blocked || !hasTemplate || issue.isPending || saveDraft.isPending}
           >
             {issue.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {t("letters.issueLetter")}

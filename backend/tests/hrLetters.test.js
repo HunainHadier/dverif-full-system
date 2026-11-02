@@ -26,6 +26,7 @@ import {
   createTemplate,
   deleteTemplate,
   createDraftLetter,
+  updateDraftLetter,
   issueLetter,
   revokeLetter,
   deleteLetter,
@@ -310,6 +311,45 @@ describe("revokeLetter — invalidation, not just a status flip", () => {
   });
 });
 
+describe("updateDraftLetter — persisting draft values", () => {
+  it("merges supplied values into the draft payload without dropping existing values", async () => {
+    pool.query
+      .mockResolvedValueOnce([[letterRow({ payload: { effective_date: "2026-01-01" } })], []])
+      .mockResolvedValueOnce([[templateRow()], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([[letterRow({
+        payload: { effective_date: "2026-01-01", new_salary: "85000" },
+      })], []]);
+
+    const updated = await updateDraftLetter({
+      orgId: ORG,
+      letterUuid: LETTER,
+      actorUuid: ADMIN,
+      values: { new_salary: "85000" },
+    });
+
+    const [sql, params] = pool.query.mock.calls[2];
+    expect(sql).toContain("payload=?");
+    expect(JSON.parse(params[3])).toEqual({
+      effective_date: "2026-01-01",
+      new_salary: "85000",
+    });
+    expect(updated.payload).toEqual({ effective_date: "2026-01-01", new_salary: "85000" });
+  });
+
+  it("rejects non-text merge values before updating", async () => {
+    pool.query.mockResolvedValueOnce([[letterRow()], []]);
+
+    await expect(updateDraftLetter({
+      orgId: ORG,
+      letterUuid: LETTER,
+      actorUuid: ADMIN,
+      values: { new_salary: 85000 },
+    })).rejects.toMatchObject({ statusCode: 400 });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("verifyLetterPublic — fails closed", () => {
   const issuedRow = (over = {}) => ({
     uuid: LETTER,
@@ -396,6 +436,7 @@ describe("previewTemplate", () => {
     const preview = await previewTemplate({ orgId: ORG, employeeUuid: EMPLOYEE, templateUuid: TEMPLATE });
     expect(preview.missing_manual).toEqual(["new_salary", "effective_date"]);
     expect(preview.unresolved).toEqual(["new_salary", "effective_date"]);
+    expect(preview.editable_tags).toEqual(["employee_name", "new_salary", "effective_date"]);
   });
 });
 

@@ -379,6 +379,7 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
         open={issuing}
         onOpenChange={setIssuing}
         onIssued={() => qc.invalidateQueries({ queryKey: ["hr-letters"] })}
+        onDraftSaved={() => qc.invalidateQueries({ queryKey: ["hr-letters"] })}
       />
 
       <ConfirmDialog

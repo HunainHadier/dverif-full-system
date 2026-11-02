@@ -1,20 +1,25 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileSignature, Plus, Download, Send } from "lucide-react";
+import { FileSignature, Plus, Download, Send, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { IssueLetterDialog } from "@/components/hr/IssueLetterDialog";
+import { apiErrorMessage } from "@/lib/utils";
 import { letterTemplatesService, hrLettersService, HR_LETTER_TYPES, type HrLetterListItem, type HrLetterType, type UUID } from "@/services";
 
 export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [templateUuid, setTemplateUuid] = useState("");
   const [letterType, setLetterType] = useState<HrLetterType>("custom");
   const [reviewLetter, setReviewLetter] = useState<HrLetterListItem | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<HrLetterListItem | null>(null);
 
   const templates = useQuery({
     queryKey: ["employee-letter-templates"],
@@ -43,7 +48,8 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
       setReviewOpen(true);
       setTemplateUuid("");
     },
-    onError: (error: any) => toast.error(error?.response?.data?.message ?? "Could not create letter draft"),
+    onError: (error: unknown) =>
+      toast.error(apiErrorMessage(error, "Could not create letter draft")),
   });
 
   const download = useMutation({
@@ -54,6 +60,15 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
     onError: () => toast.error("Could not download letter"),
+  });
+
+  const remove = useMutation({
+    mutationFn: (uuid: UUID) => hrLettersService.remove(uuid),
+    onSuccess: () => {
+      toast.success(t("letters.draftDeleted"));
+      refresh();
+      setDeleteTarget(null);
+    },
   });
 
   return (
@@ -102,7 +117,33 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={letter.status === "issued" ? "default" : letter.status === "revoked" ? "destructive" : "secondary"}>{letter.status}</Badge>
-                  {letter.status === "draft" && <Button size="sm" onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}><Send className="mr-1.5 h-3.5 w-3.5" /> Review & Issue</Button>}
+                  {letter.status === "draft" && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
+                      >
+                        <Pencil className="mr-1.5 h-3.5 w-3.5" /> {t("letters.editDraft")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
+                      >
+                        <Send className="mr-1.5 h-3.5 w-3.5" /> {t("letters.reviewIssue")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          remove.reset();
+                          setDeleteTarget(letter);
+                        }}
+                      >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" /> {t("letters.deleteDraft")}
+                      </Button>
+                    </>
+                  )}
                   {letter.status !== "draft" && <Button size="sm" variant="outline" onClick={() => download.mutate(letter.uuid)} disabled={download.isPending}><Download className="mr-1.5 h-3.5 w-3.5" /> PDF</Button>}
                 </div>
               </CardContent>
@@ -115,6 +156,19 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
         open={reviewOpen}
         onOpenChange={setReviewOpen}
         onIssued={() => { refresh(); setReviewLetter(null); }}
+        onDraftSaved={() => { refresh(); setReviewLetter(null); }}
+      />
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={t("letters.deleteDraft")}
+        description={t("letters.deleteDraftDescription")}
+        confirmLabel={t("common.delete")}
+        onConfirm={() => remove.mutateAsync(deleteTarget!.uuid)}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) setDeleteTarget(null);
+        }}
+        loading={remove.isPending}
+        error={remove.isError ? apiErrorMessage(remove.error, t("letters.deleteDraftFailed")) : null}
       />
     </div>
   );

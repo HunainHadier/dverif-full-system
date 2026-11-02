@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -20,6 +21,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
  */
 
 const issue = vi.fn(async () => ({}) as never);
+const update = vi.fn(async () => ({}) as never);
 const revoke = vi.fn(async () => ({}) as never);
 const remove = vi.fn(async () => ({}) as never);
 const revertToDraft = vi.fn(async () => ({}) as never);
@@ -42,6 +44,7 @@ const previewImpl = async (_uuid: string, data: { values?: Record<string, string
     unresolved,
     unknown: [],
     missing_manual: unresolved,
+    editable_tags: ["new_salary"],
   };
 };
 const preview = vi.fn(previewImpl);
@@ -53,6 +56,7 @@ vi.mock("@/services", async (importOriginal) => {
     hrLettersService: {
       ...actual.hrLettersService,
       issue,
+      update,
       revoke,
       remove,
       revertToDraft,
@@ -63,6 +67,7 @@ vi.mock("@/services", async (importOriginal) => {
 });
 
 const { RowActions } = await import("@/routes/_app.org.hr-letters");
+const { IssueLetterDialog } = await import("@/components/hr/IssueLetterDialog");
 
 const base = {
   reference_no: "HR/2026/0001",
@@ -123,8 +128,25 @@ function Harness() {
   );
 }
 
+function SavedDraftDialogHarness() {
+  const [open, setOpen] = useState(true);
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      <IssueLetterDialog
+        letter={{ ...draft, payload: { new_salary: "50000" } }}
+        open={open}
+        onOpenChange={setOpen}
+        onIssued={() => {}}
+        onDraftSaved={() => {}}
+      />
+    </QueryClientProvider>
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  update.mockReset();
+  update.mockResolvedValue({} as never);
   // mockReset, not just clearAllMocks: clear leaves the implementation intact,
   // so a test that swapped in a slow preview would decide the tests after it.
   preview.mockReset();
@@ -228,6 +250,7 @@ describe("actions call the service", () => {
                 unresolved: [],
                 unknown: [],
                 missing_manual: [],
+                editable_tags: ["new_salary"],
               }),
             150,
           ),
@@ -288,6 +311,31 @@ describe("actions call the service", () => {
     // draft.uuid, not the issued or revoked row's — proves the row is wired to
     // its own record rather than a closure over a shared value.
     await waitFor(() => expect(issue).toHaveBeenCalledWith("l2", { new_salary: "85000" }));
+  });
+
+  it("saves entered values on the draft without issuing it", async () => {
+    render(<Harness />);
+    const user = await openRow(0);
+
+    await user.click(screen.getByText("Issue Letter"));
+    fireEvent.change(await screen.findByLabelText("New salary"), { target: { value: "85000" } });
+    await user.click(screen.getByRole("button", { name: /save draft/i }));
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith("l2", {
+        values: { new_salary: "85000" },
+      }),
+    );
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  it("loads saved merge values back into editable fields", async () => {
+    render(<SavedDraftDialogHarness />);
+    const salaryInput = await screen.findByLabelText("New salary");
+
+    expect(salaryInput).toHaveValue("50000");
+    fireEvent.change(salaryInput, { target: { value: "55000" } });
+    await screen.findByDisplayValue("55000");
   });
 
   it("Download requests that row's PDF", async () => {

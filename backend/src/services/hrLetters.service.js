@@ -12,6 +12,7 @@ import {
   collectableTags,
   allTagLabels,
   unsupportedTags,
+  tagsForBody,
 } from "../utils/letterMerge.js";
 import { generateHrLetterPdf } from "../utils/hrLetterPdf.js";
 import { ORGS_DIR } from "../config/uploadPaths.js";
@@ -412,11 +413,18 @@ export async function updateDraftLetter({
   templateUuid,
   letterType,
   title,
+  values,
 }) {
   assertUuid(letterUuid, "Letter UUID");
   const existing = await loadLetterForOrg({ orgId, letterUuid });
   if (existing.status !== "draft") {
     throw new ApiError(409, "Only a draft letter can be edited");
+  }
+  if (values !== undefined && (!values || typeof values !== "object" || Array.isArray(values))) {
+    throw new ApiError(400, "values must be an object");
+  }
+  if (values !== undefined && Object.values(values).some((value) => typeof value !== "string")) {
+    throw new ApiError(400, "values must contain only text");
   }
 
   const nextTemplateUuid = templateUuid === undefined
@@ -432,12 +440,15 @@ export async function updateDraftLetter({
     : letterTypeOrThrow(letterType);
   const nextTitle = title === undefined ? existing.title : String(title).trim();
   if (!nextTitle) throw new ApiError(400, "title is required");
+  const nextPayload = values === undefined
+    ? parseJson(existing.payload)
+    : { ...parseJson(existing.payload), ...values };
 
   const [result] = await pool.query(
     `UPDATE hr_letters
-        SET template_uuid=?, letter_type=?, title=?, updated_at=NOW()
+        SET template_uuid=?, letter_type=?, title=?, payload=?, updated_at=NOW()
       WHERE uuid=? AND organization_id=? AND status='draft'`,
-    [nextTemplateUuid, nextLetterType, nextTitle, letterUuid, orgId],
+    [nextTemplateUuid, nextLetterType, nextTitle, JSON.stringify(nextPayload), letterUuid, orgId],
   );
   if (!result.affectedRows) throw new ApiError(409, "This letter is no longer a draft");
 
@@ -826,6 +837,7 @@ export async function previewTemplate({ orgId, employeeUuid, templateUuid, value
     ...values,
   };
   const { text, unresolved } = renderTemplate(template.body, merged);
+  const bodyTags = new Set(tagsForBody(template.body));
   return {
     text,
     unresolved,
@@ -838,6 +850,7 @@ export async function previewTemplate({ orgId, employeeUuid, templateUuid, value
     // Labels so the form can render "CNIC" rather than humanising "cnic" into
     // "Cnic". Purely presentational; the tag key is what gets submitted.
     tag_labels: allTagLabels(template.letter_type),
+    editable_tags: [...bodyTags],
   };
 }
 
