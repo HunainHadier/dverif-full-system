@@ -49,7 +49,7 @@ import { CONTACT_VALIDATION_LABEL, cnicError, formatCNIC, normalizeCNIC, phoneEr
 import { formatDate, formatFileSize, normalizeDateInputValue } from "@/lib/utils";
 
 type EmployeeApi = {
-  list: (params: { page?: number; limit?: number; search?: string; reference?: boolean }) => Promise<{
+  list: (params: { page?: number; limit?: number; search?: string; department?: string; designation?: string; employment_status?: "current_employee" | "active" | "inactive"; reference?: boolean }) => Promise<{
     items: EmployeeRecord[];
     total: number;
     totalPages: number;
@@ -178,15 +178,20 @@ export function EmployeeManager({
   const [listMode, setListMode] = useState<"roster" | "reference">("roster");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [department, setDepartment] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [employmentStatus, setEmploymentStatus] = useState<"current_employee" | "active" | "inactive" | "">("");
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState<EmployeeRecord | null>(null);
   const [toDelete, setToDelete] = useState<UUID | null>(null);
 
   const isReferenceMode = listMode === "reference";
 
+  const departmentsQ = useQuery({ queryKey: ["employee-filter-departments"], queryFn: () => orgService.departments.list() });
+  const designationsQ = useQuery({ queryKey: ["employee-filter-designations"], queryFn: () => orgService.designations.list() });
   const list = useQuery({
-    queryKey: [queryKey, page, search, isReferenceMode],
-    queryFn: () => api.list({ page, limit: 10, search, reference: isReferenceMode || undefined }),
+    queryKey: [queryKey, page, search, isReferenceMode, department, designation, employmentStatus],
+    queryFn: () => api.list({ page, limit: 10, search, department: department || undefined, designation: designation || undefined, employment_status: isReferenceMode ? undefined : (employmentStatus || undefined), reference: isReferenceMode || undefined }),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: [queryKey] });
@@ -262,15 +267,31 @@ export function EmployeeManager({
 
       <Card className="border-border/70 shadow-none">
         <CardContent className="p-0">
-          <div className="border-b border-border p-4">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
+            <div className="min-w-56 flex-1">
             <SearchInput
               value={search}
               onChange={(v) => {
                 setSearch(v);
                 setPage(1);
               }}
-              placeholder={isReferenceMode ? "Search ex-employee records..." : "Search by name, email, CNIC, designation or department..."}
+              placeholder={isReferenceMode ? "Search ex-employee records..." : "Search by name, email or CNIC..."}
             />
+            </div>
+            {!isReferenceMode ? <>
+              <Select value={department || "all"} onValueChange={(v) => { setDepartment(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="All departments" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={designation || "all"} onValueChange={(v) => { setDesignation(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="All designations" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All designations</SelectItem>{(designationsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={employmentStatus || "all"} onValueChange={(v) => { setEmploymentStatus(v === "all" ? "" : v as typeof employmentStatus); setPage(1); }}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="All employment statuses" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All employment statuses</SelectItem><SelectItem value="current_employee">Current Employee</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+              </Select>
+            </> : null}
           </div>
 
           {list.isLoading ? (
