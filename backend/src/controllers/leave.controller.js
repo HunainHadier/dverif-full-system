@@ -377,6 +377,20 @@ export async function listOrgLeaves(req, res) {
     whereClause += " AND lr.status = ?";
     params.push(status);
   }
+  const employeeUuid = typeof req.query.employee_uuid === "string" ? req.query.employee_uuid.trim() : "";
+  if (employeeUuid) {
+    assertUuid(employeeUuid, "Employee UUID");
+    whereClause += " AND e.uuid = ?";
+    params.push(employeeUuid);
+  }
+  const leaveTypeId = typeof req.query.leave_type_id === "string" ? req.query.leave_type_id.trim() : "";
+  if (leaveTypeId) {
+    const typeId = Number(leaveTypeId);
+    if (!Number.isInteger(typeId) || typeId < 1) throw new ApiError(400, "leave_type_id must be a positive integer");
+    whereClause += " AND lt.id = ?";
+    params.push(typeId);
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) throw new ApiError(400, "dateFrom cannot be after dateTo");
   if (search) {
     whereClause += " AND (e.full_name LIKE ? OR e.email LIKE ? OR lt.name LIKE ?)";
     const like = `%${search}%`;
