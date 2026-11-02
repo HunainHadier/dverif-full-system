@@ -239,9 +239,25 @@ export type PayrollSettings = {
   overtime_multiplier: number;
 };
 
+export type PayrollEmployeeRow = {
+  uuid: UUID;
+  full_name: string;
+  email: string | null;
+  designation: string | null;
+  department: string | null;
+  basic_salary: number | string | null;
+  allowance_items: { name: string; amount: number }[];
+  deduction_items: { name: string; amount: number }[];
+  allowances: number | string;
+  deductions: number | string;
+  net_salary: number | string;
+};
+
 export type MonthlyWorkDay = { schedule_date: string; day_type: "working" | "off" };
 
 export const orgSalaryService = {
+  employees: (params: { page?: number; limit?: number } = {}) =>
+    api.get<Paginated<PayrollEmployeeRow>>("/org/payroll-employees", { params }).then((r) => r.data),
   settings: () => api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings").then((r) => r.data.settings),
   saveSettings: (data: PayrollSettings) => api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
   schedule: (month: number, year: number) => api.get<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", { params: { month, year } }).then((r) => r.data),

@@ -693,6 +693,80 @@ export async function previewPayroll(req, res) {
   return ok(res, { month: m, year: y, items, totals, count: items.length }, "Payroll preview");
 }
 
+/** Current recurring compensation for the organization's employee roster. */
+export async function listPayrollEmployees(req, res) {
+  const { page, limit, offset } = parsePagination(req.query, { maxLimit: 1000 });
+  const orgId = req.scopeOrgId;
+
+  const [[{ total }]] = await pool.query(
+    "SELECT COUNT(*) AS total FROM employees WHERE organization_id=? AND status IN ('current_employee', 'active')",
+    [orgId],
+  );
+  const [employees] = await pool.query(
+    `SELECT e.uuid, e.full_name, e.email, dg.name AS designation, dp.name AS department,
+            (SELECT h.basic_salary FROM employee_salary_history h
+             WHERE h.employee_uuid=e.uuid AND h.effective_to IS NULL
+             ORDER BY h.effective_from DESC LIMIT 1) AS basic_salary
+       FROM employees e
+       LEFT JOIN designations dg ON dg.id=e.designation_id
+       LEFT JOIN departments dp ON dp.id=e.department_id
+      WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')
+      ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
+    [orgId, limit, offset],
+  );
+
+  const compensation = new Map(
+    employees.map((employee) => [
+      employee.uuid,
+      { allowances: [], deductions: [] },
+    ]),
+  );
+  const employeesByUuid = new Map(employees.map((employee) => [employee.uuid, employee]));
+  if (employees.length > 0) {
+    const placeholders = employees.map(() => "?").join(", ");
+    const [components] = await pool.query(
+      `SELECT esc.employee_uuid, esc.amount, sc.name, sc.type, sc.is_percentage
+         FROM employee_salary_components esc
+         JOIN salary_components sc
+           ON sc.id=esc.salary_component_id AND sc.organization_id=? AND sc.is_active=1
+        WHERE esc.employee_uuid IN (${placeholders}) AND esc.is_active=1`,
+      [orgId, ...employees.map((employee) => employee.uuid)],
+    );
+
+    for (const component of components) {
+      const employee = employeesByUuid.get(component.employee_uuid);
+      if (!employee) continue;
+
+      let amount = Number(component.amount);
+      if (Number(component.is_percentage) === 1) {
+        amount = Number(employee.basic_salary ?? 0) * (amount / 100);
+      }
+      amount = moneyField(amount, "Salary component");
+
+      const details = compensation.get(component.employee_uuid);
+      const entries = component.type === "deduction" ? details.deductions : details.allowances;
+      entries.push({ name: component.name, amount });
+    }
+  }
+
+  const items = employees.map((employee) => {
+    const details = compensation.get(employee.uuid);
+    return {
+      ...employee,
+      allowance_items: details.allowances,
+      deduction_items: details.deductions,
+      allowances: moneyField(details.allowances.reduce((sum, item) => sum + item.amount, 0), "allowances"),
+      deductions: moneyField(details.deductions.reduce((sum, item) => sum + item.amount, 0), "deductions"),
+      net_salary: computedNet(
+        employee.basic_salary ?? 0,
+        details.allowances.reduce((sum, item) => sum + item.amount, 0),
+        details.deductions.reduce((sum, item) => sum + item.amount, 0),
+      ),
+    };
+  });
+  return ok(res, paginatedResponse(items, total, page, limit), "Payroll employees");
+}
+
 /** Payroll settings and monthly working/off-day calendar. */
 export async function getPayrollSettings(req, res) {
   const [rows] = await pool.query("SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?", [req.scopeOrgId]);

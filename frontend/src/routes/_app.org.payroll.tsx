@@ -55,7 +55,7 @@ import {
   orgService,
   type PayrollPreview,
   type SalaryRecord,
-  type EmployeeRecord,
+  type PayrollEmployeeRow,
   type PayrollSettings,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -147,7 +147,7 @@ function OrgPayrollPage() {
   // All org employees for the selection table.
   const employeesQ = useQuery({
     queryKey: ["orgEmployeesForPayroll"],
-    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+    queryFn: () => orgSalaryService.employees({ page: 1, limit: 1000 }),
   });
 
   const allEmployees = employeesQ.data?.items ?? [];
@@ -482,6 +482,14 @@ function OrgPayrollPage() {
 
               {employeesQ.isLoading ? (
                 <TableSkeleton />
+              ) : employeesQ.isError ? (
+                <div className="p-6">
+                  <EmptyState
+                    icon={Users}
+                    title={t("payroll.employeeLoadFailed")}
+                    description={t("payroll.employeeLoadFailedDesc")}
+                  />
+                </div>
               ) : filteredEmployees.length === 0 ? (
                 <div className="p-6">
                   <EmptyState
@@ -509,10 +517,22 @@ function OrgPayrollPage() {
                         <TableHead className="whitespace-nowrap hidden md:table-cell">
                           {t("payroll.departmentCol", "Department")}
                         </TableHead>
+                        <TableHead className="whitespace-nowrap text-right">
+                          {t("payroll.basicSalary")}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap text-right">
+                          {t("payroll.allowance")}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap text-right">
+                          {t("payroll.deduction")}
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap text-right">
+                          {t("payroll.netSalary")}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredEmployees.map((emp: EmployeeRecord) => (
+                      {filteredEmployees.map((emp: PayrollEmployeeRow) => (
                         <TableRow key={emp.uuid}>
                           <TableCell className="w-10">
                             <Checkbox
@@ -540,6 +560,54 @@ function OrgPayrollPage() {
                             className="whitespace-nowrap text-sm text-muted-foreground hidden md:table-cell"
                           >
                             {emp.department ?? "—"}
+                          </TableCell>
+                          <TableCell
+                            data-label={t("payroll.basicSalary")}
+                            className="whitespace-nowrap text-right text-sm"
+                          >
+                            {emp.basic_salary === null ? "—" : money(emp.basic_salary)}
+                          </TableCell>
+                          <TableCell
+                            data-label={t("payroll.allowance")}
+                            className="whitespace-nowrap text-right text-sm"
+                          >
+                            <div className="space-y-1">
+                              {emp.allowance_items.length > 0 ? emp.allowance_items.map((item, index) => (
+                                <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
+                                  <span className="text-muted-foreground">{item.name}</span>
+                                  <span>{money(item.amount)}</span>
+                                </div>
+                              )) : <span className="text-muted-foreground">—</span>}
+                              {emp.allowance_items.length > 1 && (
+                                <div className="border-t border-border pt-1 font-medium">
+                                  {money(emp.allowances)}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell
+                            data-label={t("payroll.deduction")}
+                            className="whitespace-nowrap text-right text-sm"
+                          >
+                            <div className="space-y-1">
+                              {emp.deduction_items.length > 0 ? emp.deduction_items.map((item, index) => (
+                                <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
+                                  <span className="text-muted-foreground">{item.name}</span>
+                                  <span>{money(item.amount)}</span>
+                                </div>
+                              )) : <span className="text-muted-foreground">—</span>}
+                              {emp.deduction_items.length > 1 && (
+                                <div className="border-t border-border pt-1 font-medium">
+                                  {money(emp.deductions)}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell
+                            data-label={t("payroll.netSalary")}
+                            className="whitespace-nowrap text-right text-sm font-semibold"
+                          >
+                            {money(emp.net_salary)}
                           </TableCell>
                         </TableRow>
                       ))}

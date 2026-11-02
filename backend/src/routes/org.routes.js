@@ -124,6 +124,7 @@ import {
 import {
   generatePayroll,
   previewPayroll,
+  listPayrollEmployees,
   getPayrollSettings,
   updatePayrollSettings,
   getMonthlyWorkSchedule,
@@ -288,6 +289,7 @@ router.delete("/attendance/ips/:id", attendanceMgmtOwner, asyncHandler(removeAll
 router.post("/attendance/manual-entry", attendanceMgmt, asyncHandler(manualEntry));
 
 // ---- Payroll settings and monthly work calendar ----
+router.get("/payroll-employees", payrollMgmt, asyncHandler(listPayrollEmployees));
 router.get("/payroll-settings", payrollMgmt, asyncHandler(getPayrollSettings));
 router.put("/payroll-settings", payrollMgmtOwner, asyncHandler(updatePayrollSettings));
 router.get("/payroll-schedule", payrollMgmt, asyncHandler(getMonthlyWorkSchedule));
