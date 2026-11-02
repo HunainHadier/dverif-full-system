@@ -243,7 +243,7 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
 
 /** Paginated claims for the org, optionally filtered. */
 export async function listClaims(
-  { orgId, status, employeeUuid, page, limit, offset, conn = pool },
+  { orgId, status, employeeUuid, month, fromDate, toDate, page, limit, offset, conn = pool },
 ) {
   const clauses = ["c.organization_id = ?"];
   const params = [orgId];
@@ -256,9 +256,26 @@ export async function listClaims(
     params.push(status);
   }
   if (employeeUuid) {
+    assertUuid(employeeUuid, "Employee UUID");
     clauses.push("c.employee_uuid = ?");
     params.push(employeeUuid);
   }
+  if (month) {
+    if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) throw new ApiError(400, "month must use YYYY-MM format");
+    clauses.push("c.expense_date >= ? AND c.expense_date < DATE_ADD(?, INTERVAL 1 MONTH)");
+    params.push(`${month}-01`, `${month}-01`);
+  }
+  if (fromDate) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(fromDate))) throw new ApiError(400, "from_date must use YYYY-MM-DD format");
+    clauses.push("c.expense_date >= ?");
+    params.push(fromDate);
+  }
+  if (toDate) {
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(toDate))) throw new ApiError(400, "to_date must use YYYY-MM-DD format");
+    clauses.push("c.expense_date <= ?");
+    params.push(toDate);
+  }
+  if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
 
   const where = clauses.join(" AND ");
   const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c WHERE ${where}`, params);

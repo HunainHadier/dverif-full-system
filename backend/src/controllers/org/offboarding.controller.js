@@ -116,9 +116,21 @@ export async function listExitRequests(req, res) {
     params.push(status);
   }
   if (req.query.employee_uuid) {
+    assertUuid(req.query.employee_uuid, "Employee UUID");
     clauses.push("er.employee_uuid = ?");
     params.push(req.query.employee_uuid);
   }
+  const fromDate = typeof req.query.from_date === "string" ? req.query.from_date : "";
+  const toDate = typeof req.query.to_date === "string" ? req.query.to_date : "";
+  if (fromDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(fromDate)) throw new ApiError(400, "from_date must use YYYY-MM-DD format");
+  if (toDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(toDate)) throw new ApiError(400, "to_date must use YYYY-MM-DD format");
+  if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
+  if (fromDate) { clauses.push("er.last_working_day >= ?"); params.push(fromDate); }
+  if (toDate) { clauses.push("er.last_working_day <= ?"); params.push(toDate); }
+  const clearanceStatus = typeof req.query.clearance_status === "string" ? req.query.clearance_status : "";
+  if (clearanceStatus && !["pending", "cleared"].includes(clearanceStatus)) throw new ApiError(400, "clearance_status must be pending or cleared");
+  if (clearanceStatus === "pending") clauses.push("EXISTS (SELECT 1 FROM offboarding_checklists cf WHERE cf.exit_request_uuid=er.uuid AND cf.status='pending')");
+  if (clearanceStatus === "cleared") clauses.push("EXISTS (SELECT 1 FROM offboarding_checklists cf WHERE cf.exit_request_uuid=er.uuid) AND NOT EXISTS (SELECT 1 FROM offboarding_checklists cf WHERE cf.exit_request_uuid=er.uuid AND cf.status='pending')");
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
   if (search) {
     // Scoped to this org's own exit records so another tenant's employee name is

@@ -26,6 +26,7 @@ import {
   offboardingService,
   isCurrentEmployee,
   orgService,
+  orgService,
   type ClearanceQueueRow,
   type ClearanceTemplateTask,
   type ClearanceDepartment,
@@ -81,6 +82,10 @@ function OrgOffboardingPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ExitStatus | "">("");
+  const [employeeUuid, setEmployeeUuid] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [clearanceStatus, setClearanceStatus] = useState<"pending" | "cleared" | "">("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -88,16 +93,25 @@ function OrgOffboardingPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, status]);
+  }, [search, status, employeeUuid, fromDate, toDate, clearanceStatus]);
+
+  const employees = useQuery({
+    queryKey: ["offboarding-filter-employees"],
+    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+  });
 
   const list = useQuery({
-    queryKey: ["exit-requests", page, search, status],
+    queryKey: ["exit-requests", page, search, status, employeeUuid, fromDate, toDate, clearanceStatus],
     queryFn: () =>
       offboardingService.list({
         page,
         limit: PAGE_SIZE,
         search: search || undefined,
         status: status || undefined,
+        employee_uuid: employeeUuid || undefined,
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
+        clearance_status: clearanceStatus || undefined,
       }),
   });
 
@@ -213,6 +227,18 @@ function OrgOffboardingPage() {
                   <option key={s} value={s}>{t(`offboarding.status.${s}`)}</option>
                 ))}
               </select>
+              <select value={employeeUuid} onChange={(e) => setEmployeeUuid(e.target.value)} className="h-9 max-w-56 rounded-md border border-input bg-transparent px-3 text-sm" aria-label={t("offboarding.employee")}>
+                <option value="">All employees</option>
+                {(employees.data?.items ?? []).map((employee) => <option key={employee.uuid} value={employee.uuid}>{employee.full_name}</option>)}
+              </select>
+              <input type="date" aria-label="Last working day from" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+              <input type="date" aria-label="Last working day to" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+              <select value={clearanceStatus} onChange={(e) => setClearanceStatus(e.target.value as "pending" | "cleared" | "")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" aria-label="Clearance status">
+                <option value="">All clearances</option>
+                <option value="pending">Pending clearance</option>
+                <option value="cleared">Fully cleared</option>
+              </select>
+              {(employeeUuid || fromDate || toDate || clearanceStatus) ? <Button size="sm" variant="ghost" onClick={() => { setEmployeeUuid(""); setFromDate(""); setToDate(""); setClearanceStatus(""); }}>{t("common.clearFilters", "Clear filters")}</Button> : null}
             </div>
 
             <Card>

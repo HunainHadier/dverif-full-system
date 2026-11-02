@@ -110,6 +110,9 @@ export const expenseClaimsService = {
       limit?: number;
       status?: ClaimStatus;
       employee_uuid?: UUID;
+      month?: string;
+      from_date?: string;
+      to_date?: string;
     } = {},
   ) =>
     api
