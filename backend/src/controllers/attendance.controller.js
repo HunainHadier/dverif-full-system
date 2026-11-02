@@ -445,6 +445,8 @@ function buildRecordFilters(query) {
   const dateFrom = typeof query.dateFrom === "string" ? query.dateFrom.trim() : "";
   const dateTo = typeof query.dateTo === "string" ? query.dateTo.trim() : "";
   const employeeUuid = typeof query.employee_uuid === "string" ? query.employee_uuid.trim() : "";
+  const department = typeof query.department === "string" ? query.department.trim() : "";
+  const month = typeof query.month === "string" ? query.month.trim() : "";
 
   const clauses = [];
   const params = [];
@@ -453,9 +455,18 @@ function buildRecordFilters(query) {
     clauses.push("ar.employee_uuid = ?");
     params.push(employeeUuid);
   }
+  if (department) {
+    clauses.push("EXISTS (SELECT 1 FROM departments dp WHERE dp.id=e.department_id AND dp.organization_id=e.organization_id AND dp.name=?)");
+    params.push(department);
+  }
+  if (month) {
+    if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(400, "month must use YYYY-MM format");
+    clauses.push("ar.date >= ? AND ar.date < DATE_ADD(?, INTERVAL 1 MONTH)");
+    params.push(month + "-01", month + "-01");
+  }
   // No date filter means today's attendance only. Explicit date ranges remain
   // available for monthly and custom-period reporting.
-  if (!dateFrom && !dateTo) {
+  if (!dateFrom && !dateTo && !month) {
     clauses.push("ar.date = CURDATE()");
   }
   if (["checked_in", "checked_out"].includes(status)) {
