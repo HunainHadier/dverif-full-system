@@ -132,7 +132,7 @@ async function loadAsset(orgId, assetUuid, conn = pool, forUpdate = false) {
 // Inventory
 // ---------------------------------------------------------------------------
 
-export async function listAssets({ orgId, page, limit, offset, search, status }) {
+export async function listAssets({ orgId, page, limit, offset, search, status, employeeUuid }) {
   const clauses = ["a.organization_id = ?"];
   const params = [orgId];
 
@@ -147,6 +147,11 @@ export async function listAssets({ orgId, page, limit, offset, search, status })
     clauses.push("(a.asset_tag LIKE ? OR a.name LIKE ? OR a.model_details LIKE ? OR a.serial_number LIKE ?)");
     const like = `%${search}%`;
     params.push(like, like, like, like);
+  }
+  if (employeeUuid) {
+    assertUuid(employeeUuid, "Employee UUID");
+    clauses.push("EXISTS (SELECT 1 FROM asset_assignments af WHERE af.asset_uuid=a.uuid AND af.employee_uuid=? AND af.organization_id=a.organization_id AND af.returned_at IS NULL)");
+    params.push(employeeUuid);
   }
   const where = clauses.join(" AND ");
 
