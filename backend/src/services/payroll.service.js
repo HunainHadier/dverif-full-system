@@ -170,18 +170,52 @@ function money(n) {
  * Returned with the set of non-working dates so callers can subtract leave and
  * absence without re-deriving it.
  */
-export async function getWorkingDaysForMonth({ orgId, month, year, conn = pool }) {
+export async function getWorkingDaysForMonth({ orgId, month, year, scheduleOverride, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (scheduleOverride !== undefined) {
+    const schedule = normalizePayrollRunSchedule(scheduleOverride, m, y);
+    const workingDates = schedule.filter((day) => day.day_type === "working").map((day) => day.date);
+    const nonWorkingDates = new Set(schedule.filter((day) => day.day_type === "off").map((day) => day.date));
+    return { workingDays: workingDates.length, workingDates, nonWorkingDates, week: null, holidays: new Set() };
+  }
   const [rows] = await conn.query(
     "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND schedule_date BETWEEN ? AND ?",
     [orgId, firstDay, lastDay],
   );
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   if (rows.length !== daysInMonth) throw new ApiError(409, "Monthly working schedule is incomplete. Configure every date as a working day or off day before payroll generation.");
   const days = rows.filter((r) => r.day_type === "working").map((r) => isoDate(r.schedule_date));
   const nonWorkingDates = new Set(rows.filter((r) => r.day_type === "off").map((r) => isoDate(r.schedule_date)));
   return { workingDays: days.length, workingDates: days, nonWorkingDates, week: null, holidays: new Set() };
+}
+
+export function normalizePayrollRunSchedule(days, month, year) {
+  const { m, y } = assertMonthYear(month, year);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (!Array.isArray(days) || days.length !== daysInMonth) {
+    throw new ApiError(400, "Select every date in the month as either a working day or an off day.");
+  }
+  const expectedDates = Array.from({ length: daysInMonth }, (_, index) =>
+    `${y}-${String(m).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`,
+  );
+  const expected = new Set(expectedDates);
+  const byDate = new Map();
+  for (const item of days) {
+    if (
+      !item ||
+      typeof item.date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(item.date) ||
+      !["working", "off"].includes(item.day_type)
+    ) {
+      throw new ApiError(400, "Each schedule day needs a valid date and working/off selection.");
+    }
+    if (!expected.has(item.date) || byDate.has(item.date)) {
+      throw new ApiError(400, "Schedule dates must be unique and belong to the selected month.");
+    }
+    byDate.set(item.date, item.day_type);
+  }
+  return expectedDates.map((date) => ({ date, day_type: byDate.get(date) }));
 }
 
 /**
@@ -392,10 +426,10 @@ export async function getApprovedOvertimeForMonth({ employeeUuid, month, year, c
  * same definition of "a working day" and computing it three times is how they end
  * up disagreeing.
  */
-export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, conn = pool }) {
+export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, scheduleOverride, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const activePolicy = policy ?? await getPayrollSettings(orgId, conn, m, y);
-  const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
+  const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, scheduleOverride, conn });
   // A new employee is not eligible for scheduled days before their joining date.
   // Clamp the employee-specific payroll calendar without changing the org's
   // shared monthly schedule, then exclude future dates from absence/hour checks.

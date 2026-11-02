@@ -1053,6 +1053,14 @@ export type SalaryRecord = {
   deductions: string | number;
   expense_reimbursement: string | number;
   net_salary: string | number;
+  payroll_policy_snapshot?: {
+    salary_calculation_method: "hours" | "days";
+    calculate_overtime: boolean;
+    shift_start_time: string;
+    shift_end_time: string;
+    overtime_multiplier: number;
+  } | string | null;
+  payroll_schedule_snapshot?: { date: string; day_type: "working" | "off" }[] | string | null;
   notes?: string | null;
   created_at?: string;
   employee_name?: string | null;

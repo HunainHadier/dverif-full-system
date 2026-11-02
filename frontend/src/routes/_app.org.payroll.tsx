@@ -59,6 +59,7 @@ import {
   type SalaryRecord,
   type PayrollEmployeeRow,
   type PayrollSettings,
+  type PayrollRunDay,
 } from "@/services";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -81,6 +82,37 @@ export const Route = createFileRoute("/_app/org/payroll")({
 
 const PAGE_SIZE = 10;
 
+function PayrollOvertimeInput({
+  value,
+  savedValue,
+  disabled,
+  onChange,
+}: {
+  value: number | string;
+  savedValue: number | string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const parsedValue = value === "" ? 0 : Number(value);
+  const isDraft = !Number.isFinite(parsedValue) || parsedValue !== Number(savedValue);
+
+  return (
+    <div className="space-y-1">
+      <Input
+        type="number"
+        min="0"
+        step="0.01"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={t("payroll.overtimeAmount", "Overtime amount")}
+        className="ml-auto w-28 text-right"
+      />
+    </div>
+  );
+}
+
 function money(value: string | number): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
@@ -95,7 +127,7 @@ function apiErrorMessage(e: unknown, fallback: string) {
 function normalizePayrollSettings(settings: PayrollSettings): PayrollSettings {
   return {
     ...settings,
-    calculate_overtime: Boolean(settings.calculate_overtime),
+    calculate_overtime: false,
     shift_start_time: String(settings.shift_start_time).slice(0, 5),
     shift_end_time: String(settings.shift_end_time).slice(0, 5),
     overtime_multiplier: Number(settings.overtime_multiplier),
@@ -106,6 +138,7 @@ function OrgPayrollPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { user } = useAuth();
+  const perms = usePermissions();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
 
   const [tab, setTab] = useState<"employees" | "records" | "components" | "policies">("employees");
@@ -121,6 +154,10 @@ function OrgPayrollPage() {
   // Employee selection
   const [empSearch, setEmpSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [employeeMonth, setEmployeeMonth] = useState(new Date().getMonth() + 1);
+  const [employeeYear, setEmployeeYear] = useState(new Date().getFullYear());
+  const [employeePeriodPickerOpen, setEmployeePeriodPickerOpen] = useState(false);
+  const [overtimeDrafts, setOvertimeDrafts] = useState<Record<string, string>>({});
 
   // Period modal
   const [periodOpen, setPeriodOpen] = useState(false);
@@ -169,8 +206,13 @@ function OrgPayrollPage() {
 
   // All org employees for the selection table.
   const employeesQ = useQuery({
-    queryKey: ["orgEmployeesForPayroll"],
-    queryFn: () => orgSalaryService.employees({ page: 1, limit: 1000 }),
+    queryKey: ["orgEmployeesForPayroll", employeeMonth, employeeYear],
+    queryFn: () => orgSalaryService.employees({
+      page: 1,
+      limit: 1000,
+      month: employeeMonth,
+      year: employeeYear,
+    }),
   });
 
   const payrollSettingsQ = useQuery({
@@ -218,14 +260,14 @@ function OrgPayrollPage() {
   const allEmployees = employeesQ.data?.items ?? [];
   const filteredEmployees = empSearch.trim()
     ? allEmployees.filter((e) => {
-        const q = empSearch.trim().toLowerCase();
-        return (
-          e.full_name.toLowerCase().includes(q) ||
-          (e.designation && e.designation.toLowerCase().includes(q)) ||
-          (e.email && e.email.toLowerCase().includes(q)) ||
-          (e.department && e.department.toLowerCase().includes(q))
-        );
-      })
+      const q = empSearch.trim().toLowerCase();
+      return (
+        e.full_name.toLowerCase().includes(q) ||
+        (e.designation && e.designation.toLowerCase().includes(q)) ||
+        (e.email && e.email.toLowerCase().includes(q)) ||
+        (e.department && e.department.toLowerCase().includes(q))
+      );
+    })
     : allEmployees;
 
   // Prune selections that no longer exist (e.g. employee deleted).
@@ -257,8 +299,6 @@ function OrgPayrollPage() {
       day.day_type,
     ]),
   );
-  const selectedMonthScheduleComplete =
-    (selectedScheduleData?.days.length ?? 0) === daysInSelectedMonth;
   const generateScheduleKey = `${genYear}-${genMonth}`;
   const generateScheduleReady = generateSchedulePeriod === generateScheduleKey;
   const selectedMonthScheduleDates = Array.from({ length: daysInSelectedMonth }, (_, index) =>
@@ -274,74 +314,41 @@ function OrgPayrollPage() {
       ? generateDayTypes[date] ?? savedScheduleDayTypes[index]
       : savedScheduleDayTypes[index];
   });
-  const generateScheduleDirty =
-    generateScheduleReady &&
-    (!selectedMonthScheduleComplete ||
-      selectedMonthDayTypes.some((dayType, index) => dayType !== savedScheduleDayTypes[index]));
   const scheduleUnavailable =
     payrollScheduleQ.isLoading || payrollScheduleQ.isError || !generateScheduleReady ||
-    !selectedMonthScheduleComplete || generateScheduleDirty;
+    selectedMonthDayTypes.length !== daysInSelectedMonth;
   const payrollPoliciesUnavailable = payrollSettingsQ.isLoading || payrollSettingsQ.isError;
   const generateSettingsKey = `${genYear}-${genMonth}`;
   const generateSettingsReady =
     payrollSettingsQ.isSuccess && generateSettingsPeriod === generateSettingsKey;
-  const savedGenerateSettings = normalizePayrollSettings(payrollSettingsQ.data ?? {
-    salary_calculation_method: "days",
-    calculate_overtime: false,
-    shift_start_time: "09:00",
-    shift_end_time: "17:00",
-    overtime_multiplier: 1.5,
-  });
+  const generateRunSettings = normalizePayrollSettings(generateSettingsForm);
+  const generateRunDays = selectedMonthScheduleDates.map((date, index) => ({
+    date,
+    day_type: selectedMonthDayTypes[index],
+  }));
+  const overtimeDraftKey = (employeeUuid: string, month: number, year: number) =>
+    `${year}-${month}-${employeeUuid}`;
+  const overtimeAmountsFor = (employeeUuids: string[]) => Object.fromEntries(
+    employeeUuids
+      .filter((uuid) => Object.prototype.hasOwnProperty.call(
+        overtimeDrafts,
+        overtimeDraftKey(uuid, genMonth, genYear),
+      ))
+      .map((uuid) => {
+        const draft = overtimeDrafts[overtimeDraftKey(uuid, genMonth, genYear)];
+        return [uuid, draft.trim() === "" ? 0 : Number(draft)];
+      }),
+  );
+  const runOvertimeAmounts = overtimeAmountsFor([...validSelected]);
+  const hasInvalidOvertimeDraft = Object.values(runOvertimeAmounts).some(
+    (amount) => !Number.isFinite(amount) || amount < 0,
+  );
   const generatePayrollFingerprint = JSON.stringify({
-    settings: savedGenerateSettings,
-    schedule: selectedMonthDayTypes,
+    settings: generateRunSettings,
+    days: generateRunDays,
+    overtimeAmounts: runOvertimeAmounts,
   });
-  const generateSettingsDirty =
-    generateSettingsReady &&
-    JSON.stringify(normalizePayrollSettings(generateSettingsForm)) !==
-      JSON.stringify(savedGenerateSettings);
-  const canEditPayrollSettings = user?.org_role === "org_admin";
-
-  const saveGeneratePayrollSettings = useMutation({
-    mutationFn: async (variables: {
-      month: number;
-      year: number;
-      settings: PayrollSettings;
-      settingsDirty: boolean;
-      scheduleDirty: boolean;
-      days: { date: string; day_type: "working" | "off" }[];
-    }) => {
-      const settingsPromise = variables.settingsDirty
-        ? orgSalaryService.saveSettings({
-            ...variables.settings,
-            month: variables.month,
-            year: variables.year,
-          }).then((settings) => {
-            qc.setQueryData(["orgPayrollSettings", variables.month, variables.year], settings);
-            return settings;
-          })
-        : Promise.resolve(null);
-      const schedulePromise = variables.scheduleDirty
-        ? orgSalaryService.saveSchedule({
-            month: variables.month,
-            year: variables.year,
-            days: variables.days,
-          }).then((schedule) => {
-            qc.setQueryData(["orgPayrollSchedule", variables.month, variables.year], schedule);
-            return schedule;
-          })
-        : Promise.resolve(null);
-      return Promise.all([settingsPromise, schedulePromise]);
-    },
-    onSuccess: (_result, variables) => {
-      if (variables.settingsDirty) qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] });
-      if (variables.scheduleDirty) {
-        qc.invalidateQueries({ queryKey: ["orgPayrollSchedule", variables.month, variables.year] });
-      }
-      toast.success(t("payroll.settingsAndScheduleSaved"));
-    },
-    onError: (error) => toast.error(apiErrorMessage(error, t("payroll.settingsAndScheduleSaveFailed"))),
-  });
+  const canEditPayrollSettings = perms.payroll;
   const setGenerateScheduleEveryDay = (dayType: "working" | "off") =>
     setGenerateDayTypes(Object.fromEntries(
       selectedMonthScheduleDates.map((date) => [date, dayType]),
@@ -379,6 +386,12 @@ function OrgPayrollPage() {
     });
   };
 
+  const openPayrollGeneration = () => {
+    setGenMonth(employeeMonth);
+    setGenYear(employeeYear);
+    setPeriodOpen(true);
+  };
+
   const toggleAllVisible = () => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -401,21 +414,40 @@ function OrgPayrollPage() {
       message?: string;
     },
     Error,
-    { uuids: string[]; month: number; year: number }
+    {
+      uuids: string[];
+      month: number;
+      year: number;
+      settings: PayrollSettings;
+      days: PayrollRunDay[];
+      overtimeAmounts: Record<string, number>;
+    }
   >({
-    mutationFn: ({ uuids, month, year }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
       orgSalaryService.generate({
         month,
         year,
         employee_uuids: uuids.length ? uuids : undefined,
+        settings,
+        days,
+        overtime_amounts: overtimeAmounts,
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       toast.success(
         res.skipped && res.skipped > 0
           ? t("payroll.generatedSkipped", { count: res.count, skipped: res.skipped })
           : t("payroll.generated", { count: res.count }),
       );
       qc.invalidateQueries({ queryKey: ["orgSalaryRecords"] });
+      qc.invalidateQueries({ queryKey: ["orgEmployeesForPayroll"] });
+      setOvertimeDrafts((drafts) => {
+        const generatedKeys = new Set(variables.uuids.map((uuid) =>
+          overtimeDraftKey(uuid, variables.month, variables.year),
+        ));
+        return Object.fromEntries(
+          Object.entries(drafts).filter(([key]) => !generatedKeys.has(key)),
+        );
+      });
       setPeriodOpen(false);
       setSelected(new Set());
       setTab("records");
@@ -446,13 +478,24 @@ function OrgPayrollPage() {
   const preview = useMutation<
     PayrollPreview,
     Error,
-    { uuids: string[]; month: number; year: number; settingsFingerprint: string }
+    {
+      uuids: string[];
+      month: number;
+      year: number;
+      settings: PayrollSettings;
+      days: PayrollRunDay[];
+      overtimeAmounts: Record<string, number>;
+      settingsFingerprint: string;
+    }
   >({
-    mutationFn: ({ uuids, month, year }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
       orgSalaryService.preview({
         month,
         year,
         employee_uuids: uuids.length ? uuids : undefined,
+        settings,
+        days,
+        overtime_amounts: overtimeAmounts,
       }),
     onSuccess: () => setPreviewOpen(true),
   });
@@ -470,18 +513,37 @@ function OrgPayrollPage() {
       count: number;
     },
     Error,
-    { uuids: string[]; month: number; year: number }
+    {
+      uuids: string[];
+      month: number;
+      year: number;
+      settings: PayrollSettings;
+      days: PayrollRunDay[];
+      overtimeAmounts: Record<string, number>;
+    }
   >({
-    mutationFn: ({ uuids, month, year }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
       orgSalaryService.generate({
         month,
         year,
         employee_uuids: uuids,
         regenerate: true,
+        settings,
+        days,
+        overtime_amounts: overtimeAmounts,
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       toast.success(t("payroll.regenerated", { count: res.count }));
       qc.invalidateQueries({ queryKey: ["orgSalaryRecords"] });
+      qc.invalidateQueries({ queryKey: ["orgEmployeesForPayroll"] });
+      setOvertimeDrafts((drafts) => {
+        const regeneratedKeys = new Set(variables.uuids.map((uuid) =>
+          overtimeDraftKey(uuid, variables.month, variables.year),
+        ));
+        return Object.fromEntries(
+          Object.entries(drafts).filter(([key]) => !regeneratedKeys.has(key)),
+        );
+      });
       setRegenerateOpen(false);
       setPeriodOpen(false);
       setSelected(new Set());
@@ -575,8 +637,8 @@ function OrgPayrollPage() {
   const years: number[] = [];
   const nowYear = new Date().getFullYear();
   for (let y = nowYear - 1; y <= nowYear + 1; y++) years.push(y);
+  const employeePeriodYears = Array.from({ length: 101 }, (_, index) => 2000 + index);
 
-  const perms = usePermissions();
   if (!perms.isOrgAdmin && !perms.payroll) return <AccessDenied feature="payroll" />;
 
   const moduleLocked = isModuleFlagOff("payroll_management");
@@ -616,7 +678,7 @@ function OrgPayrollPage() {
               <Button
                 className="shrink-0 justify-center"
                 disabled={isLocked || validSelected.size === 0}
-                onClick={() => setPeriodOpen(true)}
+                onClick={openPayrollGeneration}
               >
                 {isLocked ? (
                   <Lock className="mr-1.5 h-4 w-4" />
@@ -631,340 +693,382 @@ function OrgPayrollPage() {
       />
 
       <div className="mt-3">
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as "employees" | "records" | "components" | "policies")}
-        className="mt-0 min-w-0"
-      >
-        <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="employees">
-            <Users className="mr-1.5 h-4 w-4" />
-            {t("payroll.employeesTab", "Employees")}
-          </TabsTrigger>
-          <TabsTrigger value="records">
-            <FileText className="mr-1.5 h-4 w-4" />
-            {t("payroll.recordsTab", "Payroll Records")}
-          </TabsTrigger>
-          <TabsTrigger value="components">Salary Components</TabsTrigger>
-          <TabsTrigger value="policies">
-            <SlidersHorizontal className="mr-1.5 h-4 w-4" />
-            Policies
-          </TabsTrigger>
-        </TabsList>
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "employees" | "records" | "components" | "policies")}
+          className="mt-0 min-w-0"
+        >
+          <TabsList className="h-auto flex-wrap">
+            <TabsTrigger value="employees">
+              <Users className="mr-1.5 h-4 w-4" />
+              {t("payroll.employeesTab", "Employees")}
+            </TabsTrigger>
+            <TabsTrigger value="records">
+              <FileText className="mr-1.5 h-4 w-4" />
+              {t("payroll.recordsTab", "Payroll Records")}
+            </TabsTrigger>
+            <TabsTrigger value="components">Salary Components</TabsTrigger>
+            <TabsTrigger value="policies">
+              <SlidersHorizontal className="mr-1.5 h-4 w-4" />
+              Policies
+            </TabsTrigger>
+          </TabsList>
 
-        {/* ---------------- Employee selection table ---------------- */}
-        <TabsContent value="employees">
-          <Card className="border-border/70 shadow-none">
-            <CardContent className="p-0">
-              <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
-                <SearchInput
-                  value={empSearch}
-                  onChange={setEmpSearch}
-                  placeholder={t("payroll.searchEmployee")}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {filteredEmployees.length} / {allEmployees.length}{" "}
-                  {t("payroll.employeeCountSuffix", "employees")}
-                </span>
-              </div>
-
-              {employeesQ.isLoading ? (
-                <TableSkeleton />
-              ) : employeesQ.isError ? (
-                <div className="p-6">
-                  <EmptyState
-                    icon={Users}
-                    title={t("payroll.employeeLoadFailed")}
-                    description={t("payroll.employeeLoadFailedDesc")}
+          {/* ---------------- Employee selection table ---------------- */}
+          <TabsContent value="employees">
+            <Card className="border-border/70 shadow-none">
+              <CardContent className="p-0">
+                <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
+                  <SearchInput
+                    value={empSearch}
+                    onChange={setEmpSearch}
+                    placeholder={t("payroll.searchEmployee")}
                   />
+                  <Popover open={employeePeriodPickerOpen} onOpenChange={setEmployeePeriodPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="outline" size="sm" className="shrink-0">
+                        <CalendarDays className="mr-2 h-4 w-4" />
+                        {MONTHS[employeeMonth - 1]} {employeeYear}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={new Date(employeeYear, employeeMonth - 1, 1)}
+                        month={new Date(employeeYear, employeeMonth - 1, 1)}
+                        onMonthChange={(date) => {
+                          setEmployeeMonth(date.getMonth() + 1);
+                          setEmployeeYear(date.getFullYear());
+                        }}
+                        onSelect={(date) => {
+                          if (!date) return;
+                          setEmployeeMonth(date.getMonth() + 1);
+                          setEmployeeYear(date.getFullYear());
+                          setEmployeePeriodPickerOpen(false);
+                        }}
+                        captionLayout="dropdown"
+                        startMonth={new Date(employeePeriodYears[0], 0)}
+                        endMonth={new Date(employeePeriodYears[employeePeriodYears.length - 1], 11)}
+                        showOutsideDays={false}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  <span className="text-xs text-muted-foreground">
+                    {filteredEmployees.length} / {allEmployees.length}{" "}
+                    {t("payroll.employeeCountSuffix", "employees")}
+                  </span>
                 </div>
-              ) : filteredEmployees.length === 0 ? (
-                <div className="p-6">
-                  <EmptyState
-                    icon={Users}
-                    title={t("payroll.noEmployeesFound")}
-                    description={t("payroll.noEmployeeDesc", "No employees have been added yet.")}
-                  />
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-10">
-                          <Checkbox
-                            checked={allVisibleSelected}
-                            onCheckedChange={toggleAllVisible}
-                            aria-label={t("payroll.selectAll")}
-                          />
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap">{t("payroll.employee")}</TableHead>
-                        <TableHead className="whitespace-nowrap hidden sm:table-cell">
-                          {t("payroll.designationCol", "Designation")}
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap hidden md:table-cell">
-                          {t("payroll.departmentCol", "Department")}
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap text-right">
-                          {t("payroll.basicSalary")}
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap text-right">
-                          {t("payroll.allowance")}
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap text-right">
-                          {t("payroll.deduction")}
-                        </TableHead>
-                        <TableHead className="whitespace-nowrap text-right">
-                          {t("payroll.netSalary")}
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredEmployees.map((emp: PayrollEmployeeRow) => (
-                        <TableRow key={emp.uuid}>
-                          <TableCell className="w-10">
-                            <Checkbox
-                              checked={validSelected.has(emp.uuid)}
-                              onCheckedChange={() => toggleEmployee(emp.uuid)}
-                              aria-label={emp.full_name}
-                            />
-                          </TableCell>
-                          <TableCell data-label="Employee" className="whitespace-nowrap">
-                            <div className="text-sm font-medium text-foreground">
-                              {emp.full_name}
-                            </div>
-                            {emp.email ? (
-                              <div className="text-xs text-muted-foreground">{emp.email}</div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell
-                            data-label="Designation"
-                            className="whitespace-nowrap text-sm text-muted-foreground hidden sm:table-cell"
-                          >
-                            {emp.designation ?? "—"}
-                          </TableCell>
-                          <TableCell
-                            data-label="Department"
-                            className="whitespace-nowrap text-sm text-muted-foreground hidden md:table-cell"
-                          >
-                            {emp.department ?? "—"}
-                          </TableCell>
-                          <TableCell
-                            data-label={t("payroll.basicSalary")}
-                            className="whitespace-nowrap text-right text-sm"
-                          >
-                            {emp.basic_salary === null ? "—" : money(emp.basic_salary)}
-                          </TableCell>
-                          <TableCell
-                            data-label={t("payroll.allowance")}
-                            className="whitespace-nowrap text-right text-sm"
-                          >
-                            <div className="space-y-1">
-                              {emp.allowance_items.length > 0 ? emp.allowance_items.map((item, index) => (
-                                <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                                  <span className="text-muted-foreground">{item.name}</span>
-                                  <span>{money(item.amount)}</span>
-                                </div>
-                              )) : <span className="text-muted-foreground">—</span>}
-                              {emp.allowance_items.length > 1 && (
-                                <div className="border-t border-border pt-1 font-medium">
-                                  {money(emp.allowances)}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            data-label={t("payroll.deduction")}
-                            className="whitespace-nowrap text-right text-sm"
-                          >
-                            <div className="space-y-1">
-                              {emp.deduction_items.length > 0 ? emp.deduction_items.map((item, index) => (
-                                <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                                  <span className="text-muted-foreground">{item.name}</span>
-                                  <span>{money(item.amount)}</span>
-                                </div>
-                              )) : <span className="text-muted-foreground">—</span>}
-                              {emp.deduction_items.length > 1 && (
-                                <div className="border-t border-border pt-1 font-medium">
-                                  {money(emp.deductions)}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            data-label={t("payroll.netSalary")}
-                            className="whitespace-nowrap text-right text-sm font-semibold"
-                          >
-                            {money(emp.net_salary)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
 
-        {/* ---------------- Payroll records (history) table ---------------- */}
-        <TabsContent value="records">
-          <Card className="border-border/70 shadow-none">
-            <CardContent className="p-0">
-              <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
-                <SearchInput
-                  value={recSearch}
-                  onChange={(v) => {
-                    setRecSearch(v);
-                    setPage(1);
-                  }}
-                  placeholder={t("payroll.searchEmployee")}
-                />
-                <Select value={recordEmployee || "all"} onValueChange={(v) => { setRecordEmployee(v === "all" ? "" : v); setPage(1); }}>
-                  <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All employees" /></SelectTrigger>
-                  <SelectContent><SelectItem value="all">All employees</SelectItem>{(employeesQ.data?.items ?? []).map((e) => <SelectItem key={e.uuid} value={e.uuid}>{e.full_name}</SelectItem>)}</SelectContent>
-                </Select>
-                <Select value={recordDepartment || "all"} onValueChange={(v) => { setRecordDepartment(v === "all" ? "" : v); setPage(1); }}>
-                  <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All departments" /></SelectTrigger>
-                  <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
-                </Select>
-                <Select
-                  value={month}
-                  onValueChange={(v) => {
-                    setMonth(v);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-40">
-                    <SelectValue placeholder={t("payroll.allMonths")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">{t("payroll.allMonths")}</SelectItem>
-                    {MONTHS.map((m, i) => (
-                      <SelectItem key={String(i + 1)} value={String(i + 1)}>
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={year}
-                  onValueChange={(v) => {
-                    setYear(v);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-32">
-                    <SelectValue placeholder={t("payroll.allYears")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">{t("payroll.allYears")}</SelectItem>
-                    {years.map((y) => (
-                      <SelectItem key={y} value={String(y)}>
-                        {y}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {records.isLoading ? (
-                <TableSkeleton />
-              ) : items.length === 0 ? (
-                <div className="p-6">
-                  <EmptyState
-                    icon={Wallet}
-                    title={t("payroll.noPayrollYet")}
-                    description={t("payroll.noPayrollDesc")}
-                  />
-                </div>
-              ) : (
-                <>
+                {employeesQ.isLoading ? (
+                  <TableSkeleton />
+                ) : employeesQ.isError ? (
+                  <div className="p-6">
+                    <EmptyState
+                      icon={Users}
+                      title={t("payroll.employeeLoadFailed")}
+                      description={t("payroll.employeeLoadFailedDesc")}
+                    />
+                  </div>
+                ) : filteredEmployees.length === 0 ? (
+                  <div className="p-6">
+                    <EmptyState
+                      icon={Users}
+                      title={t("payroll.noEmployeesFound")}
+                      description={t("payroll.noEmployeeDesc", "No employees have been added yet.")}
+                    />
+                  </div>
+                ) : (
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-10">S.No</TableHead>
-                          <TableHead className="whitespace-nowrap">
-                            {t("payroll.employee")}
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={allVisibleSelected}
+                              onCheckedChange={toggleAllVisible}
+                              aria-label={t("payroll.selectAll")}
+                            />
                           </TableHead>
-                          <TableHead className="whitespace-nowrap">{t("payroll.period")}</TableHead>
+                          <TableHead className="whitespace-nowrap">{t("payroll.employee")}</TableHead>
                           <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.basic")}
-                          </TableHead>
-                          <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.allowances")}
-                          </TableHead>
-                          <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.expenseReimbursement", "Expense reimbursement")}
+                            {t("payroll.basicSalary")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.deductions")}
+                            {t("payroll.allowance")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.net")}
+                            {t("payroll.deduction")}
+                          </TableHead>
+
+                          <TableHead className="whitespace-nowrap text-right">
+                            {t("payroll.overtimeAmount", "Overtime")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap text-right">
-                            {t("payroll.payslip")}
+                            {t("payroll.netSalary")}
                           </TableHead>
-                          <TableHead className="whitespace-nowrap text-right">—</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {items.map((r, i) => (
-                          <TableRow key={r.uuid}>
-                            <TableCell data-label="S.No" className="w-10 text-muted-foreground">
-                              {(page - 1) * 10 + i + 1}
-                            </TableCell>
-                            <TableCell data-label="Employee" className="whitespace-nowrap">
-                              <div className="text-sm font-medium text-foreground">
-                                {r.employee_name ?? "—"}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                {r.employee_email ?? ""}
-                              </div>
-                            </TableCell>
-                            <TableCell
-                              data-label="Period"
-                              className="whitespace-nowrap text-sm text-muted-foreground"
-                            >
-                              {MONTHS[Number(r.month) - 1]} {r.year}
-                            </TableCell>
-                            <TableCell
-                              data-label="Basic"
-                              className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                            >
-                              {money(r.basic_salary)}
-                            </TableCell>
-                            <TableCell
-                              data-label="Allowances"
-                              className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                            >
-                              {money(r.allowances)}
-                            </TableCell>
-                            <TableCell
-                              data-label="Expense reimbursement"
-                              className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                            >
-                              {money(r.expense_reimbursement)}
-                            </TableCell>
-                            <TableCell
-                              data-label="Deductions"
-                              className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                            >
-                              {money(r.deductions)}
-                            </TableCell>
-                            <TableCell
-                              data-label="Net"
-                              className="whitespace-nowrap text-right text-sm font-semibold text-foreground"
-                            >
-                              {money(r.net_salary)}
-                            </TableCell>
-                            <TableCell
-                              data-label="Payslip"
-                              className="whitespace-nowrap text-right"
-                            >
-                              {/*
+                        {filteredEmployees.map((emp: PayrollEmployeeRow) => {
+                          const draftKey = overtimeDraftKey(emp.uuid, employeeMonth, employeeYear);
+                          const overtimeValue = overtimeDrafts[draftKey] ?? String(emp.overtime_amount);
+                          const overtimeAmount = overtimeValue.trim() === "" ? 0 : Number(overtimeValue);
+                          const estimatedNet = Number(emp.net_salary) + overtimeAmount - Number(emp.overtime_amount);
+                          return (
+                            <TableRow key={emp.uuid}>
+                              <TableCell className="w-10">
+                                <Checkbox
+                                  checked={validSelected.has(emp.uuid)}
+                                  onCheckedChange={() => toggleEmployee(emp.uuid)}
+                                  aria-label={emp.full_name}
+                                />
+                              </TableCell>
+                              <TableCell data-label="Employee" className="whitespace-nowrap">
+                                <div className="text-sm font-medium text-foreground">
+                                  {emp.full_name}
+                                </div>
+                                {emp.email ? (
+                                  <div className="text-xs text-muted-foreground">{emp.email}</div>
+                                ) : null}
+                                <div className="text-xs text-muted-foreground">
+                                  <span>{t("payroll.designationCol", "Designation")}: {emp.designation ?? "—"}</span>
+                                  <span className="mx-1.5">·</span>
+                                  <span>{t("payroll.departmentCol", "Department")}: {emp.department ?? "—"}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell
+                                data-label={t("payroll.basicSalary")}
+                                className="whitespace-nowrap text-right text-sm"
+                              >
+                                {emp.basic_salary === null ? "—" : money(emp.basic_salary)}
+                              </TableCell>
+                              <TableCell
+                                data-label={t("payroll.allowance")}
+                                className="whitespace-nowrap text-right text-sm"
+                              >
+                                <div className="space-y-1">
+                                  {emp.allowance_items.length > 0 ? emp.allowance_items.map((item, index) => (
+                                    <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
+                                      <span className="text-muted-foreground">{item.name}</span>
+                                      <span>{money(item.amount)}</span>
+                                    </div>
+                                  )) : <span className="text-muted-foreground">—</span>}
+                                  {emp.allowance_items.length > 1 && (
+                                    <div className="border-t border-border pt-1 font-medium">
+                                      {money(emp.allowances)}
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell
+                                data-label={t("payroll.deduction")}
+                                className="whitespace-nowrap text-right text-sm"
+                              >
+                                <div className="space-y-1">
+                                  {emp.deduction_items.length > 0 ? emp.deduction_items.map((item, index) => (
+                                    <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
+                                      <span className="text-muted-foreground">{item.name}</span>
+                                      <span>{money(item.amount)}</span>
+                                    </div>
+                                  )) : <span className="text-muted-foreground">—</span>}
+                                  {emp.deduction_items.length > 1 && (
+                                    <div className="border-t border-border pt-1 font-medium">
+                                      {money(emp.deductions)}
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+
+                              <TableCell
+                                data-label={t("payroll.overtimeAmount", "Overtime")}
+                                className="whitespace-nowrap text-right text-sm"
+                              >
+                                <PayrollOvertimeInput
+                                  value={overtimeValue}
+                                  savedValue={emp.overtime_amount}
+                                  disabled={isLocked}
+                                  onChange={(value) => setOvertimeDrafts((drafts) => ({
+                                    ...drafts,
+                                    [draftKey]: value,
+                                  }))}
+                                />
+                              </TableCell>
+
+                              <TableCell
+                                data-label={t("payroll.netSalary")}
+                                className="whitespace-nowrap text-right text-sm font-semibold"
+                              >
+                                {money(estimatedNet)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ---------------- Payroll records (history) table ---------------- */}
+          <TabsContent value="records">
+            <Card className="border-border/70 shadow-none">
+              <CardContent className="p-0">
+                <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
+                  <SearchInput
+                    value={recSearch}
+                    onChange={(v) => {
+                      setRecSearch(v);
+                      setPage(1);
+                    }}
+                    placeholder={t("payroll.searchEmployee")}
+                  />
+                  <Select value={recordEmployee || "all"} onValueChange={(v) => { setRecordEmployee(v === "all" ? "" : v); setPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All employees" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All employees</SelectItem>{(employeesQ.data?.items ?? []).map((e) => <SelectItem key={e.uuid} value={e.uuid}>{e.full_name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select value={recordDepartment || "all"} onValueChange={(v) => { setRecordDepartment(v === "all" ? "" : v); setPage(1); }}>
+                    <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All departments" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select
+                    value={month}
+                    onValueChange={(v) => {
+                      setMonth(v);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-full lg:w-40">
+                      <SelectValue placeholder={t("payroll.allMonths")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">{t("payroll.allMonths")}</SelectItem>
+                      {MONTHS.map((m, i) => (
+                        <SelectItem key={String(i + 1)} value={String(i + 1)}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={year}
+                    onValueChange={(v) => {
+                      setYear(v);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-full lg:w-32">
+                      <SelectValue placeholder={t("payroll.allYears")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">{t("payroll.allYears")}</SelectItem>
+                      {years.map((y) => (
+                        <SelectItem key={y} value={String(y)}>
+                          {y}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {records.isLoading ? (
+                  <TableSkeleton />
+                ) : items.length === 0 ? (
+                  <div className="p-6">
+                    <EmptyState
+                      icon={Wallet}
+                      title={t("payroll.noPayrollYet")}
+                      description={t("payroll.noPayrollDesc")}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-10">S.No</TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              {t("payroll.employee")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap">{t("payroll.period")}</TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.basic")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.allowances")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.expenseReimbursement", "Expense reimbursement")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.deductions")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.net")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.payslip")}
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">—</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {items.map((r, i) => (
+                            <TableRow key={r.uuid}>
+                              <TableCell data-label="S.No" className="w-10 text-muted-foreground">
+                                {(page - 1) * 10 + i + 1}
+                              </TableCell>
+                              <TableCell data-label="Employee" className="whitespace-nowrap">
+                                <div className="text-sm font-medium text-foreground">
+                                  {r.employee_name ?? "—"}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {r.employee_email ?? ""}
+                                </div>
+                              </TableCell>
+                              <TableCell
+                                data-label="Period"
+                                className="whitespace-nowrap text-sm text-muted-foreground"
+                              >
+                                {MONTHS[Number(r.month) - 1]} {r.year}
+                              </TableCell>
+                              <TableCell
+                                data-label="Basic"
+                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
+                              >
+                                {money(r.basic_salary)}
+                              </TableCell>
+                              <TableCell
+                                data-label="Allowances"
+                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
+                              >
+                                {money(r.allowances)}
+                              </TableCell>
+                              <TableCell
+                                data-label="Expense reimbursement"
+                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
+                              >
+                                {money(r.expense_reimbursement)}
+                              </TableCell>
+                              <TableCell
+                                data-label="Deductions"
+                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
+                              >
+                                {money(r.deductions)}
+                              </TableCell>
+                              <TableCell
+                                data-label="Net"
+                                className="whitespace-nowrap text-right text-sm font-semibold text-foreground"
+                              >
+                                {money(r.net_salary)}
+                              </TableCell>
+                              <TableCell
+                                data-label="Payslip"
+                                className="whitespace-nowrap text-right"
+                              >
+                                {/*
                                * TWO ACTIONS, not one button.
 
                                A payslip is read before it is kept, so the row
@@ -980,71 +1084,71 @@ function OrgPayrollPage() {
                                preview and the download cannot show two different
                                documents for one record.
                                */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      disabled={previewing === r.uuid || downloading === r.uuid}
+                                    >
+                                      <FileText className="mr-1 h-3.5 w-3.5" />
+                                      {previewing === r.uuid || downloading === r.uuid
+                                        ? "…"
+                                        : t("payroll.payslip")}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => previewPayslip(r)}>
+                                      <Eye className="mr-2 h-3.5 w-3.5" />
+                                      {t("payroll.previewInTab", "Preview in new tab")}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => downloadPayslip(r)}>
+                                      <Download className="mr-2 h-3.5 w-3.5" />
+                                      {t("payroll.downloadPdf", "Download PDF")}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                              <TableCell data-label="—" className="whitespace-nowrap text-right">
+                                {canDelete ? (
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    disabled={previewing === r.uuid || downloading === r.uuid}
+                                    className="text-muted-foreground hover:text-destructive"
+                                    disabled={isLocked}
+                                    onClick={() => setDeleteTarget(r)}
                                   >
-                                    <FileText className="mr-1 h-3.5 w-3.5" />
-                                    {previewing === r.uuid || downloading === r.uuid
-                                      ? "…"
-                                      : t("payroll.payslip")}
+                                    {isLocked ? (
+                                      <Lock className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    )}
                                   </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => previewPayslip(r)}>
-                                    <Eye className="mr-2 h-3.5 w-3.5" />
-                                    {t("payroll.previewInTab", "Preview in new tab")}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => downloadPayslip(r)}>
-                                    <Download className="mr-2 h-3.5 w-3.5" />
-                                    {t("payroll.downloadPdf", "Download PDF")}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                            <TableCell data-label="—" className="whitespace-nowrap text-right">
-                              {canDelete ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-muted-foreground hover:text-destructive"
-                                  disabled={isLocked}
-                                  onClick={() => setDeleteTarget(r)}
-                                >
-                                  {isLocked ? (
-                                    <Lock className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  )}
-                                </Button>
-                              ) : null}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <Pagination
-                    page={page}
-                    total={records.data?.total ?? 0}
-                    totalPages={records.data?.totalPages ?? 1}
-                    onChange={setPage}
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="components"><SalaryComponentsManager /></TabsContent>
-        <TabsContent value="policies"><PayrollPoliciesPanel canManage={perms.isOrgAdmin} /></TabsContent>
-      </Tabs>
+                                ) : null}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <Pagination
+                      page={page}
+                      total={records.data?.total ?? 0}
+                      totalPages={records.data?.totalPages ?? 1}
+                      onChange={setPage}
+                    />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="components"><SalaryComponentsManager /></TabsContent>
+          <TabsContent value="policies"><PayrollPoliciesPanel canManage={perms.isOrgAdmin} /></TabsContent>
+        </Tabs>
       </div>
 
-      
-           {/* ---------- Period-only modal (Year + Month) ---------- */}
+
+      {/* ---------- Period-only modal (Year + Month) ---------- */}
       <Dialog
         open={periodOpen}
         onOpenChange={(o) => {
@@ -1079,11 +1183,15 @@ function OrgPayrollPage() {
                     onMonthChange={(date) => {
                       setGenMonth(date.getMonth() + 1);
                       setGenYear(date.getFullYear());
+                      setEmployeeMonth(date.getMonth() + 1);
+                      setEmployeeYear(date.getFullYear());
                     }}
                     onSelect={(date) => {
                       if (!date) return;
                       setGenMonth(date.getMonth() + 1);
                       setGenYear(date.getFullYear());
+                      setEmployeeMonth(date.getMonth() + 1);
+                      setEmployeeYear(date.getFullYear());
                       setPeriodPickerOpen(false);
                     }}
                     captionLayout="dropdown"
@@ -1159,11 +1267,10 @@ function OrgPayrollPage() {
                                   selectedMonthDayTypes[index] === "working" ? "off" : "working",
                               }))
                             }
-                            className={`flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden rounded-md border px-0.5 text-center leading-none ${
-                              dayType === "working"
+                            className={`flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden rounded-md border px-0.5 text-center leading-none ${dayType === "working"
                                 ? "border-primary/40 bg-primary/10"
                                 : "border-border bg-muted"
-                            } disabled:cursor-not-allowed disabled:opacity-60`}
+                              } disabled:cursor-not-allowed disabled:opacity-60`}
                           >
                             <span className="block text-[11px] font-medium leading-4 sm:text-xs">{index + 1}</span>
                             <span className="block text-[8px] leading-3 text-muted-foreground max-[480px]:hidden">
@@ -1187,14 +1294,11 @@ function OrgPayrollPage() {
                         })}
                       </span>
                     </div>
-                    {generateScheduleDirty ? (
-                      <p className="shrink-0 text-xs text-amber-600">{t("payroll.unsavedScheduleChanges")}</p>
-                    ) : null}
                   </>
                 )}
               </section>
 
-              {/* Right: Policies (unchanged) */}
+              {/* Right: run-local policies */}
               <section className="min-h-0 min-w-0 space-y-2 overflow-y-auto rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
                 <div>
                   <h3 className="text-sm font-semibold">{t("payroll.policies")}</h3>
@@ -1222,18 +1326,6 @@ function OrgPayrollPage() {
                           aria-label={t("payroll.salaryByHours")}
                         />
                         <span>{t("payroll.salaryByHours")}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Checkbox
-                          checked={generateSettingsForm.calculate_overtime}
-                          disabled={!canEditPayrollSettings}
-                          onCheckedChange={(checked) => setGenerateSettingsForm((settings) => ({
-                            ...settings,
-                            calculate_overtime: checked === true,
-                          }))}
-                          aria-label={t("payroll.calculateOvertime")}
-                        />
-                        <span>{t("payroll.calculateOvertime")}</span>
                       </div>
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <Checkbox
@@ -1280,41 +1372,10 @@ function OrgPayrollPage() {
                         </div>
                       </div>
                     </div>
-                    {generateSettingsDirty ? (
-                      <p className="text-xs text-amber-600">{t("payroll.unsavedPolicyChanges")}</p>
-                    ) : null}
                   </>
                 )}
               </section>
             </div>
-            {canEditPayrollSettings ? (
-              <div className="flex shrink-0 justify-end">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => saveGeneratePayrollSettings.mutate({
-                    month: genMonth,
-                    year: genYear,
-                    settings: normalizePayrollSettings(generateSettingsForm),
-                    settingsDirty: generateSettingsDirty,
-                    scheduleDirty: generateScheduleDirty,
-                    days: selectedMonthScheduleDates.map((date, index) => ({
-                      date,
-                      day_type: generateDayTypes[date] ?? savedScheduleDayTypes[index],
-                    })),
-                  })}
-                  disabled={
-                    !generateSettingsReady ||
-                    !generateScheduleReady ||
-                    (!generateSettingsDirty && !generateScheduleDirty) ||
-                    saveGeneratePayrollSettings.isPending
-                  }
-                  loading={saveGeneratePayrollSettings.isPending}
-                >
-                  {t("payroll.savePoliciesAndWorkingDays")}
-                </Button>
-              </div>
-            ) : null}
           </div>
 
           {selectedHasExisting ? (
@@ -1332,7 +1393,7 @@ function OrgPayrollPage() {
             <Button className="w-full whitespace-normal sm:w-auto"
               variant="ghost"
               onClick={() => setPeriodOpen(false)}
-              disabled={generate.isPending || regenerate.isPending || preview.isPending || saveGeneratePayrollSettings.isPending}
+              disabled={generate.isPending || regenerate.isPending || preview.isPending}
             >
               {t("actions.cancel", "Cancel")}
             </Button>
@@ -1346,10 +1407,13 @@ function OrgPayrollPage() {
                   uuids: [...validSelected],
                   month: genMonth,
                   year: genYear,
+                  settings: generateRunSettings,
+                  days: generateRunDays,
+                  overtimeAmounts: runOvertimeAmounts,
                   settingsFingerprint: generatePayrollFingerprint,
                 })
               }
-              disabled={generate.isPending || regenerate.isPending || preview.isPending || saveGeneratePayrollSettings.isPending || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
+              disabled={generate.isPending || regenerate.isPending || preview.isPending || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || hasInvalidOvertimeDraft}
               loading={preview.isPending}
             >
               {t("payroll.preview", { defaultValue: "Preview" })}
@@ -1358,7 +1422,7 @@ function OrgPayrollPage() {
               <Button className="w-full whitespace-normal sm:w-auto"
                 variant="destructive"
                 onClick={() => setRegenerateOpen(true)}
-                disabled={generate.isPending || regenerate.isPending || saveGeneratePayrollSettings.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
+                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || hasInvalidOvertimeDraft}
                 loading={regenerate.isPending}
               >
                 {t("payroll.regenerateSelected", { count: alreadyGeneratedSelected.length })}
@@ -1366,9 +1430,16 @@ function OrgPayrollPage() {
             ) : (
               <Button className="w-full whitespace-normal sm:w-auto"
                 onClick={() =>
-                  generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
+                  generate.mutate({
+                    uuids: [...validSelected],
+                    month: genMonth,
+                    year: genYear,
+                    settings: generateRunSettings,
+                    days: generateRunDays,
+                    overtimeAmounts: runOvertimeAmounts,
+                  })
                 }
-                disabled={generate.isPending || regenerate.isPending || saveGeneratePayrollSettings.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
+                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || hasInvalidOvertimeDraft}
                 loading={generate.isPending}
               >
                 {t("payroll.generatePayroll")}
@@ -1488,13 +1559,13 @@ function OrgPayrollPage() {
                     <p className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-700">
                       {item.rates.skip_reason === "no_basic_salary"
                         ? t(
-                            "payroll.previewNoSalary",
-                            "No basic salary on record for this month, so attendance and leave cannot be converted to money.",
-                          )
+                          "payroll.previewNoSalary",
+                          "No basic salary on record for this month, so attendance and leave cannot be converted to money.",
+                        )
                         : t(
-                            "payroll.previewNoWorkingDays",
-                            "This month has no working days, so there is no daily rate to deduct against.",
-                          )}
+                          "payroll.previewNoWorkingDays",
+                          "This month has no working days, so there is no daily rate to deduct against.",
+                        )}
                     </p>
                   ) : null}
 
@@ -1530,9 +1601,9 @@ function OrgPayrollPage() {
                       : `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
-                          count: a.holidays_in_month,
-                          defaultValue: "{{count}} holiday(s) excluded from working days",
-                        })}`
+                        count: a.holidays_in_month,
+                        defaultValue: "{{count}} holiday(s) excluded from working days",
+                      })}`
                       : ""}
                   </p>
                 </div>
@@ -1561,9 +1632,21 @@ function OrgPayrollPage() {
             "This will overwrite the existing payroll for {{count}} selected employee(s) for {{period}}. Existing records will be deleted and recomputed. This cannot be undone.",
         })}
         confirmLabel={t("payroll.regenerate", { defaultValue: "Regenerate" })}
-        onConfirm={() =>
-          regenerate.mutate({ uuids: alreadyGeneratedSelected, month: genMonth, year: genYear })
-        }
+        onConfirm={() => {
+          const previewedRun = preview.variables;
+          if (!previewedRun || !previewMatchesCurrent) {
+            toast.error(t("payroll.previewStale"));
+            return;
+          }
+          regenerate.mutate({
+            uuids: alreadyGeneratedSelected,
+            month: genMonth,
+            year: genYear,
+            settings: previewedRun.settings,
+            days: previewedRun.days,
+            overtimeAmounts: overtimeAmountsFor(alreadyGeneratedSelected),
+          });
+        }}
       />
 
       <ConfirmDialog
@@ -1615,6 +1698,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     };
     setSettingsForm({
       ...settings,
+      calculate_overtime: false,
       shift_start_time: String(settings.shift_start_time).slice(0, 5),
       shift_end_time: String(settings.shift_end_time).slice(0, 5),
     });
@@ -1660,8 +1744,8 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     return (weekday === 0 || weekday === 6) && dayTypes[date] === "working";
   }).length;
   const firstWeekday = new Date(year, month - 1, 1).getDay();
-  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-  const weekdayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const policyYears = Array.from({ length: 101 }, (_, index) => 2000 + index);
 
   /** No requirement that Sat/Sun be off: any weekday can be working. */
@@ -1752,10 +1836,6 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
                 <span>Calculate salary according to working hours</span>
               </label>
               <label className="flex cursor-pointer items-start gap-2 text-sm">
-                <Checkbox checked={settingsForm.calculate_overtime} disabled={!canManage} onCheckedChange={(v) => setSettingsForm((s) => ({ ...s, calculate_overtime: v === true }))} />
-                <span>Calculate overtime according to the working hours</span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 text-sm">
                 <Checkbox checked={settingsForm.salary_calculation_method === "days"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "days" }))} />
                 <span>Calculate salary according to working days</span>
               </label>
@@ -1763,8 +1843,8 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
             <div className="space-y-2 border-t pt-3">
               <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
-                <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0,5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
+                <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
+                <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
               </div>
             </div>
             {canManage ? <Button className="w-full sm:w-auto" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}
@@ -1775,7 +1855,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
         <DialogContent className="max-w-xl">
           <DialogHeader><DialogTitle>Monthly Working Schedule</DialogTitle><DialogDescription>Choose working days and off days for the selected month.</DialogDescription></DialogHeader>
           <div className="grid grid-cols-2 gap-2">
-            <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{monthNames.map((name,i)=><SelectItem key={name} value={String(i+1)}>{name}</SelectItem>)}</SelectContent></Select>
+            <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{monthNames.map((name, i) => <SelectItem key={name} value={String(i + 1)}>{name}</SelectItem>)}</SelectContent></Select>
             <Input type="number" min={2000} max={2100} value={year} onChange={(e) => setYear(Number(e.target.value))} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1805,15 +1885,15 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
             ))}
           </div>
           <div className="grid grid-cols-7 gap-1">
-            {Array.from({length:firstWeekday},(_,i)=><div key={"blank"+i} />)}
-            {Array.from({length:daysInMonth},(_,i)=>{
-              const day=i+1; const date=`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-              const type=dayTypes[date] ?? "off";
-              return <button key={date} type="button" disabled={!canManage} onClick={()=>setDayTypes((s)=>({...s,[date]:s[date]==="working"?"off":"working"}))} className={`rounded-md border p-2 text-sm ${type==="working"?"border-primary bg-primary/10":"border-border bg-muted"}`}><span className="block font-medium">{day}</span><span className="block text-[9px]">{type==="working"?"Working":"Off"}</span></button>;
+            {Array.from({ length: firstWeekday }, (_, i) => <div key={"blank" + i} />)}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1; const date = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const type = dayTypes[date] ?? "off";
+              return <button key={date} type="button" disabled={!canManage} onClick={() => setDayTypes((s) => ({ ...s, [date]: s[date] === "working" ? "off" : "working" }))} className={`rounded-md border p-2 text-sm ${type === "working" ? "border-primary bg-primary/10" : "border-border bg-muted"}`}><span className="block font-medium">{day}</span><span className="block text-[9px]">{type === "working" ? "Working" : "Off"}</span></button>;
             })}
           </div>
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span>Working days: {Object.values(dayTypes).filter((v)=>v==="working").length}</span><span>Off days: {Object.values(dayTypes).filter((v)=>v==="off").length}</span></div>
-          <DialogFooter><Button variant="outline" onClick={()=>setScheduleOpen(false)}>Cancel</Button><Button onClick={()=>saveSchedule.mutate()} disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || !isScheduleComplete}>Save Monthly Schedule</Button></DialogFooter>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground"><span>Working days: {Object.values(dayTypes).filter((v) => v === "working").length}</span><span>Off days: {Object.values(dayTypes).filter((v) => v === "off").length}</span></div>
+          <DialogFooter><Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button><Button onClick={() => saveSchedule.mutate()} disabled={!canManage || scheduleQ.isLoading || saveSchedule.isPending || !isScheduleComplete}>Save Monthly Schedule</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>

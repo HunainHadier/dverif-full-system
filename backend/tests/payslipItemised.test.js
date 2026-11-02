@@ -228,6 +228,21 @@ describe("payslip PDF Ã¢â‚¬â€ itemised lines", () => {
     expect(raw).not.toContain("monthly_variable");
   });
 
+  it("shows manual overtime as its own earning with a readable source", async () => {
+    const pdf = await generatePayslipPdf({
+      record: withLines([
+        { label: "Overtime", type: "earning", source: "manual_overtime", amount: "1500.00", basis_value: null, basis_unit: null },
+      ]),
+      employeeName: "Ayesha Siddiqui",
+      organizationName: "Dverif Labs",
+    });
+    const raw = pdfText(pdf);
+
+    expect(raw).toContain("Overtime");
+    expect(raw).toContain("Manual overtime");
+    expect(raw).not.toContain("manual_overtime");
+  });
+
   it("still renders a record made before line items existed", async () => {
     // Every record the original payroll flow produced has no lines. Those are the
     // bulk of the data, and an empty "Earnings" heading would be worse than the

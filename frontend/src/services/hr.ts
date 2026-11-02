@@ -170,6 +170,7 @@ export type PayrollLine = {
     | "auto_unpaid_leave"
     | "auto_absenteeism"
       | "auto_overtime"
+    | "manual_overtime"
     | "monthly_variable"
     | "manual";
   amount: number;
@@ -250,13 +251,15 @@ export type PayrollEmployeeRow = {
   deduction_items: { name: string; amount: number }[];
   allowances: number | string;
   deductions: number | string;
+  overtime_amount: number | string;
   net_salary: number | string;
 };
 
 export type MonthlyWorkDay = { schedule_date: string; day_type: "working" | "off" };
+export type PayrollRunDay = { date: string; day_type: "working" | "off" };
 
 export const orgSalaryService = {
-  employees: (params: { page?: number; limit?: number } = {}) =>
+  employees: (params: { page?: number; limit?: number; month?: number; year?: number } = {}) =>
     api.get<Paginated<PayrollEmployeeRow>>("/org/payroll-employees", { params }).then((r) => r.data),
   settings: (month: number, year: number) =>
     api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings", { params: { month, year } }).then((r) => r.data.settings),
@@ -285,13 +288,23 @@ export const orgSalaryService = {
    * the identical computation the generate path runs, so what is previewed and
    * what is committed cannot diverge.
    */
-  preview: (data: { month: number; year: number; employee_uuids?: UUID[] }) =>
+  preview: (data: {
+    month: number;
+    year: number;
+    employee_uuids?: UUID[];
+    settings: PayrollSettings;
+    days: PayrollRunDay[];
+    overtime_amounts?: Record<string, number>;
+  }) =>
     api.post<PayrollPreview>("/org/payroll/preview", data).then((r) => r.data),
   generate: (data: {
     month: number;
     year: number;
     employee_uuids?: UUID[];
     regenerate?: boolean;
+    settings: PayrollSettings;
+    days: PayrollRunDay[];
+    overtime_amounts?: Record<string, number>;
   }) =>
     api
       .post<{

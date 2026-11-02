@@ -12,6 +12,7 @@ const { computeAutomaticLines, getMonthlyAttendanceAndLeaveSummary, insertSalary
 import * as expenses from "../services/expenses.service.js";
 import { queueNotificationEmail, notificationActionUrl } from "../services/notificationEmail.service.js";
 import { isoDate } from "../utils/dateRange.js";
+import { CURRENCY } from "../utils/currency.js";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -36,6 +37,116 @@ function monthYearFields(month, year) {
   const y = parseInt(year, 10);
   if (isNaN(y) || y < 2000 || y > 2100) throw new ApiError(400, "year is invalid");
   return { m, y };
+}
+
+function normalizePayrollOvertimeAmounts(input) {
+  if (input === undefined) return new Map();
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "overtime_amounts must be an employee-to-amount object.");
+  }
+  const amounts = new Map();
+  for (const [employeeUuid, rawAmount] of Object.entries(input)) {
+    assertUuid(employeeUuid, "Overtime employee UUID");
+    if (rawAmount === undefined || rawAmount === null || rawAmount === "") {
+      throw new ApiError(400, "Each overtime amount is required.");
+    }
+    const amount = moneyField(rawAmount, "overtime_amount");
+    if (amount > 999999999999.99) {
+      throw new ApiError(400, "overtime_amount exceeds the maximum supported amount.");
+    }
+    amounts.set(employeeUuid, amount);
+  }
+  return amounts;
+}
+
+function assertPayrollOvertimeEmployees(amounts, employees) {
+  const employeeUuids = new Set(employees.map((employee) => employee.uuid));
+  for (const employeeUuid of amounts.keys()) {
+    if (!employeeUuids.has(employeeUuid)) {
+      throw new ApiError(400, "Overtime amounts may only be supplied for employees in this payroll run.");
+    }
+  }
+}
+
+function normalizePayrollRunPolicy(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new ApiError(400, "Payroll run settings are required.");
+  }
+  const salaryCalculationMethod = input.salary_calculation_method;
+  if (!["hours", "days"].includes(salaryCalculationMethod)) {
+    throw new ApiError(400, "Choose either working-hours or working-days salary calculation.");
+  }
+  if (typeof input.calculate_overtime !== "boolean") {
+    throw new ApiError(400, "calculate_overtime must be true or false.");
+  }
+  const validTime = (value) => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value);
+  if (!validTime(input.shift_start_time) || !validTime(input.shift_end_time)) {
+    throw new ApiError(400, "Enter valid shift start and check-out times.");
+  }
+  const shiftStart = input.shift_start_time.slice(0, 5);
+  const shiftEnd = input.shift_end_time.slice(0, 5);
+  const startMinutes = Number(shiftStart.slice(0, 2)) * 60 + Number(shiftStart.slice(3, 5));
+  const endMinutes = Number(shiftEnd.slice(0, 2)) * 60 + Number(shiftEnd.slice(3, 5));
+  if (endMinutes <= startMinutes) {
+    throw new ApiError(400, "Check-out must be later than shift start time.");
+  }
+  const overtimeMultiplier = Number(input.overtime_multiplier);
+  if (!Number.isFinite(overtimeMultiplier) || overtimeMultiplier <= 0 || overtimeMultiplier > 5) {
+    throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
+  }
+  return {
+    salary_calculation_method: salaryCalculationMethod,
+    calculate_overtime: input.calculate_overtime,
+    shift_start_time: shiftStart,
+    shift_end_time: shiftEnd,
+    overtime_multiplier: overtimeMultiplier,
+    hours_per_workday: (endMinutes - startMinutes) / 60,
+    currency: CURRENCY,
+  };
+}
+
+function payrollPolicySnapshot(policy) {
+  return {
+    salary_calculation_method: policy.salary_calculation_method,
+    calculate_overtime: Number(policy.calculate_overtime) === 1 || policy.calculate_overtime === true,
+    shift_start_time: String(policy.shift_start_time).slice(0, 5),
+    shift_end_time: String(policy.shift_end_time).slice(0, 5),
+    overtime_multiplier: Number(policy.overtime_multiplier),
+  };
+}
+
+async function resolvePayrollRunInputs({ orgId, m, y, body, conn }) {
+  const hasSettings = body?.settings !== undefined;
+  const hasDays = body?.days !== undefined;
+  if (hasSettings !== hasDays) {
+    throw new ApiError(400, "Payroll run settings and working days must be supplied together.");
+  }
+
+  let policy;
+  let schedule;
+  if (hasSettings) {
+    policy = normalizePayrollRunPolicy(body.settings);
+    schedule = payrollService.normalizePayrollRunSchedule(body.days, m, y);
+  } else {
+    policy = await payrollService.getPayrollSettings(orgId, conn, m, y);
+    const calendar = await payrollService.getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
+    const workingDates = new Set(calendar.workingDates);
+    const offDates = calendar.nonWorkingDates;
+    const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    schedule = Array.from({ length: daysInMonth }, (_, index) => {
+      const date = `${y}-${String(m).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`;
+      return { date, day_type: workingDates.has(date) ? "working" : offDates.has(date) ? "off" : null };
+    });
+    if (schedule.some((day) => day.day_type === null)) {
+      throw new ApiError(409, "Monthly working schedule is incomplete. Configure every date as a working day or off day before payroll.");
+    }
+  }
+  return {
+    policy,
+    schedule,
+    policySnapshot: payrollPolicySnapshot(policy),
+    scheduleSnapshot: schedule.map(({ date, day_type }) => ({ date, day_type })),
+  };
 }
 
 /** Verify an employee exists and belongs to the given organization. */
@@ -69,7 +180,17 @@ async function findEmployee(employeeUuid, orgId) {
  * is "what actually happened", and an employee disputing a payslip needs to be
  * told which of the two they are looking at.
  */
-async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate = null, conn }) {
+async function computeEmployeePayroll({
+  employeeUuid,
+  orgId,
+  m,
+  y,
+  joiningDate = null,
+  policy,
+  scheduleOverride,
+  overtimeAmount: overtimeAmountOverride,
+  conn,
+}) {
   const basic = await payrollService.proratedBasicForMonth({ employeeUuid, orgId, month: m, year: y, joiningDate, conn });
 
   // Pull ONLY this employee's individually-assigned, active salary components.
@@ -110,7 +231,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     else allowances += amt;
   }
 
-  // Month-specific variable items (bonus, overtime, one-off deductions, etc.).
+  // Month-specific variable items (bonuses and one-off deductions, etc.).
   // These are separate from recurring employee assignments and are included only
   // for the exact payroll period being previewed/generated.
   const [monthlyVariables] = await conn.query(
@@ -134,16 +255,36 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     };
   });
 
+  let overtimeAmount = overtimeAmountOverride;
+  if (overtimeAmount === undefined) {
+    const [[overtimeRow]] = await conn.query(
+      `SELECT overtime_amount
+         FROM payroll_employee_overtime
+        WHERE organization_id=? AND employee_uuid=? AND month=? AND year=?`,
+      [orgId, employeeUuid, m, y],
+    );
+    overtimeAmount = moneyField(overtimeRow?.overtime_amount ?? 0, "overtime");
+  }
+
   const summary = await getMonthlyAttendanceAndLeaveSummary({
     employeeUuid,
     orgId,
     month: m,
     year: y,
     joiningDate,
+    policy,
+    scheduleOverride,
     conn,
   });
 
-  const automatic = computeAutomaticLines({ summary, basicSalary: basic });
+  // Overtime pay is entered as a period-specific amount by payroll staff.
+  // Attendance may still report approved overtime hours, but they must not
+  // create a second, automatically calculated earning.
+  const automatic = computeAutomaticLines({
+    summary,
+    basicSalary: basic,
+    policy: { ...policy, calculate_overtime: false },
+  });
 
   /**
    * Expense reimbursements for the month, as one payslip line.
@@ -172,6 +313,16 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     { label: "Basic monthly salary", type: "earning", source: "basic", amount: Number(basic), basis_value: null, basis_unit: null },
     ...componentLines,
     ...monthlyVariableLines,
+    ...(overtimeAmount > 0
+      ? [{
+          label: "Overtime",
+          type: "earning",
+          source: "manual_overtime",
+          amount: overtimeAmount,
+          basis_value: null,
+          basis_unit: null,
+        }]
+      : []),
     ...automatic.lines,
     // Reimbursement is money COMING to the employee, so it is an earning alongside
     // allowances rather than a negative anywhere. Folding it into the deduction
@@ -179,7 +330,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     ...(expenseLine ? [expenseLine] : []),
   ];
 
-  const totalAllowances = moneyField(allowances + automatic.totalAddition, "allowances");
+  const totalAllowances = moneyField(allowances + overtimeAmount + automatic.totalAddition, "allowances");
   const totalDeductions = moneyField(deductions + automatic.totalDeduction, "deductions");
 
   const expenseReimbursement = expenseLine?.amount ?? 0;
@@ -199,6 +350,7 @@ async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate =
     lines,
     summary,
     automatic,
+    overtimeAmount,
     expenseLine,
     approvedClaims,
   };
@@ -236,6 +388,7 @@ export async function generatePayroll(req, res) {
   const orgId = req.scopeOrgId;
   const { month, year, employee_uuids, regenerate } = req.body || {};
   const { m, y } = monthYearFields(month, year);
+  const overtimeAmounts = normalizePayrollOvertimeAmounts(req.body?.overtime_amounts);
 
   const conn = await pool.getConnection();
   let skipped = 0;
@@ -252,6 +405,13 @@ export async function generatePayroll(req, res) {
   let carriedClaimPointers = [];
   try {
     await conn.beginTransaction();
+    const runInputs = await resolvePayrollRunInputs({
+      orgId,
+      m,
+      y,
+      body: req.body,
+      conn,
+    });
 
     // Normalize an optional employee selection. When `employee_uuids` is
     // provided (individual or check-box selection), only those employees are
@@ -277,6 +437,7 @@ export async function generatePayroll(req, res) {
       );
       if (!employees.length) throw new ApiError(404, "No employees in this organization to process");
     }
+    assertPayrollOvertimeEmployees(overtimeAmounts, employees);
 
     // Regenerate mode: explicitly delete the existing records for exactly the
     // selected employees + period, then recreate them below. This is the
@@ -388,7 +549,28 @@ export async function generatePayroll(req, res) {
     const createdBy = req.user?.id ?? null;
 
     for (const emp of employees) {
-      const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn });
+      const overtimeAmount = overtimeAmounts.get(emp.uuid);
+      if (overtimeAmount !== undefined) {
+        await conn.query(
+          `INSERT INTO payroll_employee_overtime
+             (organization_id, employee_uuid, month, year, overtime_amount, updated_by_uuid)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE overtime_amount=VALUES(overtime_amount),
+             updated_by_uuid=VALUES(updated_by_uuid)`,
+          [orgId, emp.uuid, m, y, overtimeAmount, req.user?.uuid ?? null],
+        );
+      }
+      const computed = await computeEmployeePayroll({
+        employeeUuid: emp.uuid,
+        orgId,
+        m,
+        y,
+        joiningDate: emp.joining_date,
+        policy: runInputs.policy,
+        scheduleOverride: runInputs.schedule,
+        overtimeAmount,
+        conn,
+      });
       if (computed.automatic.skipReason === "no_basic_salary") {
         throw new ApiError(409, `Payroll setup is incomplete for employee ${emp.uuid}: no positive effective basic salary exists for ${MONTHS[m - 1]} ${y}. Add an effective salary record, then preview again.`);
       }
@@ -418,8 +600,9 @@ export async function generatePayroll(req, res) {
       await conn.query(
         `INSERT INTO salary_records
            (uuid, employee_uuid, organization_id, month, year, basic_salary,
-            allowances, deductions, expense_reimbursement, net_salary, notes, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            allowances, deductions, expense_reimbursement, net_salary, payroll_policy_snapshot,
+            payroll_schedule_snapshot, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           recordUuid,
           emp.uuid,
@@ -431,6 +614,8 @@ export async function generatePayroll(req, res) {
           computed.deductions,
           expenseReimbursement,
           netSalary,
+          JSON.stringify(runInputs.policySnapshot),
+          JSON.stringify(runInputs.scheduleSnapshot),
           null,
           createdBy,
         ]
@@ -558,6 +743,7 @@ export async function generatePayroll(req, res) {
     console.error("Payroll email enqueue failed:", error?.message);
   }
 
+  const generatedEmployees = new Set(generatedEmployeeUuids);
   logAudit({
     ...getActorFromReq(req),
     action: "payroll.generate",
@@ -570,11 +756,14 @@ export async function generatePayroll(req, res) {
       // Named in the audit entry because money moving into a payroll is the thing
       // an auditor asks about later, and "the payroll ran" does not answer it.
       expense_claims_paid: claimsPaid,
+      manual_overtime_amounts_saved: [...overtimeAmounts]
+        .filter(([employeeUuid]) => generatedEmployees.has(employeeUuid))
+        .map(([employeeUuid, amount]) => ({ employee_uuid: employeeUuid, amount })),
     },
     req,
   });
 
-  return ok(res, { items: rows, month: m, year: y, count: rows.length, skipped, expense_claims_paid: claimsPaid }, "Payroll generated from salary history, components, leave, attendance and expense claims");
+  return ok(res, { items: rows, month: m, year: y, count: rows.length, skipped, expense_claims_paid: claimsPaid }, "Payroll generated from salary history, components, leave, attendance, manual overtime and expense claims");
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +785,14 @@ export async function previewPayroll(req, res) {
   const orgId = req.scopeOrgId;
   const { month, year, employee_uuids } = req.body || {};
   const { m, y } = monthYearFields(month, year);
+  const overtimeAmounts = normalizePayrollOvertimeAmounts(req.body?.overtime_amounts);
+  const runInputs = await resolvePayrollRunInputs({
+    orgId,
+    m,
+    y,
+    body: req.body,
+    conn: pool,
+  });
 
   const selected = Array.isArray(employee_uuids) ? employee_uuids.filter(Boolean) : [];
   let employees;
@@ -615,10 +812,21 @@ export async function previewPayroll(req, res) {
       [orgId]
     );
   }
+  assertPayrollOvertimeEmployees(overtimeAmounts, employees);
 
   const items = [];
   for (const emp of employees) {
-    const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn: pool });
+    const computed = await computeEmployeePayroll({
+      employeeUuid: emp.uuid,
+      orgId,
+      m,
+      y,
+      joiningDate: emp.joining_date,
+      policy: runInputs.policy,
+      scheduleOverride: runInputs.schedule,
+      overtimeAmount: overtimeAmounts.get(emp.uuid),
+      conn: pool,
+    });
     items.push({
       employee_uuid: emp.uuid,
       employee_name: emp.full_name,
@@ -697,6 +905,13 @@ export async function previewPayroll(req, res) {
 export async function listPayrollEmployees(req, res) {
   const { page, limit, offset } = parsePagination(req.query, { maxLimit: 1000 });
   const orgId = req.scopeOrgId;
+  if ((req.query.month === undefined) !== (req.query.year === undefined)) {
+    throw new ApiError(400, "month and year must be supplied together");
+  }
+  const currentDate = new Date();
+  const { m, y } = req.query.month === undefined && req.query.year === undefined
+    ? { m: currentDate.getMonth() + 1, y: currentDate.getFullYear() }
+    : payrollService.assertMonthYear(req.query.month, req.query.year);
 
   const [[{ total }]] = await pool.query(
     "SELECT COUNT(*) AS total FROM employees WHERE organization_id=? AND status IN ('current_employee', 'active')",
@@ -706,13 +921,16 @@ export async function listPayrollEmployees(req, res) {
     `SELECT e.uuid, e.full_name, e.email, dg.name AS designation, dp.name AS department,
             (SELECT h.basic_salary FROM employee_salary_history h
              WHERE h.employee_uuid=e.uuid AND h.effective_to IS NULL
-             ORDER BY h.effective_from DESC LIMIT 1) AS basic_salary
+             ORDER BY h.effective_from DESC LIMIT 1) AS basic_salary,
+            COALESCE((SELECT po.overtime_amount FROM payroll_employee_overtime po
+              WHERE po.organization_id=e.organization_id AND po.employee_uuid=e.uuid
+                AND po.month=? AND po.year=? LIMIT 1), 0) AS overtime_amount
        FROM employees e
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
       WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')
       ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
-    [orgId, limit, offset],
+    [m, y, orgId, limit, offset],
   );
 
   const compensation = new Map(
@@ -757,9 +975,10 @@ export async function listPayrollEmployees(req, res) {
       deduction_items: details.deductions,
       allowances: moneyField(details.allowances.reduce((sum, item) => sum + item.amount, 0), "allowances"),
       deductions: moneyField(details.deductions.reduce((sum, item) => sum + item.amount, 0), "deductions"),
+      overtime_amount: moneyField(employee.overtime_amount, "overtime"),
       net_salary: computedNet(
         employee.basic_salary ?? 0,
-        details.allowances.reduce((sum, item) => sum + item.amount, 0),
+        details.allowances.reduce((sum, item) => sum + item.amount, 0) + moneyField(employee.overtime_amount, "overtime"),
         details.deductions.reduce((sum, item) => sum + item.amount, 0),
       ),
     };

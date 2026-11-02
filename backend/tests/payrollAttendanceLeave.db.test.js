@@ -982,13 +982,10 @@ describe.runIf(HAS_DB)("approved overtime reaches the payslip", () => {
 
     const p = await preview(emp.uuid);
     expect(p.attendance.approved_overtime_hours).toBe(2);
-    const line = lineOf(p, "auto_overtime");
-    expect(line).toBeTruthy();
-    expect(line.type).toBe("earning");
-    expect(Number(line.basis_value)).toBe(2);
-    expect(Number(line.amount)).toBe(money(HOURLY * 1.5 * 2));
-    expect(Number(p.allowances)).toBe(money(HOURLY * 1.5 * 2));
-    expect(Number(p.net_salary)).toBe(money(BASIC + HOURLY * 1.5 * 2));
+    expect(lineOf(p, "auto_overtime")).toBeUndefined();
+    expect(lineOf(p, "manual_overtime")).toBeUndefined();
+    expect(Number(p.allowances)).toBe(0);
+    expect(Number(p.net_salary)).toBe(BASIC);
   });
 });
 
@@ -1044,11 +1041,10 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(p.attendance.unpaid_leave_days).toBe(2);
     expect(p.attendance.approved_overtime_hours).toBe(2);
 
-    const expectedOvertime = money(HOURLY * 1.5 * 2);
-    expect(Number(p.allowances)).toBe(money(8000 + expectedOvertime));
+    expect(Number(p.allowances)).toBe(8000);
     expect(Number(p.deductions)).toBe(money(1000 + PER_DAY * 2));
     expect(Number(p.net_salary)).toBe(
-      money(BASIC + 8000 + expectedOvertime - 1000 - PER_DAY * 2),
+      money(BASIC + 8000 - 1000 - PER_DAY * 2),
     );
 
     const generated = await generate([emp.uuid]);
@@ -1072,10 +1068,10 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     expect(sources).toContain("basic");
     expect(sources).toContain("component");
     expect(sources).toContain("auto_unpaid_leave");
-    expect(sources).toContain("auto_overtime");
+    expect(sources).not.toContain("auto_overtime");
     expect(sources).not.toContain("auto_absenteeism");
 
-    expect(lines).toHaveLength(6); // basic + 3 components + unpaid leave + overtime
+    expect(lines).toHaveLength(5); // basic + 3 components + unpaid leave
     const earnings = lines.filter((l) => l.type === "earning").reduce((s, l) => s + Number(l.amount), 0);
     const deductions = lines.filter((l) => l.type === "deduction").reduce((s, l) => s + Number(l.amount), 0);
     expect(money(earnings - deductions)).toBe(Number(record.net_salary));
@@ -1083,10 +1079,6 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     const leaveLine = lines.find((l) => l.source === "auto_unpaid_leave");
     expect(Number(leaveLine.basis_value)).toBe(2);
     expect(leaveLine.basis_unit).toBe("days");
-    const overtimeLine = lines.find((l) => l.source === "auto_overtime");
-    expect(Number(overtimeLine.basis_value)).toBe(2);
-    expect(overtimeLine.basis_unit).toBe("hours");
-
     // A second generate for the same employee/period is refused, not duplicated.
     await expect(generate([emp.uuid])).rejects.toMatchObject({ statusCode: 409 });
 
@@ -1108,11 +1100,9 @@ describe.runIf(HAS_DB)("payroll preview and generation agree end to end", () => 
     const regenerated = await generate([emp.uuid], { regenerate: true });
     expect(regenerated.statusCode).toBe(200);
     const [afterRegenerate] = await salaryRecordOf(emp.uuid);
-    expect(Number(afterRegenerate.allowances)).toBe(
-      money(7000 + 3000 + expectedOvertime),
-    );
+    expect(Number(afterRegenerate.allowances)).toBe(money(7000 + 3000));
     expect(Number(afterRegenerate.net_salary)).toBe(
-      money(BASIC + 7000 + 3000 + expectedOvertime - 1000 - PER_DAY * 2),
+      money(BASIC + 7000 + 3000 - 1000 - PER_DAY * 2),
     );
   });
 

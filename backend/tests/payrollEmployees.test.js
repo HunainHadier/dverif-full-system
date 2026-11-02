@@ -23,6 +23,7 @@ describe("listPayrollEmployees", () => {
       designation: "Analyst",
       department: "Finance",
       basic_salary: "100000.00",
+      overtime_amount: "2000.00",
     };
     pool.query
       .mockResolvedValueOnce([[{ total: 1 }]])
@@ -51,7 +52,8 @@ describe("listPayrollEmployees", () => {
         ],
         allowances: 10500,
         deductions: 6500,
-        net_salary: 104000,
+        overtime_amount: 2000,
+        net_salary: 106000,
       },
     ]);
     expect(pool.query.mock.calls[2][1]).toEqual([7, employee.uuid]);
