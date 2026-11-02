@@ -741,6 +741,8 @@ export async function listCandidates({
   openingUuid,
   stage,
   search,
+  fromDate,
+  toDate,
   page = 1,
   limit = 20,
   offset = 0,
@@ -761,6 +763,9 @@ export async function listCandidates({
     clauses.push("c.stage = ?");
     params.push(stage);
   }
+  if (fromDate) { clauses.push("DATE(c.created_at) >= ?"); params.push(fromDate); }
+  if (toDate) { clauses.push("DATE(c.created_at) <= ?"); params.push(toDate); }
+  if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
   if (search && String(search).trim()) {
     // LIKE with an escaped wildcard, so a search for "100%" is a literal and a
     // search for "_" does not match every single character.
