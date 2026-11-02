@@ -2,7 +2,7 @@ name: Apply payroll snapshot patch
 on:
   push:
     branches:
-      - feat/payroll-run-snapshots
+      - feat/payroll-generation-snapshots
 permissions:
   contents: write
 jobs:
@@ -12,6 +12,329 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Patch
+      - name: Patch payroll run-local settings and snapshots
+        shell: bash
         run: |
-          echo "patch workflow placeholder"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f"Expected text not found in {path}: {old[:120]!r}")
+              p.write_text(s.replace(old, new, 1))
+
+          # ---------- frontend payroll route ----------
+          p = Path('frontend/src/routes/_app.org.payroll.tsx')
+          s = p.read_text()
+          start = s.find('  const saveGeneratePayrollSettings = useMutation({')
+          end = s.find('  const setGenerateScheduleEveryDay =', start)
+          if start < 0 or end < 0:
+              raise SystemExit('saveGeneratePayrollSettings block not found')
+          s = s[:start] + s[end:]
+
+          old = '''  const scheduleUnavailable =
+    payrollScheduleQ.isLoading || payrollScheduleQ.isError || !generateScheduleReady ||
+    !selectedMonthScheduleComplete || generateScheduleDirty;'''
+          new = '''  const scheduleUnavailable =
+    payrollScheduleQ.isLoading || payrollScheduleQ.isError || !generateScheduleReady ||
+    !selectedMonthScheduleComplete;'''
+          if old not in s: raise SystemExit('scheduleUnavailable block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''  const generatePayrollFingerprint = JSON.stringify({
+    settings: savedGenerateSettings,
+    schedule: selectedMonthDayTypes,
+  });'''
+          new = '''  const generatePayrollSettings = normalizePayrollSettings(generateSettingsForm);
+  const generatePayrollDays = selectedMonthScheduleDates.map((date, index) => ({
+    date,
+    day_type: selectedMonthDayTypes[index],
+  }));
+  const generatePayrollFingerprint = JSON.stringify({
+    settings: generatePayrollSettings,
+    schedule: generatePayrollDays,
+  });'''
+          if old not in s: raise SystemExit('fingerprint block not found')
+          s = s.replace(old, new, 1)
+
+          # The modal is now run-local. Dirty state is informational only and must not block Preview/Generate.
+          old = '''  const generateSettingsDirty =
+    generateSettingsReady &&
+    JSON.stringify(normalizePayrollSettings(generateSettingsForm)) !==
+      JSON.stringify(savedGenerateSettings);'''
+          new = '''  const generateSettingsDirty = false;'''
+          if old not in s: raise SystemExit('generateSettingsDirty block not found')
+          s = s.replace(old, new, 1)
+
+          # Preview mutation payload.
+          old = '''    { uuids: string[]; month: number; year: number; settingsFingerprint: string }
+  >({
+    mutationFn: ({ uuids, month, year }) =>
+      orgSalaryService.preview({
+        month,
+        year,
+        employee_uuids: uuids.length ? uuids : undefined,
+      }),'''
+          new = '''    { uuids: string[]; month: number; year: number; settingsFingerprint: string; settings: PayrollSettings; days: { date: string; day_type: "working" | "off" }[] }
+  >({
+    mutationFn: ({ uuids, month, year, settings, days }) =>
+      orgSalaryService.preview({
+        month,
+        year,
+        employee_uuids: uuids.length ? uuids : undefined,
+        settings,
+        days,
+      }),'''
+          if old not in s: raise SystemExit('preview mutation block not found')
+          s = s.replace(old, new, 1)
+
+          # Generate mutation.
+          old = '''    { uuids: string[]; month: number; year: number }
+  >({
+    mutationFn: ({ uuids, month, year }) =>
+      orgSalaryService.generate({
+        month,
+        year,
+        employee_uuids: uuids.length ? uuids : undefined,
+      }),'''
+          new = '''    { uuids: string[]; month: number; year: number; settings: PayrollSettings; days: { date: string; day_type: "working" | "off" }[] }
+  >({
+    mutationFn: ({ uuids, month, year, settings, days }) =>
+      orgSalaryService.generate({
+        month,
+        year,
+        employee_uuids: uuids.length ? uuids : undefined,
+        settings,
+        days,
+      }),'''
+          if old not in s: raise SystemExit('generate mutation block not found')
+          s = s.replace(old, new, 1)
+
+          # Regenerate mutation.
+          old = '''    { uuids: string[]; month: number; year: number }
+  >({
+    mutationFn: ({ uuids, month, year }) =>
+      orgSalaryService.generate({
+        month,
+        year,
+        employee_uuids: uuids,
+        regenerate: true,
+      }),'''
+          new = '''    { uuids: string[]; month: number; year: number; settings: PayrollSettings; days: { date: string; day_type: "working" | "off" }[] }
+  >({
+    mutationFn: ({ uuids, month, year, settings, days }) =>
+      orgSalaryService.generate({
+        month,
+        year,
+        employee_uuids: uuids,
+        regenerate: true,
+        settings,
+        days,
+      }),'''
+          if old not in s: raise SystemExit('regenerate mutation block not found')
+          s = s.replace(old, new, 1)
+
+          # Remove Save Policies and Working Days button block.
+          marker = '''            {canEditPayrollSettings ? (
+              <div className="flex shrink-0 justify-end">'''
+          start = s.find(marker)
+          if start < 0: raise SystemExit('save button start not found')
+          end_marker = '''            ) : null}
+          </div>'''
+          end = s.find(end_marker, start)
+          if end < 0: raise SystemExit('save button end not found')
+          end += len('            ) : null}\n')
+          s = s[:start] + s[end:]
+
+          # Remove references to the deleted mutation and local dirty gating.
+          s = s.replace(' || saveGeneratePayrollSettings.isPending', '')
+          s = s.replace(' || generateSettingsDirty', '')
+
+          # Pass current modal state to Preview/Generate/Regenerate.
+          old = '''                  month: genMonth,
+                  year: genYear,
+                  settingsFingerprint: generatePayrollFingerprint,
+                })'''
+          new = '''                  month: genMonth,
+                  year: genYear,
+                  settingsFingerprint: generatePayrollFingerprint,
+                  settings: generatePayrollSettings,
+                  days: generatePayrollDays,
+                })'''
+          if old not in s: raise SystemExit('preview button payload not found')
+          s = s.replace(old, new, 1)
+          old = 'generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })'
+          new = 'generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear, settings: generatePayrollSettings, days: generatePayrollDays })'
+          if old not in s: raise SystemExit('generate button payload not found')
+          s = s.replace(old, new, 1)
+          old = 'regenerate.mutate({ uuids: alreadyGeneratedSelected, month: genMonth, year: genYear })'
+          new = 'regenerate.mutate({ uuids: alreadyGeneratedSelected, month: genMonth, year: genYear, settings: generatePayrollSettings, days: generatePayrollDays })'
+          if old not in s: raise SystemExit('regenerate button payload not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # ---------- frontend service ----------
+          replace_once('frontend/src/services/hr.ts',
+            'preview: (data: { month: number; year: number; employee_uuids?: UUID[] }) =>',
+            'preview: (data: { month: number; year: number; employee_uuids?: UUID[]; settings: PayrollSettings; days: { date: string; day_type: "working" | "off" }[] }) =>')
+          replace_once('frontend/src/services/hr.ts',
+            '    employee_uuids?: UUID[];\n    regenerate?: boolean;\n  })',
+            '    employee_uuids?: UUID[];\n    regenerate?: boolean;\n    settings: PayrollSettings;\n    days: { date: string; day_type: "working" | "off" }[];\n  })')
+
+          # ---------- frontend SalaryRecord type ----------
+          replace_once('frontend/src/services/core.ts',
+            '  net_salary: string | number;\n  notes?: string | null;',
+            '  net_salary: string | number;\n  payroll_policy_snapshot?: Record<string, unknown> | null;\n  payroll_schedule_snapshot?: { date: string; day_type: "working" | "off" }[] | null;\n  notes?: string | null;')
+
+          # ---------- backend payroll service ----------
+          p = Path('backend/src/services/payroll.service.js')
+          s = p.read_text()
+          old = '''export async function getWorkingDaysForMonth({ orgId, month, year, conn = pool }) {
+  const { m, y } = assertMonthYear(month, year);
+  const { firstDay, lastDay } = monthBounds(m, y);
+  const [rows] = await conn.query(
+    "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND schedule_date BETWEEN ? AND ?",
+    [orgId, firstDay, lastDay],
+  );
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (rows.length !== daysInMonth) throw new ApiError(409, "Monthly working schedule is incomplete. Configure every date as a working day or off day before payroll generation.");
+  const days = rows.filter((r) => r.day_type === "working").map((r) => isoDate(r.schedule_date));
+  const nonWorkingDates = new Set(rows.filter((r) => r.day_type === "off").map((r) => isoDate(r.schedule_date)));
+  return { workingDays: days.length, workingDates: days, nonWorkingDates, week: null, holidays: new Set() };
+}'''
+          new = '''export async function getWorkingDaysForMonth({ orgId, month, year, scheduleOverride = null, conn = pool }) {
+  const { m, y } = assertMonthYear(month, year);
+  const { firstDay, lastDay } = monthBounds(m, y);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let rows;
+  if (scheduleOverride) {
+    if (!Array.isArray(scheduleOverride) || scheduleOverride.length !== daysInMonth) {
+      throw new ApiError(400, "Payroll working-day snapshot must contain every date in the selected month.");
+    }
+    const seen = new Set();
+    rows = scheduleOverride.map((item) => {
+      const date = isoDate(item.date ?? item.schedule_date);
+      if (date < firstDay || date > lastDay || seen.has(date)) throw new ApiError(400, "Payroll working-day snapshot contains an invalid or duplicate date.");
+      if (item.day_type !== "working" && item.day_type !== "off") throw new ApiError(400, "Payroll working-day snapshot contains an invalid day type.");
+      seen.add(date);
+      return { schedule_date: date, day_type: item.day_type };
+    });
+    if (seen.size !== daysInMonth) throw new ApiError(400, "Payroll working-day snapshot must cover every date in the selected month.");
+  } else {
+    [rows] = await conn.query(
+      "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND schedule_date BETWEEN ? AND ?",
+      [orgId, firstDay, lastDay],
+    );
+    if (rows.length !== daysInMonth) throw new ApiError(409, "Monthly working schedule is incomplete. Configure every date as a working day or off day before payroll generation.");
+  }
+  const days = rows.filter((r) => r.day_type === "working").map((r) => isoDate(r.schedule_date));
+  const nonWorkingDates = new Set(rows.filter((r) => r.day_type === "off").map((r) => isoDate(r.schedule_date)));
+  return { workingDays: days.length, workingDates: days, nonWorkingDates, week: null, holidays: new Set() };
+}'''
+          if old not in s: raise SystemExit('getWorkingDaysForMonth block not found')
+          s = s.replace(old, new, 1)
+          old = '''export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, conn = pool }) {
+  const { m, y } = assertMonthYear(month, year);
+  const activePolicy = policy ?? await getPayrollSettings(orgId, conn, m, y);
+  const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });'''
+          new = '''export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, scheduleOverride = null, conn = pool }) {
+  const { m, y } = assertMonthYear(month, year);
+  const activePolicy = policy ?? await getPayrollSettings(orgId, conn, m, y);
+  const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, scheduleOverride, conn });'''
+          if old not in s: raise SystemExit('summary signature block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # ---------- backend controller ----------
+          p = Path('backend/src/controllers/salary.controller.js')
+          s = p.read_text()
+          replace_once(p, 'async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate = null, conn }) {',
+                       'async function computeEmployeePayroll({ employeeUuid, orgId, m, y, joiningDate = null, policyOverride = null, scheduleOverride = null, conn }) {')
+          replace_once(p, '''    joiningDate,
+    conn,
+  });''', '''    joiningDate,
+    policy: policyOverride,
+    scheduleOverride,
+    conn,
+  });''')
+          replace_once(p, '  const { month, year, employee_uuids, regenerate } = req.body || {};',
+                       '  const { month, year, employee_uuids, regenerate, settings: runSettings, days: runDays } = req.body || {};')
+          old = '''  const { m, y } = monthYearFields(month, year);
+
+  const conn = await pool.getConnection();'''
+          new = '''  const { m, y } = monthYearFields(month, year);
+  const policyOverride = runSettings ? {
+    salary_calculation_method: runSettings.salary_calculation_method,
+    calculate_overtime: Boolean(runSettings.calculate_overtime),
+    shift_start_time: String(runSettings.shift_start_time || ""),
+    shift_end_time: String(runSettings.shift_end_time || ""),
+    overtime_multiplier: Number(runSettings.overtime_multiplier || 1.5),
+  } : null;
+  const scheduleOverride = runDays ?? null;
+  if (policyOverride) {
+    if (!["hours", "days"].includes(policyOverride.salary_calculation_method)) throw new ApiError(400, "Invalid payroll salary calculation method.");
+    if (!/^\\d{2}:\\d{2}$/.test(policyOverride.shift_start_time) || !/^\\d{2}:\\d{2}$/.test(policyOverride.shift_end_time)) throw new ApiError(400, "Invalid payroll shift timing.");
+    if (!Number.isFinite(policyOverride.overtime_multiplier) || policyOverride.overtime_multiplier <= 0) throw new ApiError(400, "Invalid payroll overtime multiplier.");
+  }
+
+  const conn = await pool.getConnection();'''
+          if old not in s: raise SystemExit('generate setup block not found')
+          s = s.replace(old, new, 1)
+          replace_once(p,
+            'const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn });',
+            'const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, policyOverride, scheduleOverride, conn });')
+          old = '''            expense_reimbursement, net_salary, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())'''
+          new = '''            expense_reimbursement, net_salary, payroll_policy_snapshot, payroll_schedule_snapshot, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())'''
+          if old not in s: raise SystemExit('salary insert columns not found')
+          s = s.replace(old, new, 1)
+          old = '''          expenseReimbursement,
+          netSalary,
+          null,
+          createdBy,'''
+          new = '''          expenseReimbursement,
+          netSalary,
+          JSON.stringify(policyOverride ?? computed.summary.policy),
+          JSON.stringify((runDays ?? []).map((d) => ({ date: d.date, day_type: d.day_type }))),
+          null,
+          createdBy,'''
+          if old not in s: raise SystemExit('salary insert values not found')
+          s = s.replace(old, new, 1)
+
+          # Preview setup and call.
+          old = '  const { month, year, employee_uuids } = req.body || {};\n  const { m, y } = monthYearFields(month, year);'
+          new = '''  const { month, year, employee_uuids, settings: runSettings, days: runDays } = req.body || {};
+  const { m, y } = monthYearFields(month, year);
+  const policyOverride = runSettings ? {
+    salary_calculation_method: runSettings.salary_calculation_method,
+    calculate_overtime: Boolean(runSettings.calculate_overtime),
+    shift_start_time: String(runSettings.shift_start_time || ""),
+    shift_end_time: String(runSettings.shift_end_time || ""),
+    overtime_multiplier: Number(runSettings.overtime_multiplier || 1.5),
+  } : null;
+  const scheduleOverride = runDays ?? null;'''
+          if old not in s: raise SystemExit('preview setup block not found')
+          s = s.replace(old, new, 1)
+          replace_once(p,
+            'const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, conn: pool });',
+            'const computed = await computeEmployeePayroll({ employeeUuid: emp.uuid, orgId, m, y, joiningDate: emp.joining_date, policyOverride, scheduleOverride, conn: pool });')
+          p.write_text(s)
+
+          # ---------- additive migration ----------
+          Path('backend/migrations/20261102_payroll_generation_snapshots.sql').write_text('''ALTER TABLE salary_records
+  ADD COLUMN payroll_policy_snapshot JSON DEFAULT NULL,
+  ADD COLUMN payroll_schedule_snapshot JSON DEFAULT NULL;
+''')
+          print('Payroll snapshot patch prepared successfully')
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/routes/_app.org.payroll.tsx frontend/src/services/hr.ts frontend/src/services/core.ts backend/src/services/payroll.service.js backend/src/controllers/salary.controller.js backend/migrations/20261102_payroll_generation_snapshots.sql
+          git diff --cached --quiet && exit 0
+          git commit -m "fix payroll generation to snapshot run settings"
+          git push
