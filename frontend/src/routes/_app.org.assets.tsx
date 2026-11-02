@@ -84,20 +84,24 @@ function AssetsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<AssetStatus | "">("");
+  const [employeeUuid, setEmployeeUuid] = useState("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [dialog, setDialog] = useState<
     null | "create" | "edit" | "assign" | "return" | "retire"
   >(null);
   const [active, setActive] = useState<Asset | null>(null);
 
+  const employeesQ = useQuery({ queryKey: ["assetFilterEmployees"], queryFn: () => orgService.employees({ page: 1, limit: 1000, scope: "org" }) });
+
   const list = useQuery({
-    queryKey: ["assets", page, search, status],
+    queryKey: ["assets", page, search, status, employeeUuid],
     queryFn: () =>
       assetsService.list({
         page,
         limit: PAGE_SIZE,
         search: search || undefined,
         status: status || undefined,
+        employee_uuid: employeeUuid || undefined,
       }),
   });
 
@@ -218,6 +222,10 @@ function AssetsPage() {
             }}
             placeholder={t("assets.search")}
           />
+          <select value={employeeUuid || "all"} onChange={(e) => { setEmployeeUuid(e.target.value === "all" ? "" : e.target.value); setPage(1); }} className="h-9 max-w-56 rounded-md border border-input bg-transparent px-3 text-sm" aria-label="Assigned employee">
+            <option value="all">All employees</option>
+            {(employeesQ.data?.items ?? []).map((e) => <option key={e.uuid} value={e.uuid}>{e.full_name}</option>)}
+          </select>
           <select
             value={status}
             onChange={(e) => {
