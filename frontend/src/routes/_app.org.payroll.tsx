@@ -103,6 +103,8 @@ function OrgPayrollPage() {
   const [recSearch, setRecSearch] = useState("");
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
+  const [recordEmployee, setRecordEmployee] = useState("");
+  const [recordDepartment, setRecordDepartment] = useState("");
 
   // Employee selection
   const [empSearch, setEmpSearch] = useState("");
@@ -126,8 +128,10 @@ function OrgPayrollPage() {
     new Date(2026, i, 1).toLocaleDateString(undefined, { month: "long" }),
   );
 
+  const departmentsQ = useQuery({ queryKey: ["payrollDepartments"], queryFn: () => orgService.departments.list() });
+
   const records = useQuery({
-    queryKey: ["orgSalaryRecords", page, recSearch, month, year],
+    queryKey: ["orgSalaryRecords", page, recSearch, month, year, recordEmployee, recordDepartment],
     queryFn: () =>
       orgSalaryService.list({
         page,
@@ -135,6 +139,8 @@ function OrgPayrollPage() {
         search: recSearch || undefined,
         month: month ? Number(month) : undefined,
         year: year ? Number(year) : undefined,
+        employee_uuid: recordEmployee || undefined,
+        department: recordDepartment || undefined,
       }),
   });
 
@@ -558,6 +564,14 @@ function OrgPayrollPage() {
                   }}
                   placeholder={t("payroll.searchEmployee")}
                 />
+                <Select value={recordEmployee || "all"} onValueChange={(v) => { setRecordEmployee(v === "all" ? "" : v); setPage(1); }}>
+                  <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All employees" /></SelectTrigger>
+                  <SelectContent><SelectItem value="all">All employees</SelectItem>{(employeesQ.data?.items ?? []).map((e) => <SelectItem key={e.uuid} value={e.uuid}>{e.full_name}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={recordDepartment || "all"} onValueChange={(v) => { setRecordDepartment(v === "all" ? "" : v); setPage(1); }}>
+                  <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All departments" /></SelectTrigger>
+                  <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
+                </Select>
                 <Select
                   value={month}
                   onValueChange={(v) => {
