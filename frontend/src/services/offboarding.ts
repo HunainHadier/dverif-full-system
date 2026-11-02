@@ -211,7 +211,7 @@ export type MyExit = {
 
 export const offboardingService = {
   // ---- staff ----
-  list: (params: { page?: number; limit?: number; status?: string; search?: string } = {}) =>
+  list: (params: { page?: number; limit?: number; status?: string; search?: string; employee_uuid?: UUID; from_date?: string; to_date?: string; clearance_status?: "pending" | "cleared" } = {}) =>
     api
       .get<Paginated<ExitRequestListRow>>("/org/offboarding/exit-requests", { params })
       .then((r) => r.data),
