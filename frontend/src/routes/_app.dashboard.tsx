@@ -1011,8 +1011,8 @@ function SubAdminDashboard() {
   });
 
   const analyticsQ = useQuery({
-    queryKey: ["org-dashboard-analytics"],
-    queryFn: () => dashboardService.orgAnalytics(),
+    queryKey: ["org-dashboard-analytics", selectedRange.from, selectedRange.to],
+    queryFn: () => dashboardService.orgAnalytics({from:selectedRange.from,to:selectedRange.to}),
     enabled: mounted,
     retry: false,
     refetchInterval: 60_000,
