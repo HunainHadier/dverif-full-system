@@ -105,6 +105,7 @@ export const assetsService = {
       limit?: number;
       search?: string;
       status?: AssetStatus;
+      employee_uuid?: UUID;
     } = {},
   ) =>
     api

@@ -116,6 +116,8 @@ export async function listCandidates(req, res) {
     openingUuid: str(req.query.opening_uuid),
     stage: str(req.query.stage),
     search: str(req.query.search),
+    fromDate: str(req.query.from_date),
+    toDate: str(req.query.to_date),
     page,
     limit,
     offset,

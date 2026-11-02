@@ -262,6 +262,8 @@ export const candidatesService = {
       opening_uuid?: UUID;
       stage?: CandidateStage;
       search?: string;
+      from_date?: string;
+      to_date?: string;
     } = {},
   ) =>
     api

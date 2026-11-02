@@ -115,6 +115,8 @@ function OrgLeavesContent() {
   const [status, setStatus] = useState("");
   const [dateFrom, setDateFrom] = useState(localToday());
   const [dateTo, setDateTo] = useState(localToday());
+  const [employeeUuid, setEmployeeUuid] = useState("");
+  const [leaveTypeId, setLeaveTypeId] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [confirming, setConfirming] = useState<LeaveRequest | null>(null);
@@ -127,14 +129,16 @@ function OrgLeavesContent() {
   const [deletingType, setDeletingType] = useState<LeaveType | null>(null);
   const [visibleLeaveTypes, setVisibleLeaveTypes] = useState(5);
 
+  const employees = useQuery({ queryKey: ["orgLeaveFilterEmployees"], queryFn: () => orgService.employees({ page: 1, limit: 1000 }) });
+
   const types = useQuery({
     queryKey: ["orgLeaveTypes"],
     queryFn: () => orgLeavesService.types(),
   });
 
   const list = useQuery({
-    queryKey: ["orgLeaves", page, search, status, dateFrom, dateTo],
-    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, dateFrom, dateTo }),
+    queryKey: ["orgLeaves", page, search, status, dateFrom, dateTo, employeeUuid, leaveTypeId],
+    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, dateFrom, dateTo, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined }),
   });
 
   const decide = useMutation({
@@ -255,6 +259,18 @@ function OrgLeavesContent() {
                     }}
                     placeholder={t("orgLeaves.searchPlaceholder")}
                   />
+                </div>
+                <div className="min-w-0 xl:col-span-2">
+                  <Select value={employeeUuid || "all"} onValueChange={(v) => { setEmployeeUuid(v === "all" ? "" : v); setPage(1); }}>
+                    <SelectTrigger className="w-full min-w-0"><SelectValue placeholder="All employees" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All employees</SelectItem>{(employees.data?.items ?? []).map((e) => <SelectItem key={e.uuid} value={e.uuid}>{e.full_name}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 xl:col-span-2">
+                  <Select value={leaveTypeId || "all"} onValueChange={(v) => { setLeaveTypeId(v === "all" ? "" : v); setPage(1); }}>
+                    <SelectTrigger className="w-full min-w-0"><SelectValue placeholder="All leave types" /></SelectTrigger>
+                    <SelectContent><SelectItem value="all">All leave types</SelectItem>{(types.data ?? []).map((lt) => <SelectItem key={lt.id} value={String(lt.id)}>{lt.name}</SelectItem>)}</SelectContent>
+                  </Select>
                 </div>
                 <div className="min-w-0 xl:col-span-2">
                 <Select

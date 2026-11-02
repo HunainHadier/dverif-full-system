@@ -102,6 +102,7 @@ function OrgAttendanceContent() {
   const [dateTo, setDateTo] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [employeeUuid, setEmployeeUuid] = useState("");
+  const [department, setDepartment] = useState("");
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
@@ -110,6 +111,7 @@ function OrgAttendanceContent() {
     queryKey: ["orgAttendanceEmployees"],
     queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
   });
+  const departmentsQ = useQuery({ queryKey: ["orgAttendanceDepartments"], queryFn: () => orgService.departments.list() });
   const employeeOptions = (employeesQ.data?.items ?? []).filter((employee) =>
     isCurrentEmployee(employee.status),
   );
@@ -120,7 +122,7 @@ function OrgAttendanceContent() {
   });
 
   const records = useQuery({
-    queryKey: ["orgAttendance", page, search, status, dateFrom, dateTo, employeeUuid],
+    queryKey: ["orgAttendance", page, search, status, dateFrom, dateTo, employeeUuid, department],
     queryFn: () =>
       orgAttendanceService.list({
         page,
@@ -130,6 +132,7 @@ function OrgAttendanceContent() {
         dateFrom: dateFrom || (dateTo ? undefined : localToday()),
         dateTo: dateTo || (dateFrom ? undefined : localToday()),
         employee_uuid: employeeUuid || undefined,
+        department: department || undefined,
       }),
     // Keep the live "today" view fresh as employees check in/out and when a
     // long-open browser session crosses into a new local calendar day.
@@ -326,6 +329,12 @@ function OrgAttendanceContent() {
                   </Command>
                 </PopoverContent>
               </Popover>
+            </div>
+            <div className="min-w-0 xl:col-span-2">
+              <Select value={department || "all"} onValueChange={(v) => { setDepartment(v === "all" ? "" : v); setPage(1); }}>
+                <SelectTrigger className="w-full min-w-0"><SelectValue placeholder="All departments" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
             <div className="min-w-0 xl:col-span-2">
               <Select

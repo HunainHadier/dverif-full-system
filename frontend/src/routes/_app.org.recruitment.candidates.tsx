@@ -81,6 +81,8 @@ export function CandidatesPage() {
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<CandidateStage | "">("");
   const [openingUuid, setOpeningUuid] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [viewing, setViewing] = useState<Candidate | null>(null);
@@ -91,7 +93,7 @@ export function CandidatesPage() {
   });
 
   const list = useQuery({
-    queryKey: ["recruitment-candidates-list", page, stage, openingUuid, search],
+    queryKey: ["recruitment-candidates-list", page, stage, openingUuid, search, fromDate, toDate],
     queryFn: () =>
       candidatesService.list({
         page,
@@ -99,6 +101,8 @@ export function CandidatesPage() {
         stage: stage || undefined,
         opening_uuid: openingUuid || undefined,
         search: search || undefined,
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
       }),
   });
 
@@ -212,6 +216,8 @@ export function CandidatesPage() {
               </option>
             ))}
           </select>
+          <input type="date" aria-label="Applications from date" value={fromDate} onChange={(e) => resetPage(setFromDate)(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-2 text-sm" />
+          <input type="date" aria-label="Applications to date" min={fromDate || undefined} value={toDate} onChange={(e) => resetPage(setToDate)(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-2 text-sm" />
           <select
             value={openingUuid}
             onChange={(e) => resetPage(setOpeningUuid)(e.target.value)}

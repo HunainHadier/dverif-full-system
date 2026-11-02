@@ -25,6 +25,9 @@ export const orgService = {
       page?: number;
       limit?: number;
       search?: string;
+      department?: string;
+      designation?: string;
+      employment_status?: "current_employee" | "active" | "inactive";
       reference?: boolean;
       /**
        * "org" widens the list to the whole organization roster.
