@@ -531,6 +531,16 @@ export async function listEmployees(req, res) {
     const like = `%${search}%`;
     params.push(like, like, like, like, like, like, like);
   }
+  const department = typeof req.query.department === "string" ? req.query.department.trim() : "";
+  const designation = typeof req.query.designation === "string" ? req.query.designation.trim() : "";
+  const employmentStatus = typeof req.query.employment_status === "string" ? req.query.employment_status.trim() : "";
+  if (department) { conditions.push("dp.name = ?"); params.push(department); }
+  if (designation) { conditions.push("dg.name = ?"); params.push(designation); }
+  if (employmentStatus) {
+    if (!["current_employee", "active", "inactive"].includes(employmentStatus) || showReferences) throw new ApiError(400, "employment_status must be current_employee, active, or inactive");
+    conditions.push("e.status = ?");
+    params.push(employmentStatus);
+  }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
