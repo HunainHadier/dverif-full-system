@@ -28,6 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -114,6 +116,7 @@ function OrgPayrollPage() {
   const [periodOpen, setPeriodOpen] = useState(false);
   const [genMonth, setGenMonth] = useState(new Date().getMonth() + 1);
   const [genYear, setGenYear] = useState(new Date().getFullYear());
+  const [periodPickerOpen, setPeriodPickerOpen] = useState(false);
 
   const [downloading, setDownloading] = useState<string | null>(null);
   /** Which record's payslip is being opened for preview, so the row shows a spinner. */
@@ -150,6 +153,17 @@ function OrgPayrollPage() {
     queryFn: () => orgSalaryService.employees({ page: 1, limit: 1000 }),
   });
 
+  const payrollSettingsQ = useQuery({
+    queryKey: ["orgPayrollSettings"],
+    queryFn: () => orgSalaryService.settings(),
+    enabled: periodOpen,
+  });
+  const payrollScheduleQ = useQuery({
+    queryKey: ["orgPayrollSchedule", genMonth, genYear],
+    queryFn: () => orgSalaryService.schedule(genMonth, genYear),
+    enabled: periodOpen,
+  });
+
   const allEmployees = employeesQ.data?.items ?? [];
   const filteredEmployees = empSearch.trim()
     ? allEmployees.filter((e) => {
@@ -180,6 +194,33 @@ function OrgPayrollPage() {
   const existingPeriodUuids = new Set(
     (periodExistingQ.data?.items ?? []).map((r) => r.employee_uuid),
   );
+  const daysInSelectedMonth = new Date(genYear, genMonth, 0).getDate();
+  const firstWeekdayInSelectedMonth = new Date(genYear, genMonth - 1, 1).getDay();
+  const selectedMonthSchedule = new Map(
+    (payrollScheduleQ.data?.days ?? []).map((day) => [
+      String(day.schedule_date).slice(0, 10),
+      day.day_type,
+    ]),
+  );
+  const selectedMonthScheduleComplete =
+    (payrollScheduleQ.data?.days.length ?? 0) === daysInSelectedMonth;
+  const selectedMonthDayTypes = Array.from({ length: daysInSelectedMonth }, (_, index) => {
+    const day = index + 1;
+    const date = `${genYear}-${String(genMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const defaultType = new Date(genYear, genMonth - 1, day).getDay() % 6 === 0 ? "off" : "working";
+    return selectedMonthSchedule.get(date) ?? defaultType;
+  });
+  const payrollSettings = payrollSettingsQ.data ?? {
+    salary_calculation_method: "days" as const,
+    calculate_overtime: false,
+    shift_start_time: "09:00",
+    shift_end_time: "17:00",
+    overtime_multiplier: 1.5,
+  };
+  const scheduleUnavailable =
+    payrollScheduleQ.isLoading || payrollScheduleQ.isError || !selectedMonthScheduleComplete;
+  const payrollPoliciesUnavailable = payrollSettingsQ.isLoading || payrollSettingsQ.isError;
+
   const alreadyGeneratedSelected = [...validSelected].filter((id) => existingPeriodUuids.has(id));
   const selectedHasExisting = alreadyGeneratedSelected.length > 0;
 
@@ -862,7 +903,7 @@ function OrgPayrollPage() {
           if (!o) setPeriodOpen(false);
         }}
       >
-        <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="grid h-[calc(100dvh-0.25rem)] max-h-[calc(100dvh-0.25rem)] w-[calc(100vw-0.25rem)] grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-3 overflow-hidden p-3 sm:h-[calc(100dvh-0.5rem)] sm:max-h-[calc(100dvh-0.5rem)] sm:max-w-[calc(100vw-1rem)] sm:gap-4 sm:p-5">
           <DialogHeader>
             <DialogTitle>{t("payroll.generateTitle")}</DialogTitle>
             <DialogDescription>
@@ -873,37 +914,160 @@ function OrgPayrollPage() {
               })}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("payroll.payrollMonth", "Month")}</label>
-              <Select value={String(genMonth)} onValueChange={(v) => setGenMonth(Number(v))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {MONTHS.map((m, i) => (
-                    <SelectItem key={m} value={String(i + 1)}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("payroll.payrollYear", "Year")}</label>
-              <Select value={String(genYear)} onValueChange={(v) => setGenYear(Number(v))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map((y) => (
-                    <SelectItem key={y} value={String(y)}>
-                      {y}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid min-h-0 grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-2 border-t pt-2 sm:gap-4 sm:pt-3">
+            <section className="min-h-0 space-y-2 overflow-hidden rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CalendarDays className="h-4 w-4" />
+                  {t("payroll.workingDays")}
+                </div>
+                <Popover open={periodPickerOpen} onOpenChange={setPeriodPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" size="sm" className="shrink-0">
+                      <CalendarDays className="h-4 w-4" />
+                      {MONTHS[genMonth - 1]} {genYear}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={new Date(genYear, genMonth - 1, 1)}
+                      month={new Date(genYear, genMonth - 1, 1)}
+                      onMonthChange={(date) => {
+                        setGenMonth(date.getMonth() + 1);
+                        setGenYear(date.getFullYear());
+                      }}
+                      onSelect={(date) => {
+                        if (!date) return;
+                        setGenMonth(date.getMonth() + 1);
+                        setGenYear(date.getFullYear());
+                        setPeriodPickerOpen(false);
+                      }}
+                      captionLayout="dropdown"
+                      startMonth={new Date(years[0], 0)}
+                      endMonth={new Date(years[years.length - 1], 11)}
+                      showOutsideDays={false}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              {payrollScheduleQ.isError ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {t("payroll.scheduleLoadFailed")}
+                </p>
+              ) : payrollScheduleQ.isLoading ? (
+                <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
+              ) : (
+                <>
+                  {!selectedMonthScheduleComplete ? (
+                    <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+                      {t("payroll.scheduleIncomplete")}
+                    </p>
+                  ) : null}
+                  <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
+                    {Array.from({ length: 7 }, (_, index) => (
+                      <div key={index} className="py-0.5 font-medium">
+                        {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+                          new Date(2026, 0, index + 4),
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {Array.from({ length: firstWeekdayInSelectedMonth }, (_, index) => (
+                      <div key={`blank-${index}`} />
+                    ))}
+                    {selectedMonthDayTypes.map((dayType, index) => (
+                      <div
+                        key={index + 1}
+                        className={`flex h-9 flex-col items-center justify-center rounded-md border px-0.5 text-center leading-none sm:h-10 sm:px-1 ${
+                          dayType === "working"
+                            ? "border-primary/40 bg-primary/10"
+                            : "border-border bg-muted"
+                        }`}
+                      >
+                        <span className="block text-[11px] font-medium leading-4 sm:text-xs">{index + 1}</span>
+                        <span className="block text-[8px] leading-3 text-muted-foreground max-[480px]:hidden">
+                          {dayType === "working"
+                            ? t("payroll.workingDay")
+                            : t("payroll.offDay")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 text-xs text-muted-foreground">
+                    <span>
+                      {t("payroll.workingDaysCount", {
+                        count: selectedMonthDayTypes.filter((day) => day === "working").length,
+                      })}
+                    </span>
+                    <span>
+                      {t("payroll.offDaysCount", {
+                        count: selectedMonthDayTypes.filter((day) => day === "off").length,
+                      })}
+                    </span>
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="min-h-0 space-y-2 overflow-hidden rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
+              <div>
+                <h3 className="text-sm font-semibold">{t("payroll.policies")}</h3>
+                <p className="text-xs text-muted-foreground">
+                  {t("payroll.currentPolicies")}
+                </p>
+              </div>
+              {payrollSettingsQ.isError ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {t("payroll.policiesLoadFailed")}
+                </p>
+              ) : payrollSettingsQ.isLoading ? (
+                <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
+              ) : (
+                <>
+                  <div className="space-y-2 text-xs sm:space-y-3 sm:text-sm">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <Checkbox
+                        checked={payrollSettings.salary_calculation_method === "hours"}
+                        disabled
+                        aria-label={t("payroll.salaryByHours")}
+                      />
+                      <span>{t("payroll.salaryByHours")}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <Checkbox
+                        checked={payrollSettings.calculate_overtime}
+                        disabled
+                        aria-label={t("payroll.calculateOvertime")}
+                      />
+                      <span>{t("payroll.calculateOvertime")}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <Checkbox
+                        checked={payrollSettings.salary_calculation_method === "days"}
+                        disabled
+                        aria-label={t("payroll.salaryByDays")}
+                      />
+                      <span>{t("payroll.salaryByDays")}</span>
+                    </div>
+                  </div>
+                  <div className="border-t pt-2 text-xs sm:pt-3 sm:text-sm">
+                    <div className="mb-2 flex items-center gap-1.5 font-medium sm:gap-2">
+                      <Clock className="h-4 w-4" />
+                      {t("payroll.shiftTiming")}
+                    </div>
+                    <div className="grid grid-cols-1 gap-1 text-muted-foreground sm:grid-cols-2 sm:gap-2">
+                      <span>{t("payroll.shiftStart")}: {String(payrollSettings.shift_start_time).slice(0, 5)}</span>
+                      <span>{t("payroll.checkOut")}: {String(payrollSettings.shift_end_time).slice(0, 5)}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {t("payroll.overtimeMultiplier", { multiplier: payrollSettings.overtime_multiplier })}
+                    </p>
+                  </div>
+                </>
+              )}
+            </section>
           </div>
 
           {selectedHasExisting ? (
@@ -933,7 +1097,7 @@ function OrgPayrollPage() {
               onClick={() =>
                 preview.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
               }
-              disabled={generate.isPending || regenerate.isPending || preview.isPending}
+              disabled={generate.isPending || regenerate.isPending || preview.isPending || scheduleUnavailable || payrollPoliciesUnavailable}
               loading={preview.isPending}
             >
               {t("payroll.preview", { defaultValue: "Preview" })}
@@ -942,7 +1106,7 @@ function OrgPayrollPage() {
               <Button className="w-full whitespace-normal sm:w-auto"
                 variant="destructive"
                 onClick={() => setRegenerateOpen(true)}
-                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent}
+                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable}
                 loading={regenerate.isPending}
               >
                 {t("payroll.regenerateSelected", { count: alreadyGeneratedSelected.length })}
@@ -952,7 +1116,7 @@ function OrgPayrollPage() {
                 onClick={() =>
                   generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
                 }
-                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent}
+                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable}
                 loading={generate.isPending}
               >
                 {t("payroll.generatePayroll")}
