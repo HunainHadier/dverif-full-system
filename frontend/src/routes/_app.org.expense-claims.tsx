@@ -30,6 +30,7 @@ import {
   type ExpenseAttachment,
   type ExpenseClaim,
   type PaymentMode,
+  orgService,
 } from "@/services";
 import { apiErrorMessage, formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 
@@ -90,17 +91,34 @@ function ExpenseClaimsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
+  const [month, setMonth] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [status, setStatus] = useState<ClaimStatus | "">("");
+  const [employeeUuid, setEmployeeUuid] = useState("");
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<ExpenseClaim | null>(null);
   const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">("approved");
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
 
+  useEffect(() => { setPage(1); }, [month, fromDate, toDate, status, employeeUuid]);
+
+  const employees = useQuery({
+    queryKey: ["expense-claim-filter-employees"],
+    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+  });
+
   const list = useQuery({
-    queryKey: ["expense-claims", page],
+    queryKey: ["expense-claims", page, month, fromDate, toDate, status, employeeUuid],
     queryFn: () =>
       expenseClaimsService.list({
         page,
         limit: PAGE_SIZE,
+        month: month || undefined,
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
+        status: status || undefined,
+        employee_uuid: employeeUuid || undefined,
       }),
   });
 
@@ -270,6 +288,21 @@ function ExpenseClaimsPage() {
     <ModuleGate module="expense_management">
       <div className="space-y-4">
         <PageHeader title={t("expenses.title")} description={t("expenses.description")} />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input aria-label="Expense month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+          <input aria-label="From date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+          <input aria-label="To date" type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+          <select aria-label="Employee" value={employeeUuid} onChange={(e) => setEmployeeUuid(e.target.value)} className="h-9 max-w-56 rounded-md border border-input bg-transparent px-3 text-sm">
+            <option value="">All employees</option>
+            {(employees.data?.items ?? []).map((employee) => <option key={employee.uuid} value={employee.uuid}>{employee.full_name}</option>)}
+          </select>
+          <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as ClaimStatus | "")} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+            <option value="">All statuses</option>
+            {(["pending", "approved", "rejected", "paid"] as ClaimStatus[]).map((value) => <option key={value} value={value}>{t(STATUS_LABEL[value])}</option>)}
+          </select>
+          {(month || fromDate || toDate || status || employeeUuid) ? <Button size="sm" variant="ghost" onClick={() => { setMonth(""); setFromDate(""); setToDate(""); setStatus(""); setEmployeeUuid(""); }}>Clear filters</Button> : null}
+        </div>
 
         <DataTable
           columns={columns}
