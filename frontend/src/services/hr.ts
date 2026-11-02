@@ -254,6 +254,7 @@ export const orgSalaryService = {
       employee_uuid?: string;
       month?: number;
       year?: number;
+      department?: string;
     } = {},
   ) => api.get<Paginated<SalaryRecord>>("/org/salary-records", { params }).then((r) => r.data),
   /**
