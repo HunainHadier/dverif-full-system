@@ -833,6 +833,7 @@ export async function listOrgSalaryRecords(req, res) {
     ? req.query.employee_uuid.trim() : "";
   const month = typeof req.query.month === "string" && req.query.month.trim() ? req.query.month.trim() : "";
   const year = typeof req.query.year === "string" && req.query.year.trim() ? req.query.year.trim() : "";
+  const department = typeof req.query.department === "string" ? req.query.department.trim() : "";
 
   let whereClause = "WHERE sr.organization_id = ?";
   const params = [orgId];
@@ -851,6 +852,10 @@ export async function listOrgSalaryRecords(req, res) {
   if (year && !isNaN(y)) {
     whereClause += " AND sr.year = ?";
     params.push(y);
+  }
+  if (department) {
+    whereClause += " AND EXISTS (SELECT 1 FROM departments dp WHERE dp.id=e.department_id AND dp.organization_id=e.organization_id AND dp.name=?)";
+    params.push(department);
   }
   if (search) {
     whereClause += " AND (e.full_name LIKE ? OR e.email LIKE ?)";
