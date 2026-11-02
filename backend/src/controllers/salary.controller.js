@@ -769,13 +769,32 @@ export async function listPayrollEmployees(req, res) {
 
 /** Payroll settings and monthly working/off-day calendar. */
 export async function getPayrollSettings(req, res) {
-  const [rows] = await pool.query("SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?", [req.scopeOrgId]);
+  const month = req.query.month === undefined ? null : Number(req.query.month);
+  const year = req.query.year === undefined ? null : Number(req.query.year);
+  if ((month === null) !== (year === null)) {
+    throw new ApiError(400, "month and year must be supplied together");
+  }
+  const { m, y } = month === null ? { m: null, y: null } : payrollService.assertMonthYear(month, year);
+  let rows = [];
+  if (m !== null) {
+    [rows] = await pool.query(
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
+      [req.scopeOrgId, m, y],
+    );
+  }
+  if (!rows.length) {
+    [rows] = await pool.query(
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?",
+      [req.scopeOrgId],
+    );
+  }
   const settings = rows[0] ? { ...rows[0], calculate_overtime: Number(rows[0].calculate_overtime) === 1 } : null;
-  return ok(res, { settings }, "Payroll settings");
+  return ok(res, { settings, month: m, year: y }, "Payroll settings");
 }
 
 export async function updatePayrollSettings(req, res) {
   const body = req.body ?? {};
+  const { m, y } = payrollService.assertMonthYear(body.month, body.year);
   const method = String(body.salary_calculation_method ?? "");
   if (!["hours", "days"].includes(method)) throw new ApiError(400, "Choose either working-hours or working-days salary calculation.");
   if (typeof body.calculate_overtime !== "boolean") throw new ApiError(400, "calculate_overtime must be true or false.");
@@ -786,16 +805,16 @@ export async function updatePayrollSettings(req, res) {
   const multiplier = Number(body.overtime_multiplier ?? 1.5);
   if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 5) throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
   await pool.query(
-    `INSERT INTO organization_payroll_settings
-       (organization_id, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, updated_by_uuid)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO organization_monthly_payroll_settings
+       (organization_id, month, year, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, updated_by_uuid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE salary_calculation_method=VALUES(salary_calculation_method),
        calculate_overtime=VALUES(calculate_overtime), shift_start_time=VALUES(shift_start_time),
        shift_end_time=VALUES(shift_end_time), overtime_multiplier=VALUES(overtime_multiplier),
        updated_by_uuid=VALUES(updated_by_uuid)`,
-    [req.scopeOrgId, method, body.calculate_overtime ? 1 : 0, body.shift_start_time, body.shift_end_time, multiplier, req.user?.uuid ?? null],
+    [req.scopeOrgId, m, y, method, body.calculate_overtime ? 1 : 0, body.shift_start_time, body.shift_end_time, multiplier, req.user?.uuid ?? null],
   );
-  return getPayrollSettings(req, res);
+  return getPayrollSettings({ ...req, query: { month: m, year: y } }, res);
 }
 
 export async function getMonthlyWorkSchedule(req, res) {

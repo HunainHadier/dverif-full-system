@@ -258,8 +258,10 @@ export type MonthlyWorkDay = { schedule_date: string; day_type: "working" | "off
 export const orgSalaryService = {
   employees: (params: { page?: number; limit?: number } = {}) =>
     api.get<Paginated<PayrollEmployeeRow>>("/org/payroll-employees", { params }).then((r) => r.data),
-  settings: () => api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings").then((r) => r.data.settings),
-  saveSettings: (data: PayrollSettings) => api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
+  settings: (month: number, year: number) =>
+    api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings", { params: { month, year } }).then((r) => r.data.settings),
+  saveSettings: (data: PayrollSettings & { month: number; year: number }) =>
+    api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
   schedule: (month: number, year: number) => api.get<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", { params: { month, year } }).then((r) => r.data),
   saveSchedule: (data: { month: number; year: number; days: { date: string; day_type: "working" | "off" }[] }) => api.put<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", data).then((r) => r.data),
   list: (

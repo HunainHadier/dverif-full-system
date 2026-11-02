@@ -92,6 +92,16 @@ function apiErrorMessage(e: unknown, fallback: string) {
   return err?.response?.data?.message ?? fallback;
 }
 
+function normalizePayrollSettings(settings: PayrollSettings): PayrollSettings {
+  return {
+    ...settings,
+    calculate_overtime: Boolean(settings.calculate_overtime),
+    shift_start_time: String(settings.shift_start_time).slice(0, 5),
+    shift_end_time: String(settings.shift_end_time).slice(0, 5),
+    overtime_multiplier: Number(settings.overtime_multiplier),
+  };
+}
+
 function OrgPayrollPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -117,6 +127,16 @@ function OrgPayrollPage() {
   const [genMonth, setGenMonth] = useState(new Date().getMonth() + 1);
   const [genYear, setGenYear] = useState(new Date().getFullYear());
   const [periodPickerOpen, setPeriodPickerOpen] = useState(false);
+  const [generateSettingsForm, setGenerateSettingsForm] = useState<PayrollSettings>({
+    salary_calculation_method: "days",
+    calculate_overtime: false,
+    shift_start_time: "09:00",
+    shift_end_time: "17:00",
+    overtime_multiplier: 1.5,
+  });
+  const [generateSettingsPeriod, setGenerateSettingsPeriod] = useState("");
+  const [generateDayTypes, setGenerateDayTypes] = useState<Record<string, "working" | "off">>({});
+  const [generateSchedulePeriod, setGenerateSchedulePeriod] = useState("");
 
   const [downloading, setDownloading] = useState<string | null>(null);
   /** Which record's payslip is being opened for preview, so the row shows a spinner. */
@@ -154,15 +174,46 @@ function OrgPayrollPage() {
   });
 
   const payrollSettingsQ = useQuery({
-    queryKey: ["orgPayrollSettings"],
-    queryFn: () => orgSalaryService.settings(),
+    queryKey: ["orgPayrollSettings", genMonth, genYear],
+    queryFn: () => orgSalaryService.settings(genMonth, genYear),
     enabled: periodOpen,
   });
+  useEffect(() => {
+    if (!payrollSettingsQ.isSuccess) return;
+    const settings = payrollSettingsQ.data ?? {
+      salary_calculation_method: "days" as const,
+      calculate_overtime: false,
+      shift_start_time: "09:00",
+      shift_end_time: "17:00",
+      overtime_multiplier: 1.5,
+    };
+    setGenerateSettingsForm(normalizePayrollSettings(settings));
+    setGenerateSettingsPeriod(`${genYear}-${genMonth}`);
+  }, [payrollSettingsQ.data, payrollSettingsQ.isSuccess, genMonth, genYear]);
   const payrollScheduleQ = useQuery({
     queryKey: ["orgPayrollSchedule", genMonth, genYear],
     queryFn: () => orgSalaryService.schedule(genMonth, genYear),
     enabled: periodOpen,
   });
+  useEffect(() => {
+    const schedule = payrollScheduleQ.data;
+    if (
+      !payrollScheduleQ.isSuccess ||
+      schedule?.month !== genMonth ||
+      schedule?.year !== genYear
+    ) return;
+    const next: Record<string, "working" | "off"> = {};
+    for (let day = 1; day <= new Date(genYear, genMonth, 0).getDate(); day++) {
+      const date = `${genYear}-${String(genMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      next[date] = new Date(genYear, genMonth - 1, day).getDay() % 6 === 0 ? "off" : "working";
+    }
+    for (const item of schedule.days) {
+      const date = String(item.schedule_date).slice(0, 10);
+      if (Object.prototype.hasOwnProperty.call(next, date)) next[date] = item.day_type;
+    }
+    setGenerateDayTypes(next);
+    setGenerateSchedulePeriod(`${genYear}-${genMonth}`);
+  }, [payrollScheduleQ.data, payrollScheduleQ.isSuccess, genMonth, genYear]);
 
   const allEmployees = employeesQ.data?.items ?? [];
   const filteredEmployees = empSearch.trim()
@@ -196,30 +247,125 @@ function OrgPayrollPage() {
   );
   const daysInSelectedMonth = new Date(genYear, genMonth, 0).getDate();
   const firstWeekdayInSelectedMonth = new Date(genYear, genMonth - 1, 1).getDay();
+  const selectedScheduleData =
+    payrollScheduleQ.data?.month === genMonth && payrollScheduleQ.data.year === genYear
+      ? payrollScheduleQ.data
+      : undefined;
   const selectedMonthSchedule = new Map(
-    (payrollScheduleQ.data?.days ?? []).map((day) => [
+    (selectedScheduleData?.days ?? []).map((day) => [
       String(day.schedule_date).slice(0, 10),
       day.day_type,
     ]),
   );
   const selectedMonthScheduleComplete =
-    (payrollScheduleQ.data?.days.length ?? 0) === daysInSelectedMonth;
+    (selectedScheduleData?.days.length ?? 0) === daysInSelectedMonth;
+  const generateScheduleKey = `${genYear}-${genMonth}`;
+  const generateScheduleReady = generateSchedulePeriod === generateScheduleKey;
+  const selectedMonthScheduleDates = Array.from({ length: daysInSelectedMonth }, (_, index) =>
+    `${genYear}-${String(genMonth).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`,
+  );
+  const savedScheduleDayTypes = selectedMonthScheduleDates.map((date, index) =>
+    selectedMonthSchedule.get(date) ??
+    (new Date(genYear, genMonth - 1, index + 1).getDay() % 6 === 0 ? "off" : "working"),
+  );
   const selectedMonthDayTypes = Array.from({ length: daysInSelectedMonth }, (_, index) => {
-    const day = index + 1;
-    const date = `${genYear}-${String(genMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const defaultType = new Date(genYear, genMonth - 1, day).getDay() % 6 === 0 ? "off" : "working";
-    return selectedMonthSchedule.get(date) ?? defaultType;
+    const date = selectedMonthScheduleDates[index];
+    return generateScheduleReady
+      ? generateDayTypes[date] ?? savedScheduleDayTypes[index]
+      : savedScheduleDayTypes[index];
   });
-  const payrollSettings = payrollSettingsQ.data ?? {
-    salary_calculation_method: "days" as const,
+  const generateScheduleDirty =
+    generateScheduleReady &&
+    (!selectedMonthScheduleComplete ||
+      selectedMonthDayTypes.some((dayType, index) => dayType !== savedScheduleDayTypes[index]));
+  const scheduleUnavailable =
+    payrollScheduleQ.isLoading || payrollScheduleQ.isError || !generateScheduleReady ||
+    !selectedMonthScheduleComplete || generateScheduleDirty;
+  const payrollPoliciesUnavailable = payrollSettingsQ.isLoading || payrollSettingsQ.isError;
+  const generateSettingsKey = `${genYear}-${genMonth}`;
+  const generateSettingsReady =
+    payrollSettingsQ.isSuccess && generateSettingsPeriod === generateSettingsKey;
+  const savedGenerateSettings = normalizePayrollSettings(payrollSettingsQ.data ?? {
+    salary_calculation_method: "days",
     calculate_overtime: false,
     shift_start_time: "09:00",
     shift_end_time: "17:00",
     overtime_multiplier: 1.5,
-  };
-  const scheduleUnavailable =
-    payrollScheduleQ.isLoading || payrollScheduleQ.isError || !selectedMonthScheduleComplete;
-  const payrollPoliciesUnavailable = payrollSettingsQ.isLoading || payrollSettingsQ.isError;
+  });
+  const generatePayrollFingerprint = JSON.stringify({
+    settings: savedGenerateSettings,
+    schedule: selectedMonthDayTypes,
+  });
+  const generateSettingsDirty =
+    generateSettingsReady &&
+    JSON.stringify(normalizePayrollSettings(generateSettingsForm)) !==
+      JSON.stringify(savedGenerateSettings);
+  const canEditPayrollSettings = user?.org_role === "org_admin";
+
+  const saveGeneratePayrollSettings = useMutation({
+    mutationFn: async (variables: {
+      month: number;
+      year: number;
+      settings: PayrollSettings;
+      settingsDirty: boolean;
+      scheduleDirty: boolean;
+      days: { date: string; day_type: "working" | "off" }[];
+    }) => {
+      const settingsPromise = variables.settingsDirty
+        ? orgSalaryService.saveSettings({
+            ...variables.settings,
+            month: variables.month,
+            year: variables.year,
+          }).then((settings) => {
+            qc.setQueryData(["orgPayrollSettings", variables.month, variables.year], settings);
+            return settings;
+          })
+        : Promise.resolve(null);
+      const schedulePromise = variables.scheduleDirty
+        ? orgSalaryService.saveSchedule({
+            month: variables.month,
+            year: variables.year,
+            days: variables.days,
+          }).then((schedule) => {
+            qc.setQueryData(["orgPayrollSchedule", variables.month, variables.year], schedule);
+            return schedule;
+          })
+        : Promise.resolve(null);
+      return Promise.all([settingsPromise, schedulePromise]);
+    },
+    onSuccess: (_result, variables) => {
+      if (variables.settingsDirty) qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] });
+      if (variables.scheduleDirty) {
+        qc.invalidateQueries({ queryKey: ["orgPayrollSchedule", variables.month, variables.year] });
+      }
+      toast.success(t("payroll.settingsAndScheduleSaved"));
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, t("payroll.settingsAndScheduleSaveFailed"))),
+  });
+  const setGenerateScheduleEveryDay = (dayType: "working" | "off") =>
+    setGenerateDayTypes(Object.fromEntries(
+      selectedMonthScheduleDates.map((date) => [date, dayType]),
+    ));
+  const toggleGenerateWeekday = (weekday: number) =>
+    setGenerateDayTypes((current) => {
+      const next = { ...current };
+      const dates = selectedMonthScheduleDates.filter(
+        (date) => new Date(`${date}T00:00:00`).getDay() === weekday,
+      );
+      const makeWorking = dates.some((date) => {
+        const index = selectedMonthScheduleDates.indexOf(date);
+        return (next[date] ?? savedScheduleDayTypes[index]) !== "working";
+      });
+      for (const date of dates) next[date] = makeWorking ? "working" : "off";
+      return next;
+    });
+  const setGenerateScheduleWeekdays = () =>
+    setGenerateDayTypes(Object.fromEntries(
+      selectedMonthScheduleDates.map((date, index) => [
+        date,
+        [0, 6].includes(new Date(`${date}T00:00:00`).getDay()) ? "off" : "working",
+      ]),
+    ));
 
   const alreadyGeneratedSelected = [...validSelected].filter((id) => existingPeriodUuids.has(id));
   const selectedHasExisting = alreadyGeneratedSelected.length > 0;
@@ -300,7 +446,7 @@ function OrgPayrollPage() {
   const preview = useMutation<
     PayrollPreview,
     Error,
-    { uuids: string[]; month: number; year: number }
+    { uuids: string[]; month: number; year: number; settingsFingerprint: string }
   >({
     mutationFn: ({ uuids, month, year }) =>
       orgSalaryService.preview({
@@ -313,6 +459,7 @@ function OrgPayrollPage() {
   const previewMatchesCurrent = preview.isSuccess
     && preview.variables?.month === genMonth
     && preview.variables?.year === genYear
+    && preview.variables?.settingsFingerprint === generatePayrollFingerprint
     && JSON.stringify([...(preview.variables?.uuids ?? [])].sort()) === JSON.stringify([...validSelected].sort());
 
   const regenerate = useMutation<
@@ -896,7 +1043,8 @@ function OrgPayrollPage() {
       </Tabs>
       </div>
 
-      {/* ---------- Period-only modal (Year + Month) ---------- */}
+      
+           {/* ---------- Period-only modal (Year + Month) ---------- */}
       <Dialog
         open={periodOpen}
         onOpenChange={(o) => {
@@ -914,160 +1062,259 @@ function OrgPayrollPage() {
               })}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid min-h-0 grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-2 border-t pt-2 sm:gap-4 sm:pt-3">
-            <section className="min-h-0 space-y-2 overflow-hidden rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
+          <div className="flex min-h-0 flex-col gap-2 border-t pt-2 sm:gap-3 sm:pt-3">
+            <div className="flex shrink-0 justify-end">
+              <Popover open={periodPickerOpen} onOpenChange={setPeriodPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" className="shrink-0">
+                    <CalendarDays className="h-4 w-4" />
+                    {MONTHS[genMonth - 1]} {genYear}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(genYear, genMonth - 1, 1)}
+                    month={new Date(genYear, genMonth - 1, 1)}
+                    onMonthChange={(date) => {
+                      setGenMonth(date.getMonth() + 1);
+                      setGenYear(date.getFullYear());
+                    }}
+                    onSelect={(date) => {
+                      if (!date) return;
+                      setGenMonth(date.getMonth() + 1);
+                      setGenYear(date.getFullYear());
+                      setPeriodPickerOpen(false);
+                    }}
+                    captionLayout="dropdown"
+                    startMonth={new Date(years[0], 0)}
+                    endMonth={new Date(years[years.length - 1], 11)}
+                    showOutsideDays={false}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] gap-2 sm:gap-4">
+              {/* Left: Working days. Flex column so the day grid can take
+                  whatever height is left and shrink its cells to fit, instead
+                  of being clipped or needing a scrollbar. */}
+              <section className="flex min-h-0 min-w-0 flex-col gap-2 overflow-hidden rounded-md border border-border p-2 sm:gap-3 sm:p-4">
+                <div className="flex shrink-0 items-center gap-2 text-sm font-medium">
                   <CalendarDays className="h-4 w-4" />
                   {t("payroll.workingDays")}
                 </div>
-                <Popover open={periodPickerOpen} onOpenChange={setPeriodPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button type="button" variant="outline" size="sm" className="shrink-0">
-                      <CalendarDays className="h-4 w-4" />
-                      {MONTHS[genMonth - 1]} {genYear}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-auto p-0">
-                    <Calendar
-                      mode="single"
-                      selected={new Date(genYear, genMonth - 1, 1)}
-                      month={new Date(genYear, genMonth - 1, 1)}
-                      onMonthChange={(date) => {
-                        setGenMonth(date.getMonth() + 1);
-                        setGenYear(date.getFullYear());
-                      }}
-                      onSelect={(date) => {
-                        if (!date) return;
-                        setGenMonth(date.getMonth() + 1);
-                        setGenYear(date.getFullYear());
-                        setPeriodPickerOpen(false);
-                      }}
-                      captionLayout="dropdown"
-                      startMonth={new Date(years[0], 0)}
-                      endMonth={new Date(years[years.length - 1], 11)}
-                      showOutsideDays={false}
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-              {payrollScheduleQ.isError ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {t("payroll.scheduleLoadFailed")}
-                </p>
-              ) : payrollScheduleQ.isLoading ? (
-                <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
-              ) : (
-                <>
-                  {!selectedMonthScheduleComplete ? (
-                    <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
-                      {t("payroll.scheduleIncomplete")}
-                    </p>
-                  ) : null}
-                  <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
-                    {Array.from({ length: 7 }, (_, index) => (
-                      <div key={index} className="py-0.5 font-medium">
-                        {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
-                          new Date(2026, 0, index + 4),
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-7 gap-1">
-                    {Array.from({ length: firstWeekdayInSelectedMonth }, (_, index) => (
-                      <div key={`blank-${index}`} />
-                    ))}
-                    {selectedMonthDayTypes.map((dayType, index) => (
-                      <div
-                        key={index + 1}
-                        className={`flex h-9 flex-col items-center justify-center rounded-md border px-0.5 text-center leading-none sm:h-10 sm:px-1 ${
-                          dayType === "working"
-                            ? "border-primary/40 bg-primary/10"
-                            : "border-border bg-muted"
-                        }`}
-                      >
-                        <span className="block text-[11px] font-medium leading-4 sm:text-xs">{index + 1}</span>
-                        <span className="block text-[8px] leading-3 text-muted-foreground max-[480px]:hidden">
-                          {dayType === "working"
-                            ? t("payroll.workingDay")
-                            : t("payroll.offDay")}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-3 text-xs text-muted-foreground">
-                    <span>
-                      {t("payroll.workingDaysCount", {
-                        count: selectedMonthDayTypes.filter((day) => day === "working").length,
+                {payrollScheduleQ.isError ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {t("payroll.scheduleLoadFailed")}
+                  </p>
+                ) : payrollScheduleQ.isLoading || !generateScheduleReady ? (
+                  <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
+                ) : (
+                  <>
+                    <div className="flex shrink-0 flex-wrap gap-1">
+                      <Button type="button" size="sm" variant="outline" disabled={!canEditPayrollSettings} onClick={() => setGenerateScheduleEveryDay("working")}>
+                        {t("payroll.allWorking")}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!canEditPayrollSettings} onClick={() => setGenerateScheduleEveryDay("off")}>
+                        {t("payroll.allOff")}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!canEditPayrollSettings} onClick={setGenerateScheduleWeekdays}>
+                        {t("payroll.mondayToFriday")}
+                      </Button>
+                    </div>
+                    <div className="mx-auto grid w-full max-w-[560px] shrink-0 grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
+                      {Array.from({ length: 7 }, (_, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          disabled={!canEditPayrollSettings}
+                          onClick={() => toggleGenerateWeekday(index)}
+                          className="cursor-pointer rounded py-0.5 font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                          title={t("payroll.toggleWeekday")}
+                        >
+                          {new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+                            new Date(2026, 0, index + 4),
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Day grid: fills the remaining height. auto-rows-fr splits it
+                        equally between the 5 or 6 week rows, so every date is always
+                        visible without scrolling. */}
+                    <div className="mx-auto grid min-h-0 w-full max-w-[560px] flex-1 auto-rows-fr grid-cols-7 gap-1">
+                      {Array.from({ length: firstWeekdayInSelectedMonth }, (_, index) => (
+                        <div key={`blank-${index}`} />
+                      ))}
+                      {selectedMonthDayTypes.map((dayType, index) => {
+                        const date = selectedMonthScheduleDates[index];
+                        return (
+                          <button
+                            type="button"
+                            key={date}
+                            disabled={!canEditPayrollSettings}
+                            onClick={() =>
+                              setGenerateDayTypes((days) => ({
+                                ...days,
+                                [date]:
+                                  selectedMonthDayTypes[index] === "working" ? "off" : "working",
+                              }))
+                            }
+                            className={`flex h-full min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden rounded-md border px-0.5 text-center leading-none ${
+                              dayType === "working"
+                                ? "border-primary/40 bg-primary/10"
+                                : "border-border bg-muted"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
+                          >
+                            <span className="block text-[11px] font-medium leading-4 sm:text-xs">{index + 1}</span>
+                            <span className="block text-[8px] leading-3 text-muted-foreground max-[480px]:hidden">
+                              {dayType === "working"
+                                ? t("payroll.workingDay")
+                                : t("payroll.offDay")}
+                            </span>
+                          </button>
+                        );
                       })}
-                    </span>
-                    <span>
-                      {t("payroll.offDaysCount", {
-                        count: selectedMonthDayTypes.filter((day) => day === "off").length,
-                      })}
-                    </span>
-                  </div>
-                </>
-              )}
-            </section>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>
+                        {t("payroll.workingDaysCount", {
+                          count: selectedMonthDayTypes.filter((day) => day === "working").length,
+                        })}
+                      </span>
+                      <span>
+                        {t("payroll.offDaysCount", {
+                          count: selectedMonthDayTypes.filter((day) => day === "off").length,
+                        })}
+                      </span>
+                    </div>
+                    {generateScheduleDirty ? (
+                      <p className="shrink-0 text-xs text-amber-600">{t("payroll.unsavedScheduleChanges")}</p>
+                    ) : null}
+                  </>
+                )}
+              </section>
 
-            <section className="min-h-0 space-y-2 overflow-hidden rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
-              <div>
-                <h3 className="text-sm font-semibold">{t("payroll.policies")}</h3>
-                <p className="text-xs text-muted-foreground">
-                  {t("payroll.currentPolicies")}
-                </p>
+              {/* Right: Policies (unchanged) */}
+              <section className="min-h-0 min-w-0 space-y-2 overflow-y-auto rounded-md border border-border p-2 sm:space-y-3 sm:p-4">
+                <div>
+                  <h3 className="text-sm font-semibold">{t("payroll.policies")}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {t("payroll.currentPolicies")}
+                  </p>
+                </div>
+                {payrollSettingsQ.isError ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {t("payroll.policiesLoadFailed")}
+                  </p>
+                ) : !generateSettingsReady ? (
+                  <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
+                ) : (
+                  <>
+                    <div className="space-y-2 text-xs sm:space-y-3 sm:text-sm">
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Checkbox
+                          checked={generateSettingsForm.salary_calculation_method === "hours"}
+                          disabled={!canEditPayrollSettings}
+                          onCheckedChange={() => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            salary_calculation_method: "hours",
+                          }))}
+                          aria-label={t("payroll.salaryByHours")}
+                        />
+                        <span>{t("payroll.salaryByHours")}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Checkbox
+                          checked={generateSettingsForm.calculate_overtime}
+                          disabled={!canEditPayrollSettings}
+                          onCheckedChange={(checked) => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            calculate_overtime: checked === true,
+                          }))}
+                          aria-label={t("payroll.calculateOvertime")}
+                        />
+                        <span>{t("payroll.calculateOvertime")}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Checkbox
+                          checked={generateSettingsForm.salary_calculation_method === "days"}
+                          disabled={!canEditPayrollSettings}
+                          onCheckedChange={() => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            salary_calculation_method: "days",
+                          }))}
+                          aria-label={t("payroll.salaryByDays")}
+                        />
+                        <span>{t("payroll.salaryByDays")}</span>
+                      </div>
+                    </div>
+                    <div className="border-t pt-2 text-xs sm:pt-3 sm:text-sm">
+                      <div className="mb-2 flex items-center gap-1.5 font-medium sm:gap-2">
+                        <Clock className="h-4 w-4" />
+                        {t("payroll.shiftTiming")}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="min-w-0 space-y-1">
+                          <Label className="text-xs text-muted-foreground">{t("payroll.shiftStart")}</Label>
+                          <Input
+                            type="time"
+                            value={generateSettingsForm.shift_start_time}
+                            disabled={!canEditPayrollSettings}
+                            onChange={(event) => setGenerateSettingsForm((settings) => ({
+                              ...settings,
+                              shift_start_time: event.target.value,
+                            }))}
+                          />
+                        </div>
+                        <div className="min-w-0 space-y-1">
+                          <Label className="text-xs text-muted-foreground">{t("payroll.checkOut")}</Label>
+                          <Input
+                            type="time"
+                            value={generateSettingsForm.shift_end_time}
+                            disabled={!canEditPayrollSettings}
+                            onChange={(event) => setGenerateSettingsForm((settings) => ({
+                              ...settings,
+                              shift_end_time: event.target.value,
+                            }))}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {generateSettingsDirty ? (
+                      <p className="text-xs text-amber-600">{t("payroll.unsavedPolicyChanges")}</p>
+                    ) : null}
+                  </>
+                )}
+              </section>
+            </div>
+            {canEditPayrollSettings ? (
+              <div className="flex shrink-0 justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => saveGeneratePayrollSettings.mutate({
+                    month: genMonth,
+                    year: genYear,
+                    settings: normalizePayrollSettings(generateSettingsForm),
+                    settingsDirty: generateSettingsDirty,
+                    scheduleDirty: generateScheduleDirty,
+                    days: selectedMonthScheduleDates.map((date, index) => ({
+                      date,
+                      day_type: generateDayTypes[date] ?? savedScheduleDayTypes[index],
+                    })),
+                  })}
+                  disabled={
+                    !generateSettingsReady ||
+                    !generateScheduleReady ||
+                    (!generateSettingsDirty && !generateScheduleDirty) ||
+                    saveGeneratePayrollSettings.isPending
+                  }
+                  loading={saveGeneratePayrollSettings.isPending}
+                >
+                  {t("payroll.savePoliciesAndWorkingDays")}
+                </Button>
               </div>
-              {payrollSettingsQ.isError ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {t("payroll.policiesLoadFailed")}
-                </p>
-              ) : payrollSettingsQ.isLoading ? (
-                <p className="text-sm text-muted-foreground">{t("common.loading", "Loading…")}</p>
-              ) : (
-                <>
-                  <div className="space-y-2 text-xs sm:space-y-3 sm:text-sm">
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <Checkbox
-                        checked={payrollSettings.salary_calculation_method === "hours"}
-                        disabled
-                        aria-label={t("payroll.salaryByHours")}
-                      />
-                      <span>{t("payroll.salaryByHours")}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <Checkbox
-                        checked={payrollSettings.calculate_overtime}
-                        disabled
-                        aria-label={t("payroll.calculateOvertime")}
-                      />
-                      <span>{t("payroll.calculateOvertime")}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <Checkbox
-                        checked={payrollSettings.salary_calculation_method === "days"}
-                        disabled
-                        aria-label={t("payroll.salaryByDays")}
-                      />
-                      <span>{t("payroll.salaryByDays")}</span>
-                    </div>
-                  </div>
-                  <div className="border-t pt-2 text-xs sm:pt-3 sm:text-sm">
-                    <div className="mb-2 flex items-center gap-1.5 font-medium sm:gap-2">
-                      <Clock className="h-4 w-4" />
-                      {t("payroll.shiftTiming")}
-                    </div>
-                    <div className="grid grid-cols-1 gap-1 text-muted-foreground sm:grid-cols-2 sm:gap-2">
-                      <span>{t("payroll.shiftStart")}: {String(payrollSettings.shift_start_time).slice(0, 5)}</span>
-                      <span>{t("payroll.checkOut")}: {String(payrollSettings.shift_end_time).slice(0, 5)}</span>
-                    </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {t("payroll.overtimeMultiplier", { multiplier: payrollSettings.overtime_multiplier })}
-                    </p>
-                  </div>
-                </>
-              )}
-            </section>
+            ) : null}
           </div>
 
           {selectedHasExisting ? (
@@ -1085,7 +1332,7 @@ function OrgPayrollPage() {
             <Button className="w-full whitespace-normal sm:w-auto"
               variant="ghost"
               onClick={() => setPeriodOpen(false)}
-              disabled={generate.isPending || regenerate.isPending || preview.isPending}
+              disabled={generate.isPending || regenerate.isPending || preview.isPending || saveGeneratePayrollSettings.isPending}
             >
               {t("actions.cancel", "Cancel")}
             </Button>
@@ -1095,9 +1342,14 @@ function OrgPayrollPage() {
             <Button className="w-full whitespace-normal sm:w-auto"
               variant="outline"
               onClick={() =>
-                preview.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
+                preview.mutate({
+                  uuids: [...validSelected],
+                  month: genMonth,
+                  year: genYear,
+                  settingsFingerprint: generatePayrollFingerprint,
+                })
               }
-              disabled={generate.isPending || regenerate.isPending || preview.isPending || scheduleUnavailable || payrollPoliciesUnavailable}
+              disabled={generate.isPending || regenerate.isPending || preview.isPending || saveGeneratePayrollSettings.isPending || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
               loading={preview.isPending}
             >
               {t("payroll.preview", { defaultValue: "Preview" })}
@@ -1106,7 +1358,7 @@ function OrgPayrollPage() {
               <Button className="w-full whitespace-normal sm:w-auto"
                 variant="destructive"
                 onClick={() => setRegenerateOpen(true)}
-                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable}
+                disabled={generate.isPending || regenerate.isPending || saveGeneratePayrollSettings.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
                 loading={regenerate.isPending}
               >
                 {t("payroll.regenerateSelected", { count: alreadyGeneratedSelected.length })}
@@ -1116,7 +1368,7 @@ function OrgPayrollPage() {
                 onClick={() =>
                   generate.mutate({ uuids: [...validSelected], month: genMonth, year: genYear })
                 }
-                disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable}
+                disabled={generate.isPending || regenerate.isPending || saveGeneratePayrollSettings.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || generateSettingsDirty}
                 loading={generate.isPending}
               >
                 {t("payroll.generatePayroll")}
@@ -1331,6 +1583,7 @@ function OrgPayrollPage() {
 function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [periodPickerOpen, setPeriodPickerOpen] = useState(false);
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
@@ -1341,7 +1594,10 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     shift_end_time: "17:00",
     overtime_multiplier: 1.5,
   });
-  const settingsQ = useQuery({ queryKey: ["orgPayrollSettings"], queryFn: () => orgSalaryService.settings() });
+  const settingsQ = useQuery({
+    queryKey: ["orgPayrollSettings", month, year],
+    queryFn: () => orgSalaryService.settings(month, year),
+  });
   const scheduleQ = useQuery({
     queryKey: ["orgPayrollSchedule", month, year],
     queryFn: () => orgSalaryService.schedule(month, year),
@@ -1349,12 +1605,20 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   });
   const [dayTypes, setDayTypes] = useState<Record<string, "working" | "off">>({});
   useEffect(() => {
-    if (settingsQ.data) setSettingsForm({
-      ...settingsQ.data,
-      shift_start_time: String(settingsQ.data.shift_start_time).slice(0, 5),
-      shift_end_time: String(settingsQ.data.shift_end_time).slice(0, 5),
+    if (!settingsQ.isSuccess) return;
+    const settings = settingsQ.data ?? {
+      salary_calculation_method: "days" as const,
+      calculate_overtime: false,
+      shift_start_time: "09:00",
+      shift_end_time: "17:00",
+      overtime_multiplier: 1.5,
+    };
+    setSettingsForm({
+      ...settings,
+      shift_start_time: String(settings.shift_start_time).slice(0, 5),
+      shift_end_time: String(settings.shift_end_time).slice(0, 5),
     });
-  }, [settingsQ.data]);
+  }, [settingsQ.data, settingsQ.isSuccess]);
   useEffect(() => {
     if (!scheduleOpen) return;
     const total = new Date(year, month, 0).getDate();
@@ -1374,7 +1638,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     setDayTypes(next);
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
-    mutationFn: () => orgSalaryService.saveSettings(settingsForm),
+    mutationFn: () => orgSalaryService.saveSettings({ ...settingsForm, month, year }),
     onSuccess: () => { toast.success("Payroll settings saved"); qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save payroll settings"),
   });
@@ -1398,6 +1662,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const weekdayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const policyYears = Array.from({ length: 101 }, (_, index) => 2000 + index);
 
   /** No requirement that Sat/Sun be off: any weekday can be working. */
   const setEveryDay = (value: "working" | "off") =>
@@ -1449,7 +1714,38 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
 
           {/* Policies — right. */}
           <div className="space-y-4">
-            <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose one salary calculation method.</p></div>
+            <div className="flex items-center justify-between gap-2">
+              <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose policies for this month.</p></div>
+              <Popover open={periodPickerOpen} onOpenChange={setPeriodPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" className="shrink-0">
+                    <CalendarDays className="h-4 w-4" />
+                    {monthNames[month - 1]} {year}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(year, month - 1, 1)}
+                    month={new Date(year, month - 1, 1)}
+                    onMonthChange={(date) => {
+                      setMonth(date.getMonth() + 1);
+                      setYear(date.getFullYear());
+                    }}
+                    onSelect={(date) => {
+                      if (!date) return;
+                      setMonth(date.getMonth() + 1);
+                      setYear(date.getFullYear());
+                      setPeriodPickerOpen(false);
+                    }}
+                    captionLayout="dropdown"
+                    startMonth={new Date(policyYears[0], 0)}
+                    endMonth={new Date(policyYears[policyYears.length - 1], 11)}
+                    showOutsideDays={false}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
             <div className="space-y-3">
               <label className="flex cursor-pointer items-start gap-2 text-sm">
                 <Checkbox checked={settingsForm.salary_calculation_method === "hours"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "hours" }))} />

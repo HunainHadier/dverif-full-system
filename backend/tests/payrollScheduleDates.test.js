@@ -4,6 +4,7 @@ vi.mock("../src/config/db.js", () => ({ pool: { query: vi.fn(), getConnection: v
 
 import { pool } from "../src/config/db.js";
 import {
+  getPayrollSettings,
   getMonthlyWorkSchedule,
   saveMonthlyWorkSchedule,
   updatePayrollSettings,
@@ -103,7 +104,7 @@ describe("saving the monthly working schedule", () => {
 describe("saving payroll settings", () => {
   beforeEach(() => pool.query.mockReset());
 
-  it("accepts a valid 24-hour shift start and check-out", async () => {
+  it("saves settings for the requested month and accepts valid shift times", async () => {
     pool.query
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([
@@ -124,6 +125,8 @@ describe("saving payroll settings", () => {
         scopeOrgId: "org-1",
         user: { uuid: null },
         body: {
+          month: 11,
+          year: 2026,
           salary_calculation_method: "days",
           calculate_overtime: false,
           shift_start_time: "09:00",
@@ -135,5 +138,32 @@ describe("saving payroll settings", () => {
     );
 
     expect(res.json.mock.calls[0][0].success).toBe(true);
+    expect(pool.query.mock.calls[0][0]).toContain("INSERT INTO organization_monthly_payroll_settings");
+    expect(pool.query.mock.calls[0][1].slice(0, 3)).toEqual(["org-1", 11, 2026]);
+  });
+
+  it("loads the settings saved for the selected month", async () => {
+    pool.query.mockResolvedValueOnce([[
+      {
+        salary_calculation_method: "hours",
+        calculate_overtime: 1,
+        shift_start_time: "08:00",
+        shift_end_time: "16:00",
+        overtime_multiplier: "2.00",
+      },
+    ]]);
+
+    const res = fakeResponse();
+    await getPayrollSettings(
+      { scopeOrgId: "org-1", query: { month: "11", year: "2026" } },
+      res,
+    );
+
+    expect(pool.query.mock.calls[0][1]).toEqual(["org-1", 11, 2026]);
+    expect(res.json.mock.calls[0][0].data.settings).toMatchObject({
+      salary_calculation_method: "hours",
+      calculate_overtime: true,
+      shift_start_time: "08:00",
+    });
   });
 });

@@ -118,8 +118,20 @@ export async function effectiveBasicForMonth({ employeeUuid, orgId, month, year,
 // three-letter code, and its absence here is the point: a currency is no longer
 // something an administrator confirms, so a NULL left over from before this
 // change must not keep blocking payroll. CURRENCY is applied below instead.
-export async function getPayrollSettings(orgId, conn = pool) {
-  const [rows] = await conn.query("SELECT * FROM organization_payroll_settings WHERE organization_id=?", [orgId]);
+export async function getPayrollSettings(orgId, conn = pool, month = null, year = null) {
+  let rows = [];
+  if (month !== null && year !== null) {
+    [rows] = await conn.query(
+      "SELECT * FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
+      [orgId, month, year],
+    );
+  }
+  if (!rows.length) {
+    [rows] = await conn.query(
+      "SELECT * FROM organization_payroll_settings WHERE organization_id=?",
+      [orgId],
+    );
+  }
   if (!rows.length) throw new ApiError(409, "Payroll settings are not configured. Select a salary calculation method and configure the organization shift times.");
   const settings = rows[0];
   const start = timeToMinutes(settings.shift_start_time);
@@ -382,7 +394,7 @@ export async function getApprovedOvertimeForMonth({ employeeUuid, month, year, c
  */
 export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId, month, year, joiningDate = null, policy = null, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
-  const activePolicy = policy ?? await getPayrollSettings(orgId, conn);
+  const activePolicy = policy ?? await getPayrollSettings(orgId, conn, m, y);
   const calendar = await getWorkingDaysForMonth({ orgId, month: m, year: y, conn });
   // A new employee is not eligible for scheduled days before their joining date.
   // Clamp the employee-specific payroll calendar without changing the org's
