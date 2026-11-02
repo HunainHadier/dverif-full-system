@@ -27,6 +27,7 @@ export async function listAssets(req, res) {
     offset,
     search: typeof req.query.search === "string" ? req.query.search : undefined,
     status: typeof req.query.status === "string" ? req.query.status : undefined,
+    employeeUuid: typeof req.query.employee_uuid === "string" ? req.query.employee_uuid : undefined,
   });
   return ok(res, result, "Assets");
 }
