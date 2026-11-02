@@ -1,0 +1,17 @@
+name: Apply payroll snapshot patch
+on:
+  push:
+    branches:
+      - feat/payroll-run-snapshots
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch
+        run: |
+          echo "patch workflow placeholder"
