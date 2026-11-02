@@ -33,8 +33,8 @@ export const dashboardService = {
   admin: () => api.get<DashboardStats>("/dashboard/admin").then((r) => r.data),
   user: () => api.get<DashboardStats>("/dashboard/user").then((r) => r.data),
   analytics: () => api.get<AdminAnalytics>("/dashboard/analytics").then((r) => r.data),
-  orgAnalytics: () =>
-    api.get<OrgDashboardAnalytics>("/org/dashboard/analytics").then((r) => r.data),
+  orgAnalytics: (params: { from: string; to: string }) =>
+    api.get<OrgDashboardAnalytics>("/org/dashboard/analytics", { params }).then((r) => r.data),
 };
 
 export const notificationService = {
