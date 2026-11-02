@@ -91,7 +91,6 @@ function ExpenseClaimsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
-  const [month, setMonth] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [status, setStatus] = useState<ClaimStatus | "">("");
@@ -101,7 +100,7 @@ function ExpenseClaimsPage() {
   const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">("approved");
   const [paying, setPaying] = useState<ExpenseClaim | null>(null);
 
-  useEffect(() => { setPage(1); }, [month, fromDate, toDate, status, employeeUuid]);
+  useEffect(() => { setPage(1); }, [fromDate, toDate, status, employeeUuid]);
 
   const employees = useQuery({
     queryKey: ["expense-claim-filter-employees"],
@@ -109,12 +108,11 @@ function ExpenseClaimsPage() {
   });
 
   const list = useQuery({
-    queryKey: ["expense-claims", page, month, fromDate, toDate, status, employeeUuid],
+    queryKey: ["expense-claims", page, fromDate, toDate, status, employeeUuid],
     queryFn: () =>
       expenseClaimsService.list({
         page,
         limit: PAGE_SIZE,
-        month: month || undefined,
         from_date: fromDate || undefined,
         to_date: toDate || undefined,
         status: status || undefined,
@@ -290,7 +288,6 @@ function ExpenseClaimsPage() {
         <PageHeader title={t("expenses.title")} description={t("expenses.description")} />
 
         <div className="flex flex-wrap items-center gap-2">
-          <input aria-label="Expense month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
           <input aria-label="From date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
           <input aria-label="To date" type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
           <select aria-label="Employee" value={employeeUuid} onChange={(e) => setEmployeeUuid(e.target.value)} className="h-9 max-w-56 rounded-md border border-input bg-transparent px-3 text-sm">
@@ -301,7 +298,7 @@ function ExpenseClaimsPage() {
             <option value="">All statuses</option>
             {(["pending", "approved", "rejected", "paid"] as ClaimStatus[]).map((value) => <option key={value} value={value}>{t(STATUS_LABEL[value])}</option>)}
           </select>
-          {(month || fromDate || toDate || status || employeeUuid) ? <Button size="sm" variant="ghost" onClick={() => { setMonth(""); setFromDate(""); setToDate(""); setStatus(""); setEmployeeUuid(""); }}>Clear filters</Button> : null}
+          {(fromDate || toDate || status || employeeUuid) ? <Button size="sm" variant="ghost" onClick={() => { setFromDate(""); setToDate(""); setStatus(""); setEmployeeUuid(""); }}>Clear filters</Button> : null}
         </div>
 
         <DataTable
