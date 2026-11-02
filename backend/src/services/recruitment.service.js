@@ -1860,13 +1860,41 @@ export async function listInterviews({
  * meeting that has not happened is how a decision gets recorded without anyone
  * having actually met, which is the failure this whole module exists to prevent.
  */
-export async function listMyInterviews({ orgId, userUuid, page = 1, limit = 100, offset = 0, conn = pool }) {
+export async function listMyInterviews({
+  orgId, userUuid, search, status, fromDate, toDate,
+  page = 1, limit = 100, offset = 0, conn = pool,
+}) {
   assertUuid(userUuid, "User UUID");
-  const clauses = ["i.organization_id=?", "(i.interviewer_uuid=? OR i.interviewer_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id=? AND e.linked_user_uuid=?))"];
+  const clauses = [
+    "i.organization_id=?",
+    "(i.interviewer_uuid=? OR i.interviewer_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id=? AND e.linked_user_uuid=?))",
+  ];
   const params = [orgId, userUuid, orgId, userUuid];
+  if (status) {
+    if (!INTERVIEW_STATUSES.includes(status)) throw new ApiError(400, "Invalid interview status");
+    clauses.push("i.status=?");
+    params.push(status);
+  }
+  if (fromDate) {
+    clauses.push("DATE(i.scheduled_at)>=?");
+    params.push(isoDate(fromDate));
+  }
+  if (toDate) {
+    clauses.push("DATE(i.scheduled_at)<=?");
+    params.push(isoDate(toDate));
+  }
+  if (search?.trim()) {
+    clauses.push("c.full_name LIKE ?");
+    params.push(`%${search.trim()}%`);
+  }
   const where = clauses.join(" AND ");
   const effectiveOffset = offset || (page - 1) * limit;
-  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM interviews i WHERE ${where}`, params);
+  const [[{ total }]] = await conn.query(
+    `SELECT COUNT(*) AS total FROM interviews i
+       LEFT JOIN candidates c ON c.uuid=i.candidate_uuid AND c.organization_id=i.organization_id
+      WHERE ${where}`,
+    params,
+  );
   const [rows] = await conn.query(
     `SELECT i.*, c.full_name AS candidate_name,
             COALESCE(u.full_name, iu.full_name, e.full_name) AS interviewer_name,

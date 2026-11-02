@@ -100,7 +100,6 @@ function OrgAttendanceContent() {
   const [status, setStatus] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [monthFilter, setMonthFilter] = useState("");
   const [employeeUuid, setEmployeeUuid] = useState("");
   const [department, setDepartment] = useState("");
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
@@ -265,7 +264,7 @@ function OrgAttendanceContent() {
         <CardContent className="p-0">
           <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-12">
             <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-12">
-              Showing today's attendance by default. Select a month or date range to view older records.
+              Showing today's attendance by default. Select a date range to view older records.
             </p>
             <div className="min-w-0 sm:col-span-2 xl:col-span-3 [&>div]:!w-full">
               <SearchInput
@@ -354,35 +353,12 @@ function OrgAttendanceContent() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="min-w-0 xl:col-span-2">
-              <Input
-                type="month"
-                aria-label="Filter attendance by month"
-                value={monthFilter}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setMonthFilter(value);
-                  if (value) {
-                    const [year, month] = value.split("-").map(Number);
-                    const lastDay = new Date(year, month, 0).getDate();
-                    setDateFrom(`${value}-01`);
-                    setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
-                  } else {
-                    setDateFrom("");
-                    setDateTo("");
-                  }
-                  setPage(1);
-                }}
-                className="w-full min-w-0"
-              />
-            </div>
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-3">
               <Input
                 type="date"
                 aria-label="Attendance from date"
                 value={dateFrom}
                 onChange={(e) => {
-                  setMonthFilter("");
                   setDateFrom(e.target.value);
                   setPage(1);
                 }}

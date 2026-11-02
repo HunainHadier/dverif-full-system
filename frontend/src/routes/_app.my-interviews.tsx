@@ -7,6 +7,7 @@ import { CalendarCheck, Clock3, MapPin, Video } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { PageHeader } from "@/components/common/PageHeader";
+import { SearchInput } from "@/components/common/SearchInput";
 import { FormDialog } from "@/components/hr/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,12 +27,33 @@ type FeedbackForm = {
   feedback_notes: string;
 };
 
+function localMonthRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return {
+    from: `${year}-${String(month + 1).padStart(2, "0")}-01`,
+    to: `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 function MyAssignedInterviewsPage() {
   const qc = useQueryClient();
+  const initialRange = localMonthRange();
   const [selected, setSelected] = useState<Interview | null>(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [fromDate, setFromDate] = useState(initialRange.from);
+  const [toDate, setToDate] = useState(initialRange.to);
   const list = useQuery({
-    queryKey: ["my-assigned-interviews"],
-    queryFn: () => interviewsService.myAssigned(),
+    queryKey: ["my-assigned-interviews", search, status, fromDate, toDate],
+    queryFn: () => interviewsService.myAssigned({
+      search: search || undefined,
+      status: status || undefined,
+      from_date: fromDate || undefined,
+      to_date: toDate || undefined,
+    }),
   });
   const form = useForm<FeedbackForm>({
     defaultValues: { status: "completed", outcome: "pending", rating: "", feedback_notes: "" },
@@ -66,6 +88,20 @@ function MyAssignedInterviewsPage() {
           title="My Assigned Interviews"
           description="Interviews assigned to your account. Only you can record their feedback."
         />
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
+          <div className="min-w-[220px] flex-1">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search candidate..." />
+          </div>
+          <select aria-label="Interview status" value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+            <option value="">All statuses</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <input aria-label="From date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+          <input aria-label="To date" type="date" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" />
+          <Button type="button" size="sm" variant="ghost" onClick={() => { setSearch(""); setStatus(""); const range = localMonthRange(); setFromDate(range.from); setToDate(range.to); }}>Reset</Button>
+        </div>
         {list.isLoading ? <p className="text-sm text-muted-foreground">Loading assigned interviews…</p> : null}
         {list.isError ? <p className="text-sm text-destructive">{apiErrorMessage(list.error, "Could not load assigned interviews")}</p> : null}
         {!list.isLoading && !items.length ? (

@@ -117,7 +117,6 @@ function OrgLeavesContent() {
   const [dateTo, setDateTo] = useState(localToday());
   const [employeeUuid, setEmployeeUuid] = useState("");
   const [leaveTypeId, setLeaveTypeId] = useState("");
-  const [monthFilter, setMonthFilter] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [confirming, setConfirming] = useState<LeaveRequest | null>(null);
   const [decideAction, setDecideAction] = useState<"approved" | "rejected">("approved");
@@ -291,36 +290,12 @@ function OrgLeavesContent() {
                   </SelectContent>
                 </Select>
                 </div>
-                <div className="min-w-0 xl:col-span-1">
-                <Input
-                  type="month"
-                  aria-label="Filter leave requests by month"
-                  value={monthFilter}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setMonthFilter(value);
-                    if (value) {
-                      const [year, month] = value.split("-").map(Number);
-                      const lastDay = new Date(year, month, 0).getDate();
-                      setDateFrom(`${value}-01`);
-                      setDateTo(`${value}-${String(lastDay).padStart(2, "0")}`);
-                    } else {
-                      const today = localToday();
-                      setDateFrom(today);
-                      setDateTo(today);
-                    }
-                    setPage(1);
-                  }}
-                  className="w-full min-w-0"
-                />
-                </div>
                 <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
                   <Input
                     type="date"
                     aria-label="Leave requests from date"
                     value={dateFrom}
                     onChange={(e) => {
-                      setMonthFilter("");
                       setDateFrom(e.target.value);
                       setPage(1);
                     }}

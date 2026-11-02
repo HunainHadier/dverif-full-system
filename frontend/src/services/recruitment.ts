@@ -403,7 +403,7 @@ export const interviewsService = {
       .get<{ items?: { uuid: UUID; full_name: string; email: string; org_role: string; designation: string | null; department: string | null }[] }>("/org/interviewers")
       .then((r) => Array.isArray(r.data?.items) ? r.data.items : []),
 
-  myAssigned: (params: { page?: number; limit?: number } = {}) =>
+  myAssigned: (params: { page?: number; limit?: number; search?: string; status?: string; from_date?: string; to_date?: string } = {}) =>
     api.get<Paginated<Interview>>("/org/my/interviews", { params: { ...params, limit: params.limit ?? 100 } }).then((r) => r.data.items ?? []),
 
   recordMyFeedback: (
