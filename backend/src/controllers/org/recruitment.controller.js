@@ -335,7 +335,10 @@ export async function listInterviewers(req, res) {
 export async function listMyInterviews(req, res) {
   const { page, limit, offset } = parsePagination(req.query);
   const result = await recruitment.listMyInterviews({
-    orgId: req.scopeOrgId, userUuid: req.user.uuid, page, limit, offset,
+    orgId: req.scopeOrgId, userUuid: req.user.uuid,
+    search: str(req.query.search), status: str(req.query.status),
+    fromDate: str(req.query.from_date), toDate: str(req.query.to_date),
+    page, limit, offset,
   });
   return ok(res, paginatedResponse(result.items, result.total, result.page, result.limit), "My assigned interviews");
 }
