@@ -127,6 +127,11 @@ export async function listExitRequests(req, res) {
   if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
   if (fromDate) { clauses.push("er.last_working_day >= ?"); params.push(fromDate); }
   if (toDate) { clauses.push("er.last_working_day <= ?"); params.push(toDate); }
+  const department = typeof req.query.department === "string" ? req.query.department.trim() : "";
+  if (department) {
+    clauses.push("EXISTS (SELECT 1 FROM employees ed JOIN departments dp ON dp.id=ed.department_id WHERE ed.uuid=er.employee_uuid AND ed.organization_id=er.organization_id AND dp.organization_id=er.organization_id AND dp.name=?)");
+    params.push(department);
+  }
   const clearanceStatus = typeof req.query.clearance_status === "string" ? req.query.clearance_status : "";
   if (clearanceStatus && !["pending", "cleared"].includes(clearanceStatus)) throw new ApiError(400, "clearance_status must be pending or cleared");
   if (clearanceStatus === "pending") clauses.push("EXISTS (SELECT 1 FROM offboarding_checklists cf WHERE cf.exit_request_uuid=er.uuid AND cf.status='pending')");
