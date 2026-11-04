@@ -1,6 +1,7 @@
 import { pool } from "../config/db.js";
 import { sendWorkflowNotificationEmail } from "../utils/mailer.js";
 import { runScheduledNotificationJobs } from "./notificationEmail.scheduler.js";
+import { autoCheckoutOpenAttendance } from "./attendanceAutoCheckout.scheduler.js";
 
 let running = false;
 
@@ -68,12 +69,18 @@ export function startEmailOutboxWorker() {
   tick();
   const timer = setInterval(tick, 5_000);
   timer.unref?.();
-  const scheduleTick = () => runScheduledNotificationJobs().catch((error) => {
-    console.error("Scheduled notification scan failed:", error?.message);
-  });
+  const scheduleTick = () => {
+    runScheduledNotificationJobs().catch((error) => {
+      console.error("Scheduled notification scan failed:", error?.message);
+    });
+    autoCheckoutOpenAttendance().then((count) => {
+      if (count > 0) console.info(`Automatically checked out ${count} open attendance record(s).`);
+    }).catch((error) => {
+      console.error("Attendance auto-checkout failed:", error?.message);
+    });
+  };
   scheduleTick();
   const scheduleTimer = setInterval(scheduleTick, 60_000);
   scheduleTimer.unref?.();
   return timer;
 }
-
