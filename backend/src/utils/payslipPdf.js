@@ -658,14 +658,14 @@ function amountInWords(value) {
 function drawHeader(doc, { organization, period, logoPath }) {
   const pageWidth = doc.page.width;
   const contentW = pageWidth - PAGE_MARGIN * 2;
-  let y = 32;
+  let y = 18;
   let drewLogo = false;
 
   if (logoPath) {
     try {
-      const { w, h } = fitImage(doc, logoPath, 170, 70);
+      const { w, h } = fitImage(doc, logoPath, 200, 78);
       doc.image(logoPath, (pageWidth - w) / 2, y, { width: w, height: h });
-      y += h + 10;
+      y += h + 4;
       drewLogo = true;
     } catch {
       // Unreadable or unsupported image (pdfkit decodes PNG/JPEG only): use the name.
@@ -682,17 +682,17 @@ function drawHeader(doc, { organization, period, logoPath }) {
 
   doc.moveTo(PAGE_MARGIN, y).lineTo(pageWidth - PAGE_MARGIN, y)
     .lineWidth(1.5).strokeColor(BRAND).stroke();
-  y += 16;
+  y += 8;
 
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BRAND)
     .text("PAYSLIP", PAGE_MARGIN, y, { width: contentW, align: "center", lineBreak: false, characterSpacing: 2 });
-  y += 24;
+  y += 20;
 
   // With a logo the name is not otherwise on the page, so it goes in the subtitle.
   const subtitle = drewLogo ? `${organization}  ·  ${period}` : `Pay period: ${period}`;
   doc.font("Helvetica").fontSize(10).fillColor(MUTED)
     .text(subtitle, PAGE_MARGIN, y, { width: contentW, align: "center", lineBreak: false, ellipsis: true });
-  return y + 16;
+  return y + 10;
 }
 
 function drawEmployeeCard(doc, fields, y) {
@@ -891,7 +891,7 @@ const SOURCE_LABELS = {
   auto_late: "Late arrivals",
   auto_overtime: "Approved overtime",
   manual_overtime: "Manual overtime",
-  auto_expense: "Expense claims",
+  auto_expense: "Expense reimbursement",
   monthly_variable: "Monthly payroll item",
   manual: "Manual adjustment",
 };
@@ -980,7 +980,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
     logoPath: organizationLogoPath(record.organization_logo),
   });
 
-  y += 14;
+  y += 8;
   const fields = [
     ["Employee name", employeeName],
     ["CNIC", record.employee_cnic],
@@ -990,7 +990,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   ].filter(([, value]) => displayValue(value)).map(([label, value]) => ({ label, value: displayValue(value) }));
   if (fields.length) y = drawEmployeeCard(doc, fields, y);
 
-  y += 14;
+  y += 8;
 
   const basic = Number(record.basic_salary ?? 0) || 0;
   const allowances = Number(record.allowances ?? 0) || 0;
@@ -1022,7 +1022,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
   // Reimbursement is stored separately from contractual allowances. Older
   // records may have the numeric total but no itemised auto_expense line, so
   // show it explicitly rather than making the earnings total look unexplained.
-  if (expenseReimbursement > 0 && !earningsRows.some((row) => row.source === "Expense claims")) {
+  if (expenseReimbursement > 0 && !earningsRows.some((row) => row.source === SOURCE_LABELS.auto_expense)) {
     earningsRows.push({
       label: "Expense reimbursement",
       amount: money(expenseReimbursement),
@@ -1040,7 +1040,7 @@ export async function generatePayslipPdf({ record, employeeName, organizationNam
    * Only legacy two-row records (no lines) stay side by side, and only while
    * they are short.
    */
-  const stack = anyLines || Math.max(earningsRows.length, deductionRows.length) > 3;
+  const stack = anyLines || expenseReimbursement > 0 || Math.max(earningsRows.length, deductionRows.length) > 3;
 
   // Keep the net-pay banner and the fixed footer from occupying the same space.
   // Long itemised payslips continue on a fresh page before the breakdown starts;

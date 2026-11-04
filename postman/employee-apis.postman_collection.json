@@ -1,0 +1,1300 @@
+{
+  "info": {
+    "_postman_id": "f421397a-5391-46ef-a432-11c762725ec0",
+    "name": "Dverif Employee APIs",
+    "description": "Employee self-service API collection for Dverif. Import EMPLOYEE-API-GUIDE.md alongside this collection. Base URL defaults to http://localhost:5000/api/v1. Employee access token is read from the active Postman environment variable accessToken. No real credentials or tokens are included.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api/v1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Authentication and profile",
+      "description": "Sign in as a regular organization user whose org_role is employee. Login sends an OTP to the account email; Verify OTP stores the access token in the active environment.",
+      "item": [
+        {
+          "name": "Login - request email OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{employeeEmail}}\",\n  \"password\": \"{{employeePassword}}\",\n  \"rememberMe\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Use a locally-created Postman environment for employeeEmail and employeePassword. Successful password validation sends an OTP; it does not yet return the access token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login request accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "  const body = pm.response.json();",
+                  "  const data = body.data || body;",
+                  "  if (data.identity_id) pm.environment.set('identityId', data.identity_id);",
+                  "  if (data.identity_type) pm.environment.set('identityType', data.identity_type);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify OTP - save access token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identity_type\": \"{{identityType}}\",\n  \"identity_id\": \"{{identityId}}\",\n  \"otp\": \"{{otp}}\",\n  \"rememberMe\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "verify-otp"
+              ]
+            },
+            "description": "Enter the one-time code emailed to the employee in the environment variable otp. A successful response saves data.token as accessToken in the active environment."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('OTP verified and access token saved', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  const data = body.data || body;",
+                  "  pm.expect(data.token).to.be.a('string').and.not.empty;",
+                  "  pm.environment.set('accessToken', data.token);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resend OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identity_type\": \"{{identityType}}\",\n  \"identity_id\": \"{{identityId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "resend-otp"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Request password reset",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{employeeEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/user/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "user",
+                "forgot-password"
+              ]
+            },
+            "description": "Sends a password reset email. Use the reset token from that email in Reset password."
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{passwordResetToken}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/user/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "user",
+                "reset-password"
+              ]
+            },
+            "description": "Requires the unused, unexpired token from the password reset email and a password meeting the server policy."
+          }
+        },
+        {
+          "name": "Check employee invite token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/user/invite-status?token={{inviteToken}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "user",
+                "invite-status"
+              ],
+              "query": [
+                {
+                  "key": "token",
+                  "value": "{{inviteToken}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Set password from employee invite",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{inviteToken}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/user/set-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "user",
+                "set-password"
+              ]
+            },
+            "description": "For a new employee account. Uses an unused, unexpired invite token and the server's password policy."
+          }
+        },
+        {
+          "name": "Refresh access token",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Uses the HttpOnly refresh cookie set during OTP verification. Keep Postman's cookie jar enabled for the API host."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refresh token response saved when returned', function () {",
+                  "  if (pm.response.code >= 200 && pm.response.code < 300) {",
+                  "    const body = pm.response.json();",
+                  "    const data = body.data || body;",
+                  "    if (data.accessToken || data.token) pm.environment.set('accessToken', data.accessToken || data.token);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/user/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "user",
+                "logout"
+              ]
+            },
+            "description": "Requires the access token and clears/revokes the user session refresh token."
+          }
+        },
+        {
+          "name": "Get my profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "full_name",
+                  "value": "Employee Name",
+                  "type": "text"
+                },
+                {
+                  "key": "phone",
+                  "value": "03001234567",
+                  "type": "text"
+                },
+                {
+                  "key": "profile_image",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
+            },
+            "description": "Only full_name, phone and optional profile_image are editable. Email cannot be changed. Remove the profile_image form-data row if no image is being uploaded."
+          }
+        },
+        {
+          "name": "Set preferred language",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language\": \"en\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/preferred-language",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "preferred-language"
+              ]
+            },
+            "description": "Allowed language values: en or ur."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Dashboard",
+      "item": [
+        {
+          "name": "Get employee dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dashboard"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Attendance",
+      "description": "Employee-only attendance endpoints. Check-in/out may require an organization-approved IP address and an active attendance module.",
+      "item": [
+        {
+          "name": "Today's attendance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attendance/today",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attendance",
+                "today"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Check in",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attendance/check-in",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attendance",
+                "check-in"
+              ]
+            },
+            "description": "No request body. Check-in is recorded for the signed-in employee and server date."
+          }
+        },
+        {
+          "name": "Check out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attendance/check-out",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attendance",
+                "check-out"
+              ]
+            },
+            "description": "No request body. Requires an open attendance record for today."
+          }
+        },
+        {
+          "name": "Attendance history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/attendance/history?page=1&limit=20&dateFrom=&dateTo=&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "attendance",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "dateTo",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "Optional: checked_in or checked_out.",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Leave",
+      "item": [
+        {
+          "name": "List leave types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "types"
+              ]
+            }
+          }
+        },
+        {
+          "name": "My leave balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "balance"
+              ]
+            }
+          }
+        },
+        {
+          "name": "My leave requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaves/mine?page=1&limit=20&status=&dateFrom=&dateTo=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "dateTo",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit leave request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leave_type_id\": 1,\n  \"requested_treatment\": \"paid\",\n  \"start_date\": \"2026-11-20\",\n  \"end_date\": \"2026-11-21\",\n  \"reason\": \"Personal leave\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "description": "Replace leave_type_id with an ID from List leave types. The requested dates must be valid and available balance is required. This creates a pending request; employee APIs cannot approve it."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Payroll and payslips",
+      "item": [
+        {
+          "name": "My salary records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/salary-records/mine?page=1&limit=10&month=&year=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "salary-records",
+                "mine"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "month",
+                  "value": "",
+                  "description": "Optional month number 1-12.",
+                  "disabled": true
+                },
+                {
+                  "key": "year",
+                  "value": "",
+                  "description": "Optional four-digit year.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Returns only the signed-in employee's own salary records and payslip line items."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Expenses",
+      "description": "Claims are always filed for the signed-in employee; do not send employee_uuid. Receipts are optional and belong only to the caller's claim.",
+      "item": [
+        {
+          "name": "List my expense claims",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/expenses?status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expenses"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "Optional: pending, approved, rejected, or paid.",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit expense claim",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expense_name\": \"Taxi to client site\",\n  \"amount\": 1250.00,\n  \"expense_date\": \"2026-11-03\",\n  \"description\": \"Travel for a scheduled client meeting\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/my/expenses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expenses"
+              ]
+            },
+            "description": "The date is the day the expense occurred (not the filing date). It must not be in the future or older than the server's allowed backdate window. Payment mode and employee identity are determined by the server/reviewer."
+          }
+        },
+        {
+          "name": "Get my expense claim",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/expenses/{{expenseClaimUuid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expenses",
+                "{{expenseClaimUuid}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Attach receipt to my claim",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/my/expenses/{{expenseClaimUuid}}/receipts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expenses",
+                "{{expenseClaimUuid}}",
+                "receipts"
+              ]
+            },
+            "description": "Choose a file for the files form-data field. Upload the receipt to your own claim only. Do not manually set Content-Type; Postman must add the multipart boundary."
+          }
+        },
+        {
+          "name": "Download my receipt",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/expense-attachments/{{attachmentUuid}}/download",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expense-attachments",
+                "{{attachmentUuid}}",
+                "download"
+              ]
+            },
+            "description": "Returns the authenticated receipt file as binary."
+          }
+        },
+        {
+          "name": "Remove my receipt",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/expense-attachments/{{attachmentUuid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "expense-attachments",
+                "{{attachmentUuid}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - My assets",
+      "item": [
+        {
+          "name": "List my assigned assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/assets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "assets"
+              ]
+            },
+            "description": "Returns assets assigned to the signed-in employee. Assignment and return actions are staff-only."
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Resignation",
+      "description": "Employee resignation is self-service. The employee identity and resignation type are derived by the server.",
+      "item": [
+        {
+          "name": "Get my resignation status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my/resignation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "resignation"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Submit resignation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"last_working_day\": \"2026-12-04\",\n  \"reason\": \"I am resigning for a new opportunity.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/my/resignation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my",
+                "resignation"
+              ]
+            },
+            "description": "A valid last_working_day and reason are required. Only one open request is allowed; HR review and completion are not employee endpoints."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - My HR letters",
+      "item": [
+        {
+          "name": "List my issued letters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my-letters?page=1&limit=20&letter_type=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my-letters"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "letter_type",
+                  "value": "",
+                  "description": "Optional letter type filter.",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get my issued letter",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my-letters/{{letterUuid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my-letters",
+                "{{letterUuid}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download my letter PDF",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my-letters/{{letterUuid}}/pdf",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my-letters",
+                "{{letterUuid}}",
+                "pdf"
+              ]
+            },
+            "description": "Returns the issued letter PDF. Use Postman's Send and Download if you want to save the binary file."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Notifications",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unread notification count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "unread-count"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark notification read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notificationId}}",
+                "read"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark notification read by reference",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-by-reference/{{referenceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "read-by-reference",
+                "{{referenceId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mark all notifications read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get notification preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "preferences"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update notification preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preferences\": {\n    \"leave\": true,\n    \"support\": true,\n    \"recruitment\": true,\n    \"payroll\": true,\n    \"attendance\": true,\n    \"onboarding\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "preferences"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Organization support",
+      "description": "Employees can create, list, view and reply to their own organization support tickets. Ticket status changes are staff-only and are intentionally not included.",
+      "item": [
+        {
+          "name": "List my support tickets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/org/support/tickets?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "support",
+                "tickets"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create support ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Unable to access payroll\",\n  \"description\": \"The payroll page shows an access error after login.\",\n  \"category\": \"payroll\",\n  \"priority\": \"medium\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/org/support/tickets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "category must be it, hr, admin, or payroll. priority must be low, medium, or high. department_uuid is optional."
+          }
+        },
+        {
+          "name": "Get support ticket",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/org/support/tickets/{{ticketUuid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "support",
+                "tickets",
+                "{{ticketUuid}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reply to support ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"I have attached the steps that reproduce the issue.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/org/support/tickets/{{ticketUuid}}/replies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "support",
+                "tickets",
+                "{{ticketUuid}}",
+                "replies"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

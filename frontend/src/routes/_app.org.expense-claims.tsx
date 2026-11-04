@@ -4,12 +4,11 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Check, Eye, Receipt, Upload, Wallet, X } from "lucide-react";
+import { Check, Eye, Receipt, Wallet, X } from "lucide-react";
 
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
-import { FileDropzone } from "@/components/hr/FileDropzone";
 import { AttachmentCard, type AttachmentCardHandlers } from "@/components/hr/AttachmentCard";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -372,32 +371,11 @@ function ClaimDetailSheet({
   const { t } = useTranslation();
   const qc = useQueryClient();
   const open = Boolean(uuid);
-  const [files, setFiles] = useState<File[]>([]);
 
   const detail = useQuery({
     queryKey: ["expense-claim", uuid],
     queryFn: () => expenseClaimsService.get(uuid!),
     enabled: open,
-  });
-
-  // Clear the staged files when the sheet changes subject, or a receipt picked for
-  // one claim is silently uploaded against the next one opened.
-  useEffect(() => {
-    if (!open) setFiles([]);
-  }, [open, uuid]);
-
-  const upload = useMutation({
-    mutationFn: async () => {
-      if (!uuid) return;
-      await expenseClaimsService.uploadReceipts(uuid, files);
-    },
-    onSuccess: () => {
-      setFiles([]);
-      onChanged();
-      void qc.invalidateQueries({ queryKey: ["expense-claim", uuid] });
-      toast.success(t("expenses.receiptsUploaded"));
-    },
-    onError: (e) => toast.error(apiErrorMessage(e, t("expenses.uploadFailed"))),
   });
 
   const claim = detail.data;
@@ -498,29 +476,6 @@ function ClaimDetailSheet({
                 <p className="text-sm text-muted-foreground">{t("expenses.noReceipts")}</p>
               ) : null}
 
-              {/* Uploading on a rejected claim is refused by the server
-                  (attachReceipts throws), so the control is hidden rather than
-                  offered-then-409. */}
-              {claim.status !== "rejected" ? (
-                <div className="space-y-2 pt-1">
-                  <FileDropzone
-                    value={files}
-                    onChange={setFiles}
-                    accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf"
-                    maxFiles={5}
-                    maxSizeMb={10}
-                    label={t("expenses.addReceipts")}
-                  />
-                  <Button
-                    size="sm"
-                    disabled={files.length === 0 || upload.isPending}
-                    onClick={() => upload.mutate()}
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    {t("expenses.uploadReceipts")}
-                  </Button>
-                </div>
-              ) : null}
             </div>
           </div>
         ) : null}
@@ -656,4 +611,3 @@ function ReviewDialog({
     </FormDialog>
   );
 }
-

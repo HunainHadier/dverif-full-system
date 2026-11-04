@@ -69,7 +69,7 @@ const LINE_SOURCE_LABELS: Record<string, string> = {
   auto_late: "Late arrivals",
   auto_overtime: "Approved overtime",
   manual_overtime: "Manual overtime",
-  auto_expense: "Expense claims",
+  auto_expense: "Expense reimbursement",
   monthly_variable: "Monthly payroll item",
   manual: "Manual adjustment",
 };

@@ -82,11 +82,6 @@ export const Route = createFileRoute("/_app/org/leaves")({
 
 const PAGE_SIZE = 10;
 
-function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 function OrgLeavesPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -113,8 +108,6 @@ function OrgLeavesContent() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
-  const [dateFrom, setDateFrom] = useState(localToday());
-  const [dateTo, setDateTo] = useState(localToday());
   const [employeeUuid, setEmployeeUuid] = useState("");
   const [leaveTypeId, setLeaveTypeId] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
@@ -136,8 +129,8 @@ function OrgLeavesContent() {
   });
 
   const list = useQuery({
-    queryKey: ["orgLeaves", page, search, status, dateFrom, dateTo, employeeUuid, leaveTypeId],
-    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, dateFrom, dateTo, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined }),
+    queryKey: ["orgLeaves", page, search, status, employeeUuid, leaveTypeId],
+    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined }),
   });
 
   const decide = useMutation({
@@ -289,30 +282,6 @@ function OrgLeavesContent() {
                     <SelectItem value="all">{t("orgLeaves.all")}</SelectItem>
                   </SelectContent>
                 </Select>
-                </div>
-                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-2">
-                  <Input
-                    type="date"
-                    aria-label="Leave requests from date"
-                    value={dateFrom}
-                    onChange={(e) => {
-                      setDateFrom(e.target.value);
-                      setPage(1);
-                    }}
-                    className="w-full min-w-0"
-                  />
-                  <span className="text-xs text-muted-foreground">{t("common.to")}</span>
-                  <Input
-                    type="date"
-                    aria-label="Leave requests to date"
-                    value={dateTo}
-                    onChange={(e) => {
-                      setMonthFilter("");
-                      setDateTo(e.target.value);
-                      setPage(1);
-                    }}
-                    className="w-full min-w-0"
-                  />
                 </div>
               </div>
 

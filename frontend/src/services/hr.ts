@@ -171,6 +171,7 @@ export type PayrollLine = {
     | "auto_absenteeism"
     | "auto_late"
     | "auto_overtime"
+    | "auto_expense"
     | "manual_overtime"
     | "monthly_variable"
     | "manual";
@@ -186,6 +187,16 @@ export type PayrollPreviewItem = {
   allowances: number | string;
   deductions: number | string;
   expense_reimbursement: number | string;
+  expense_reimbursement_details?: {
+    claim_count: number;
+    amount: number | string;
+    claims: {
+      uuid: UUID;
+      amount: number | string;
+      expense_date: string;
+      expense_name: string;
+    }[];
+  };
   net_salary: number | string;
   lines: PayrollLine[];
   attendance: {

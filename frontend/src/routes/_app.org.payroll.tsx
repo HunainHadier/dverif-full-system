@@ -1734,13 +1734,22 @@ function OrgPayrollPage() {
             {(activePreview?.items ?? []).map((item) => {
               const a = item.attendance;
               const isHoursBased = item.rates.salary_calculation_method === "hours";
-              const auto = item.lines.filter((l) => l.source !== "component");
+              const savedExpenseLine = activePreviewRecord?.lines?.find((line) => line.source === "auto_expense");
+              const reimbursement = activePreviewRecord
+                ? Number(activePreviewRecord.expense_reimbursement) || 0
+                : Number(item.expense_reimbursement) || 0;
+              const calculatedReimbursement = Number(item.expense_reimbursement) || 0;
+              const previewNet = Number(item.net_salary) - calculatedReimbursement + reimbursement;
+              const auto = item.lines.filter((l) => l.source !== "component" && l.source !== "auto_expense");
+              const expenseClaims = previewSource === "generation"
+                ? item.expense_reimbursement_details?.claims ?? []
+                : [];
               return (
                 <div key={item.employee_uuid} className="rounded-md border p-3 text-sm">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-medium">{item.employee_name}</span>
                     <span className="font-mono text-sm font-semibold">
-                      {item.rates.currency} {money(item.net_salary)}
+                      {item.rates.currency} {money(previewNet)}
                     </span>
                   </div>
 
@@ -1818,6 +1827,30 @@ function OrgPayrollPage() {
                         </li>
                       ))}
                     </ul>
+                  ) : null}
+
+                  {reimbursement > 0 ? (
+                    <div className="mt-2 space-y-1 border-t pt-2 text-xs">
+                      {expenseClaims.length > 0 ? expenseClaims.map((claim) => (
+                        <div key={claim.uuid} className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">
+                            Expense reimbursement — {claim.expense_name} ({claim.expense_date})
+                          </span>
+                          <span className="shrink-0 font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                            +{item.rates.currency} {money(claim.amount)}
+                          </span>
+                        </div>
+                      )) : (
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">
+                            {savedExpenseLine?.label ?? t("orgPayroll.expenseReimbursement", "Expense reimbursement")}
+                          </span>
+                          <span className="shrink-0 font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                            +{item.rates.currency} {money(reimbursement)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   ) : null}
 
                   <p className="mt-2 text-xs text-muted-foreground">
