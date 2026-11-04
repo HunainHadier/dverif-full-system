@@ -130,7 +130,7 @@ function OrgLeavesContent() {
 
   const list = useQuery({
     queryKey: ["orgLeaves", page, search, status, employeeUuid, leaveTypeId],
-    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined }),
+    queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined, include_all: true }),
   });
 
   const decide = useMutation({
@@ -373,7 +373,7 @@ function OrgLeavesContent() {
                                       className="h-7 text-xs"
                                       disabled={isLocked}
                                       onClick={() => {
-                                        setApprovalTreatment("unpaid");
+                                        setApprovalTreatment(r.requested_treatment ?? "unpaid");
                                         setDecideAction("approved");
                                         setConfirming(r);
                                       }}
@@ -424,18 +424,24 @@ function OrgLeavesContent() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={!!confirming && decideAction === "approved" && confirming.requested_treatment === "paid"} onOpenChange={(o) => !o && setConfirming(null)}>
+      <Dialog open={!!confirming && decideAction === "approved"} onOpenChange={(o) => !o && setConfirming(null)}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Approve paid leave request</DialogTitle><DialogDescription>Choose the final payroll treatment for this request.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Approve leave request</DialogTitle><DialogDescription>Choose whether this leave will be paid or unpaid in payroll.</DialogDescription></DialogHeader>
           <div className="space-y-2">
-            <Button className="w-full" variant={approvalTreatment === "unpaid" ? "default" : "outline"} onClick={() => setApprovalTreatment("unpaid")}>Approved as Unpaid</Button>
-            <Button className="w-full" variant={approvalTreatment === "paid" ? "default" : "outline"} onClick={() => setApprovalTreatment("paid")}>Approved as Paid</Button>
+            <Label htmlFor="leave-approval-treatment">Leave payment</Label>
+            <Select value={approvalTreatment} onValueChange={(value) => setApprovalTreatment(value as "paid" | "unpaid")}>
+              <SelectTrigger id="leave-approval-treatment"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="unpaid">Unpaid</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button><Button onClick={() => confirming && decide.mutate({ uuid: confirming.uuid, decision: "approved", treatment: approvalTreatment })} disabled={decide.isPending}>Confirm Approval</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <ConfirmDialog
-        open={!!confirming && !(decideAction === "approved" && confirming.requested_treatment === "paid")}
+        open={!!confirming && decideAction === "rejected"}
         onOpenChange={(o) => !o && setConfirming(null)}
         title={
           decideAction === "approved" ? t("orgLeaves.approveTitle") : t("orgLeaves.rejectTitle")
@@ -459,10 +465,10 @@ function OrgLeavesContent() {
                 })
             : undefined
         }
-        confirmLabel={decideAction === "approved" ? t("common.approve") : t("common.reject")}
-        destructive={decideAction === "rejected"}
+        confirmLabel={t("common.reject")}
+        destructive
         onConfirm={() =>
-          confirming && decide.mutate({ uuid: confirming.uuid, decision: decideAction, treatment: "unpaid" })
+          confirming && decide.mutate({ uuid: confirming.uuid, decision: "rejected" })
         }
       />
 
@@ -514,30 +520,6 @@ function AllocationsTab() {
     queryFn: () =>
       historyEmp ? orgLeaveAllocationService.employeeHistory(historyEmp) : Promise.resolve(null),
     enabled: !!historyEmp,
-  });
-
-  const setCell = useMutation({
-    mutationFn: ({
-      employee_uuid,
-      leave_type_id,
-      allocated_days,
-    }: {
-      employee_uuid: string;
-      leave_type_id: number;
-      allocated_days: number;
-    }) =>
-      orgLeaveAllocationService.set({
-        employee_uuid,
-        leave_type_id,
-        year,
-        allocated_days,
-      }),
-    onSuccess: () => {
-      toast.success(t("orgLeaves.allocSaved"));
-      qc.invalidateQueries({ queryKey: ["orgLeaveAllocations", year] });
-    },
-    onError: (e: any) =>
-      toast.error(e?.response?.data?.message ?? t("orgLeaves.allocSaveFailed")),
   });
 
   const setDesignationAllocation = useMutation({
@@ -713,32 +695,16 @@ function AllocationsTab() {
                       <div className="text-xs text-muted-foreground">{emp.email}</div>
                     </TableCell>
                     {emp.allocations.map((a) => {
-                      const cellsState =
-                        setCell.variables &&
-                        setCell.variables.employee_uuid === emp.employee_uuid &&
-                        setCell.variables.leave_type_id === a.leave_type_id &&
-                        setCell.isPending
-                          ? setCell.variables.allocated_days
-                          : null;
                       return (
                         <TableCell
                           key={a.leave_type_id}
                           data-label={leaveTypes.find((lt) => lt.id === a.leave_type_id)?.name ?? ""}
                           className="whitespace-nowrap"
                         >
-                          <AllocationCell
-                            value={a.allocated_days}
-                            remaining={a.remaining_days}
-                            busy={cellsState !== null}
-                            locked={isLocked}
-                            onCommit={(val) =>
-                              setCell.mutate({
-                                employee_uuid: emp.employee_uuid,
-                                leave_type_id: a.leave_type_id,
-                                allocated_days: val,
-                              })
-                            }
-                          />
+                          <div className="text-sm font-medium text-foreground">{a.allocated_days}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {a.remaining_days} {a.remaining_days === 1 ? "day" : "days"} left
+                          </div>
                         </TableCell>
                       );
                     })}
@@ -771,64 +737,6 @@ function AllocationsTab() {
   );
 }
 
-function AllocationCell({
-  value,
-  remaining,
-  busy,
-  locked,
-  onCommit,
-}: {
-  value: number;
-  remaining: number;
-  busy: boolean;
-  locked?: boolean;
-  onCommit: (allocated_days: number) => void;
-}) {
-  const [local, setLocal] = useState<string>(String(value));
-  const [editing, setEditing] = useState(false);
-
-  useEffect(() => {
-    setLocal(String(value));
-  }, [value]);
-
-  const commit = () => {
-    setEditing(false);
-    const v = parseInt(local, 10);
-    if (isNaN(v) || v < 0 || v === value) {
-      setLocal(String(value));
-      return;
-    }
-    onCommit(v);
-  };
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      <input
-        type="number"
-        min={0}
-        value={editing ? local : String(value)}
-        onChange={(e) => {
-          setLocal(e.target.value);
-          setEditing(true);
-        }}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        disabled={busy || locked}
-        className="h-7 w-20 rounded-md border border-border bg-transparent px-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-50"
-      />
-      <span
-        className={`text-[10px] leading-none ${
-          remaining <= 0 ? "text-amber-600" : "text-muted-foreground"
-        }`}
-      >
-        {remaining} {remaining === 1 ? "day left" : "days left"}
-      </span>
-    </div>
-  );
-}
-
 function HistoryDialog({
   empUuid,
   onClose,
@@ -840,12 +748,20 @@ function HistoryDialog({
   history:
     | {
         employee_name: string;
-        allocations: {
+        balances: {
           year: number;
           allocated_days: number;
           used_days: number;
           remaining_days: number;
           leave_type_name: string;
+        }[];
+        leave_history: {
+          uuid: string;
+          leave_type_name: string;
+          start_date: string;
+          end_date: string;
+          days: number;
+          status: "pending" | "approved" | "rejected";
         }[];
       }
     | null
@@ -865,44 +781,53 @@ function HistoryDialog({
         </DialogHeader>
         {isLoading ? (
           <TableSkeleton />
-        ) : !history || history.allocations.length === 0 ? (
+        ) : !history || (history.balances.length === 0 && history.leave_history.length === 0) ? (
           <p className="text-sm text-muted-foreground">{t("orgLeaves.allocNoHistory")}</p>
         ) : (
-          <div className="max-h-[50vh] overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="whitespace-nowrap">{t("orgLeaves.year")}</TableHead>
-                  <TableHead className="whitespace-nowrap">
-                    {t("orgLeaves.leaveType")}
-                  </TableHead>
-                  <TableHead className="whitespace-nowrap">{t("orgLeaves.allocated")}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t("orgLeaves.used")}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t("orgLeaves.remaining")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {history.allocations.map((a, i) => (
-                  <TableRow key={`${a.year}-${a.leave_type_name}-${i}`}>
-                    <TableCell data-label="Year" className="whitespace-nowrap text-sm text-foreground">
-                      {a.year}
-                    </TableCell>
-                    <TableCell data-label="Leave Type" className="whitespace-nowrap text-sm text-muted-foreground">
-                      {a.leave_type_name}
-                    </TableCell>
-                    <TableCell data-label="Allocated" className="whitespace-nowrap text-sm text-foreground">
-                      {a.allocated_days}
-                    </TableCell>
-                    <TableCell data-label="Used" className="whitespace-nowrap text-sm text-muted-foreground">
-                      {a.used_days}
-                    </TableCell>
-                    <TableCell data-label="Remaining" className="whitespace-nowrap text-sm text-foreground">
-                      {a.remaining_days}
-                    </TableCell>
-                  </TableRow>
+          <div className="max-h-[55vh] space-y-4 overflow-auto">
+            {history.balances.length > 0 && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {history.balances.map((balance) => (
+                  <div
+                    key={`${balance.year}-${balance.leave_type_name}`}
+                    className="rounded-md border border-border p-3 text-sm"
+                  >
+                    <div className="font-medium text-foreground">
+                      {balance.leave_type_name} · {balance.year}
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      Used: {balance.used_days} · Remaining: {balance.remaining_days}
+                    </div>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+            )}
+            {history.leave_history.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No leave requests recorded.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">{t("orgLeaves.leaveType")}</TableHead>
+                    <TableHead className="whitespace-nowrap">From</TableHead>
+                    <TableHead className="whitespace-nowrap">To</TableHead>
+                    <TableHead className="whitespace-nowrap">Days</TableHead>
+                    <TableHead className="whitespace-nowrap">{t("orgLeaves.status")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.leave_history.map((leave) => (
+                    <TableRow key={leave.uuid}>
+                      <TableCell className="whitespace-nowrap">{leave.leave_type_name}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDate(leave.start_date)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDate(leave.end_date)}</TableCell>
+                      <TableCell className="whitespace-nowrap">{leave.days}</TableCell>
+                      <TableCell className="whitespace-nowrap capitalize">{leave.status}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </div>
         )}
         <DialogFooter>

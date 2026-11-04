@@ -920,6 +920,7 @@ export type LeaveType = {
   id: number;
   name: string;
   days_allowed_per_year: number;
+  is_paid?: "yes" | "no";
   organization_uuid?: UUID | null;
   organization_name?: string | null;
   created_at?: string;

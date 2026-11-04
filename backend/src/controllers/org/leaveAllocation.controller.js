@@ -3,6 +3,11 @@ import { pool } from "../../config/db.js";
 import { ok } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
+import { countLeaveDays, isoDate } from "../../utils/leaveBalance.js";
+
+const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
+const isDefaultUnpaidLeaveType = (name) =>
+  String(name).trim().toLowerCase() === DEFAULT_UNPAID_LEAVE_TYPE.toLowerCase();
 
 /** Validate a year integer against a sane range. */
 function parseYear(value) {
@@ -23,8 +28,8 @@ export async function listLeaveAllocations(req, res) {
   const year = req.query.year ? parseYear(req.query.year) : new Date().getFullYear();
 
   const [types] = await pool.query(
-    "SELECT id, name FROM leave_types WHERE organization_id=? ORDER BY name",
-    [orgId]
+    "SELECT id, name FROM leave_types WHERE organization_id=? AND name<>? ORDER BY name",
+    [orgId, DEFAULT_UNPAID_LEAVE_TYPE]
   );
   const [designations] = await pool.query(
     "SELECT uuid, name FROM designations WHERE organization_id=? ORDER BY name",
@@ -116,6 +121,9 @@ export async function setDesignationLeaveAllocation(req, res) {
     [typeId, orgId]
   );
   if (!lt) throw new ApiError(404, "Leave type not found");
+  if (isDefaultUnpaidLeaveType(lt.name)) {
+    throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" does not use leave allocations.`);
+  }
 
   const conn = await pool.getConnection();
   let employeeCount = 0;
@@ -198,6 +206,9 @@ export async function setLeaveAllocation(req, res) {
     [typeId, orgId]
   );
   if (!lt) throw new ApiError(404, "Leave type not found");
+  if (isDefaultUnpaidLeaveType(lt.name)) {
+    throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" does not use leave allocations.`);
+  }
 
   const [existing] = await pool.query(
     "SELECT id, used_days FROM employee_leave_allocations WHERE employee_uuid=? AND leave_type_id=? AND year=?",
@@ -251,7 +262,7 @@ export async function getEmployeeLeaveHistory(req, res) {
   );
   if (!emp) throw new ApiError(404, "Employee not found");
 
-  const [rows] = await pool.query(
+  const [balances] = await pool.query(
     `SELECT ela.year, ela.allocated_days, ela.used_days, ela.remaining_days,
             lt.id AS leave_type_id, lt.name AS leave_type_name
      FROM employee_leave_allocations ela
@@ -261,9 +272,33 @@ export async function getEmployeeLeaveHistory(req, res) {
     [uuid]
   );
 
+  const [requests] = await pool.query(
+    `SELECT lr.uuid, lr.leave_type_id,
+            CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN 'Unpaid Leave' ELSE lt.name END AS leave_type_name,
+            lr.start_date, lr.end_date, lr.status,
+            lr.requested_treatment, lr.approved_treatment
+     FROM leave_requests lr
+     JOIN leave_types lt ON lt.id = lr.leave_type_id
+     WHERE lr.employee_uuid=?
+     ORDER BY lr.start_date DESC, lr.created_at DESC`,
+    [uuid]
+  );
+  const leaveHistory = requests.map((r) => ({
+    ...r,
+    start_date: isoDate(r.start_date),
+    end_date: isoDate(r.end_date),
+    days: countLeaveDays(r.start_date, r.end_date),
+  }));
+
   return ok(
     res,
-    { employee_uuid: uuid, employee_name: emp.full_name, employee_email: emp.email, allocations: rows },
-    "Employee leave allocation history"
+    {
+      employee_uuid: uuid,
+      employee_name: emp.full_name,
+      employee_email: emp.email,
+      balances,
+      leave_history: leaveHistory,
+    },
+    "Employee leave history"
   );
 }

@@ -248,7 +248,6 @@ function ApplyLeaveDialog({
   const qc = useQueryClient();
   const { t } = useTranslation();
   const [leaveTypeId, setLeaveTypeId] = useState<string>("");
-  const [requestedTreatment, setRequestedTreatment] = useState<"paid" | "unpaid">("unpaid");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
@@ -262,8 +261,9 @@ function ApplyLeaveDialog({
   const create = useMutation({
     mutationFn: () =>
       leavesService.create({
-        leave_type_id: Number(leaveTypeId),
-        requested_treatment: requestedTreatment,
+        ...(leaveTypeId === "default-unpaid"
+          ? { default_unpaid: true }
+          : { leave_type_id: Number(leaveTypeId) }),
         start_date: startDate,
         end_date: endDate,
         reason: reason.trim(),
@@ -273,7 +273,6 @@ function ApplyLeaveDialog({
       qc.invalidateQueries({ queryKey: ["myLeaves"] });
       qc.invalidateQueries({ queryKey: ["myLeaveBalance"] });
       setLeaveTypeId("");
-      setRequestedTreatment("unpaid");
       setStartDate("");
       setEndDate("");
       setReason("");
@@ -294,7 +293,7 @@ function ApplyLeaveDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (next) setRequestedTreatment("unpaid"); onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] w-[95vw] max-w-md overflow-y-auto sm:w-full">
         <DialogHeader>
           <DialogTitle>{t("leaves.applyForLeave")}</DialogTitle>
@@ -308,21 +307,12 @@ function ApplyLeaveDialog({
                 <SelectValue placeholder={t("leaves.selectLeaveTypePlaceholder")} />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="default-unpaid">{t("leaves.defaultUnpaid", "Unpaid")}</SelectItem>
                 {(types.data ?? []).map((lt) => (
                   <SelectItem key={lt.id} value={String(lt.id)}>
                     {lt.name}
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Leave payment</Label>
-            <Select value={requestedTreatment} onValueChange={(v) => setRequestedTreatment(v as "paid" | "unpaid")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="unpaid">Unpaid</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
               </SelectContent>
             </Select>
           </div>

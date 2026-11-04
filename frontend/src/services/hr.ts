@@ -39,8 +39,8 @@ export const leavesService = {
     } = {},
   ) => api.get<Paginated<LeaveRequest>>("/leaves/mine", { params }).then((r) => r.data),
   create: (data: {
-    leave_type_id: number;
-    requested_treatment: "paid" | "unpaid";
+    leave_type_id?: number;
+    default_unpaid?: boolean;
     start_date: string;
     end_date: string;
     reason?: string;
@@ -59,7 +59,7 @@ export const orgLeavesService = {
   updateType: (id: number, data: { name: string; days_allowed_per_year?: number }) =>
     api.put<{ leaveType: LeaveType }>(`/org/leave-types/${id}`, data).then((r) => r.data.leaveType),
   deleteType: (id: number) => api.delete(`/org/leave-types/${id}`).then((r) => r.data),
-  list: (params: { page?: number; limit?: number; status?: string; search?: string; dateFrom?: string; dateTo?: string; employee_uuid?: UUID; leave_type_id?: number } = {}) =>
+  list: (params: { page?: number; limit?: number; status?: string; search?: string; dateFrom?: string; dateTo?: string; employee_uuid?: UUID; leave_type_id?: number; include_all?: boolean } = {}) =>
     api.get<Paginated<LeaveRequest>>("/org/leaves", { params }).then((r) => r.data),
   decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
     api
@@ -101,7 +101,18 @@ export const orgLeaveAllocationService = {
         employee_uuid: UUID;
         employee_name: string;
         employee_email: string;
-        allocations: EmployeeLeaveAllocationHistory[];
+        balances: EmployeeLeaveAllocationHistory[];
+        leave_history: {
+          uuid: UUID;
+          leave_type_id: number;
+          leave_type_name: string;
+          start_date: string;
+          end_date: string;
+          days: number;
+          status: "pending" | "approved" | "rejected";
+          requested_treatment: "paid" | "unpaid";
+          approved_treatment: "paid" | "unpaid" | null;
+        }[];
       }>(`/org/employees/${employee_uuid}/leave-allocations`)
       .then((r) => r.data),
 };

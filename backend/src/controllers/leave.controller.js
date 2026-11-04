@@ -7,6 +7,40 @@ import { createNotificationForUsers } from "./notification.controller.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { countLeaveDays, isoDate, yearOfDate } from "../utils/leaveBalance.js";
 
+const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
+const DEFAULT_UNPAID_LEAVE_LABEL = "Unpaid Leave";
+
+function isDefaultUnpaidLeaveType(name) {
+  return String(name).trim().toLowerCase() === DEFAULT_UNPAID_LEAVE_TYPE.toLowerCase();
+}
+
+async function getDefaultUnpaidLeaveType(orgId) {
+  const findType = async () => {
+    const [rows] = await pool.query(
+      "SELECT id, name, is_paid FROM leave_types WHERE organization_id=? AND name=?",
+      [orgId, DEFAULT_UNPAID_LEAVE_TYPE]
+    );
+    return rows[0] || null;
+  };
+
+  let type = await findType();
+  if (!type) {
+    try {
+      await pool.query(
+        "INSERT INTO leave_types (organization_id, name, days_allowed_per_year, is_paid) VALUES (?, ?, 0, 'no')",
+        [orgId, DEFAULT_UNPAID_LEAVE_TYPE]
+      );
+    } catch (error) {
+      if (error.code !== "ER_DUP_ENTRY") throw error;
+    }
+    type = await findType();
+  }
+  if (!type || type.is_paid !== "no") {
+    throw new ApiError(409, `The reserved "${DEFAULT_UNPAID_LEAVE_TYPE}" leave type must be unpaid.`);
+  }
+  return type;
+}
+
 /**
  * Fetch (or default) the employee's allocation row for a leave type/year.
  * Returns null when no allocation is recorded for that type/year.
@@ -41,9 +75,9 @@ export async function listLeaveTypes(req, res) {
             o.uuid AS organization_uuid, o.name AS organization_name
      FROM leave_types lt
      JOIN organizations o ON o.id = lt.organization_id
-     WHERE lt.organization_id = ?
+     WHERE lt.organization_id = ? AND lt.name <> ?
      ORDER BY lt.name`,
-    [orgId]
+    [orgId, DEFAULT_UNPAID_LEAVE_TYPE]
   );
   return ok(res, { leaveTypes: rows }, "Leave types");
 }
@@ -52,6 +86,9 @@ export async function createLeaveType(req, res) {
   const orgId = await resolveScopeOrgId(req);
   const { name, days_allowed_per_year } = req.body;
   if (!name || !String(name).trim()) throw new ApiError(400, "name is required");
+  if (isDefaultUnpaidLeaveType(name)) {
+    throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" is reserved for employee unpaid leave requests.`);
+  }
   // Leave types are now name-only definitions (allocations are assigned
   // individually per employee). The legacy days column is kept but no longer
   // drives employee balances — it defaults to 0.
@@ -92,15 +129,21 @@ export async function updateLeaveType(req, res) {
   if (isNaN(id)) throw new ApiError(400, "Invalid leave type id");
 
   const [exists] = await pool.query(
-    "SELECT id FROM leave_types WHERE id=? AND organization_id=?",
+    "SELECT id, name FROM leave_types WHERE id=? AND organization_id=?",
     [id, orgId]
   );
   if (!exists.length) throw new ApiError(404, "Leave type not found");
+  if (isDefaultUnpaidLeaveType(exists[0].name)) {
+    throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" is reserved for employee unpaid leave requests.`);
+  }
 
   const { name, days_allowed_per_year } = req.body;
   const updates = {};
   if (name !== undefined) {
     if (!String(name).trim()) throw new ApiError(400, "name cannot be empty");
+    if (isDefaultUnpaidLeaveType(name)) {
+      throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" is reserved for employee unpaid leave requests.`);
+    }
     updates.name = String(name).trim();
   }
   if (days_allowed_per_year !== undefined) {
@@ -140,10 +183,13 @@ export async function deleteLeaveType(req, res) {
   if (isNaN(id)) throw new ApiError(400, "Invalid leave type id");
 
   const [exists] = await pool.query(
-    "SELECT id FROM leave_types WHERE id=? AND organization_id=?",
+    "SELECT id, name FROM leave_types WHERE id=? AND organization_id=?",
     [id, orgId]
   );
   if (!exists.length) throw new ApiError(404, "Leave type not found");
+  if (isDefaultUnpaidLeaveType(exists[0].name)) {
+    throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" is reserved for employee unpaid leave requests.`);
+  }
 
   try {
     await pool.query("DELETE FROM leave_types WHERE id=?", [id]);
@@ -182,13 +228,13 @@ export async function orgLeaveTypes(req, res) {
 
   const year = new Date().getFullYear();
   const [rows] = await pool.query(
-    `SELECT lt.id, lt.name, lt.days_allowed_per_year
+    `SELECT lt.id, lt.name, lt.days_allowed_per_year, lt.is_paid
      FROM leave_types lt
      JOIN employee_leave_allocations ela ON ela.leave_type_id = lt.id
-     WHERE lt.organization_id=? AND ela.employee_uuid=? AND ela.year=? AND ela.allocated_days > 0
-     GROUP BY lt.id, lt.name, lt.days_allowed_per_year
+     WHERE lt.organization_id=? AND lt.name<>? AND ela.employee_uuid=? AND ela.year=? AND ela.allocated_days > 0
+     GROUP BY lt.id, lt.name, lt.days_allowed_per_year, lt.is_paid
      ORDER BY lt.name`,
-    [req.user.organization, empRows[0].uuid, year]
+    [req.user.organization, DEFAULT_UNPAID_LEAVE_TYPE, empRows[0].uuid, year]
   );
   return ok(res, { leaveTypes: rows }, "Leave types");
 }
@@ -243,7 +289,7 @@ export async function myLeaves(req, res) {
             DATE_FORMAT(lr.end_date, '%Y-%m-%d') AS end_date,
             lr.reason, lr.status, lr.approved_by, lr.approved_at,
             lr.created_at, lr.employee_uuid, lr.leave_type_id,
-            lt.name AS leave_type_name
+            CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name
      FROM leave_requests lr
      JOIN leave_types lt ON lt.id = lr.leave_type_id
      ${whereClause}
@@ -262,10 +308,9 @@ export async function createLeave(req, res) {
       "Org admins and sub-admins review leave requests but cannot submit them for themselves"
     );
   }
-  const { leave_type_id, start_date, end_date, reason } = req.body;
-  const requestedTreatment = String(req.body?.requested_treatment ?? "unpaid").toLowerCase();
-  if (!["paid", "unpaid"].includes(requestedTreatment)) throw new ApiError(400, "requested_treatment must be paid or unpaid");
-  if (!leave_type_id) throw new ApiError(400, "leave_type_id is required");
+  const { leave_type_id, default_unpaid, start_date, end_date, reason } = req.body;
+  const requestsDefaultUnpaid = default_unpaid === true;
+  if (!requestsDefaultUnpaid && !leave_type_id) throw new ApiError(400, "leave_type_id is required");
   if (!start_date || !end_date) throw new ApiError(400, "start_date and end_date are required");
   if (String(start_date) > String(end_date)) throw new ApiError(400, "start_date must be before or equal to end_date");
 
@@ -278,24 +323,36 @@ export async function createLeave(req, res) {
   if (emp.is_platform_user !== "yes") throw new ApiError(403, "Your account is not a platform user");
   if (emp.organization_id !== req.user.organization) throw new ApiError(403, "Organization mismatch");
 
-  const typeId = Number(leave_type_id);
-  const [ltRows] = await pool.query(
-    "SELECT id, name FROM leave_types WHERE id=? AND organization_id=?",
-    [typeId, req.user.organization]
-  );
-  if (!ltRows.length) throw new ApiError(404, "Leave type not found");
+  let leaveType;
+  if (requestsDefaultUnpaid) {
+    leaveType = await getDefaultUnpaidLeaveType(req.user.organization);
+  } else {
+    const typeId = Number(leave_type_id);
+    const [ltRows] = await pool.query(
+      "SELECT id, name, is_paid FROM leave_types WHERE id=? AND organization_id=?",
+      [typeId, req.user.organization]
+    );
+    if (!ltRows.length) throw new ApiError(404, "Leave type not found");
+    if (isDefaultUnpaidLeaveType(ltRows[0].name)) {
+      throw new ApiError(400, "Select the default unpaid option to request unpaid leave without an allocation.");
+    }
+    leaveType = ltRows[0];
+  }
+  const typeId = leaveType.id;
+  const requestedTreatment = leaveType.is_paid === "no" ? "unpaid" : "paid";
+  const leaveTypeLabel = requestsDefaultUnpaid ? DEFAULT_UNPAID_LEAVE_LABEL : leaveType.name;
 
   const days = countLeaveDays(start_date, end_date);
   const year = yearOfDate(start_date);
 
   // Requirement 3: block submission when the employee has no remaining balance
   // allocated for this leave type in the leave's year.
-  const alloc = await getAllocation(pool, emp.uuid, typeId, year);
-  if (!alloc || alloc.remaining_days <= 0) {
+  const alloc = requestsDefaultUnpaid ? null : await getAllocation(pool, emp.uuid, typeId, year);
+  if (!requestsDefaultUnpaid && (!alloc || alloc.remaining_days <= 0)) {
     const available = alloc ? alloc.remaining_days : 0;
     throw new ApiError(
       409,
-      `No ${ltRows[0].name} leave balance remaining for ${year} (${available} day(s) available)`
+      `No ${leaveType.name} leave balance remaining for ${year} (${available} day(s) available)`
     );
   }
   const [result] = await pool.query(
@@ -318,7 +375,7 @@ export async function createLeave(req, res) {
         userIds: admins.map((a) => a.uuid),
         type: "leave_request",
         title: "New leave request",
-        message: `${req.user.full_name} requested ${days} day(s) of ${ltRows[0].name} leave.`,
+        message: `${req.user.full_name} requested ${days} day(s) of ${leaveTypeLabel} leave.`,
         link: "/org/leaves",
         referenceId: rows[0].uuid,
         email: {
@@ -326,7 +383,7 @@ export async function createLeave(req, res) {
           eventKey: `leave:${rows[0].uuid}:submitted`,
           subject: `Leave request needs review — ${req.user.full_name}`,
           title: "New leave request",
-          message: `${req.user.full_name} requested ${days} day(s) of ${ltRows[0].name} leave. Please review the request in Dverif.`,
+          message: `${req.user.full_name} requested ${days} day(s) of ${leaveTypeLabel} leave. Please review the request in Dverif.`,
         },
       });
     }
@@ -339,7 +396,7 @@ export async function createLeave(req, res) {
     action: "leave.create",
     entityType: "leave_request",
     entityId: rows[0].uuid,
-    details: { leave_type: ltRows[0].name, days, start_date, end_date },
+    details: { leave_type: leaveTypeLabel, days, start_date, end_date },
     req,
   });
 
@@ -360,17 +417,18 @@ export async function listOrgLeaves(req, res) {
     ? req.query.dateFrom : "";
   const dateTo = typeof req.query.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateTo)
     ? req.query.dateTo : "";
+  const includeAll = req.query.include_all === "true";
 
   let whereClause = "WHERE e.organization_id = ?";
   const params = [orgId];
   // Filter requests by overlap with the selected period. With no explicit
-  // period, show leave requests active on the current database date.
+  // period, show requests active today unless the caller asks for all history.
   if (dateFrom || dateTo) {
     const from = dateFrom || dateTo;
     const to = dateTo || dateFrom;
     whereClause += " AND lr.start_date <= ? AND lr.end_date >= ?";
     params.push(to, from);
-  } else {
+  } else if (!includeAll) {
     whereClause += " AND lr.start_date <= CURDATE() AND lr.end_date >= CURDATE()";
   }
   if (["pending", "approved", "rejected"].includes(status)) {
@@ -413,7 +471,8 @@ export async function listOrgLeaves(req, res) {
             lr.approved_by, lr.approved_at, lr.created_at,
             e.uuid AS employee_uuid, e.full_name AS employee_name,
             e.email AS employee_email, dg.name AS designation,
-            lt.id AS leave_type_id, lt.name AS leave_type_name
+            lt.id AS leave_type_id,
+            CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name
      FROM leave_requests lr
      JOIN employees e ON e.uuid = lr.employee_uuid
      LEFT JOIN designations dg ON dg.id = e.designation_id
@@ -438,7 +497,9 @@ export async function decideLeave(req, res) {
   const actorUuid = req.admin?.uuid || req.user?.uuid || null;
 
   const [rows] = await pool.query(
-    `SELECT lr.*, lt.name AS leave_type_name, lt.days_allowed_per_year,
+    `SELECT lr.*, lt.name AS leave_type_system_name,
+            CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name,
+            lt.days_allowed_per_year,
             e.organization_id, e.linked_user_uuid, e.full_name AS employee_name
      FROM leave_requests lr
      JOIN leave_types lt ON lt.id = lr.leave_type_id
@@ -460,12 +521,12 @@ export async function decideLeave(req, res) {
     }
   }
 
-  const finalTreatment = status === "approved"
-    ? (String(lr.requested_treatment || "unpaid") === "paid" ? requestedTreatment : "unpaid")
-    : null;
-  if (status === "approved" && String(lr.requested_treatment || "unpaid") === "paid" && !["paid", "unpaid"].includes(finalTreatment)) {
-    throw new ApiError(400, "Choose whether this paid leave request is approved as paid or unpaid.");
+  if (status === "approved" && requestedTreatment && !["paid", "unpaid"].includes(requestedTreatment)) {
+    throw new ApiError(400, "approved_treatment must be paid or unpaid.");
   }
+  const finalTreatment = status === "approved"
+    ? requestedTreatment || String(lr.requested_treatment || "unpaid")
+    : null;
 
   if (status === "approved") {
     const days = countLeaveDays(lr.start_date, lr.end_date);
@@ -474,24 +535,28 @@ export async function decideLeave(req, res) {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      const alloc = await getAllocation(conn, lr.employee_uuid, lr.leave_type_id, year);
-      if (!alloc) {
-        throw new ApiError(409, "No leave balance is allocated for this leave type this year");
-      }
-      const [[bal]] = await conn.query(
-        "SELECT * FROM employee_leave_allocations WHERE id=? FOR UPDATE",
-        [alloc.id]
-      );
-      if (bal.remaining_days < days) {
-        throw new ApiError(
-          409,
-          `Insufficient ${lr.leave_type_name} balance — ${days} day(s) requested, ${bal.remaining_days} available`
+      const isDefaultUnpaid = isDefaultUnpaidLeaveType(lr.leave_type_system_name)
+        && String(lr.requested_treatment || "unpaid") === "unpaid";
+      if (!isDefaultUnpaid) {
+        const alloc = await getAllocation(conn, lr.employee_uuid, lr.leave_type_id, year);
+        if (!alloc) {
+          throw new ApiError(409, "No leave balance is allocated for this leave type this year");
+        }
+        const [[bal]] = await conn.query(
+          "SELECT * FROM employee_leave_allocations WHERE id=? FOR UPDATE",
+          [alloc.id]
+        );
+        if (bal.remaining_days < days) {
+          throw new ApiError(
+            409,
+            `Insufficient ${lr.leave_type_name} balance — ${days} day(s) requested, ${bal.remaining_days} available`
+          );
+        }
+        await conn.query(
+          "UPDATE employee_leave_allocations SET used_days=used_days+?, remaining_days=remaining_days-? WHERE id=?",
+          [days, days, alloc.id]
         );
       }
-      await conn.query(
-        "UPDATE employee_leave_allocations SET used_days=used_days+?, remaining_days=remaining_days-? WHERE id=?",
-        [days, days, alloc.id]
-      );
       const [decision] = await conn.query(
         "UPDATE leave_requests SET status='approved', approved_treatment=?, approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
         [finalTreatment, actorUuid, uuid]
