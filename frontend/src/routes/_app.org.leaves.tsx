@@ -347,7 +347,7 @@ function OrgLeavesContent() {
                               {formatDate(r.start_date)} → {formatDate(r.end_date)}
                             </TableCell>
                             <TableCell data-label="Days" className="whitespace-nowrap text-sm text-foreground">
-                              {countDays(r.start_date, r.end_date)}
+                              {r.working_days ?? countDays(r.start_date, r.end_date)}
                             </TableCell>
                             <TableCell data-label="Status" className="whitespace-nowrap">
                               <StatusBadge status={r.status} />
@@ -451,14 +451,14 @@ function OrgLeavesContent() {
             ? decideAction === "approved"
               ? t("orgLeaves.approveDescription", {
                   name: confirming.employee_name ?? t("orgLeaves.thisEmployee"),
-                  days: countDays(confirming.start_date, confirming.end_date),
+                  days: confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
                   leaveType: confirming.leave_type_name,
                   startDate: confirming.start_date,
                   endDate: confirming.end_date,
                 })
               : t("orgLeaves.rejectDescription", {
                   name: confirming.employee_name ?? t("orgLeaves.thisEmployee"),
-                  days: countDays(confirming.start_date, confirming.end_date),
+                  days: confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
                   leaveType: confirming.leave_type_name,
                   startDate: confirming.start_date,
                   endDate: confirming.end_date,

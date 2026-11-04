@@ -938,6 +938,7 @@ export type LeaveRequest = {
   end_date: string;
   reason?: string | null;
   status: "pending" | "approved" | "rejected";
+  working_days?: number;
   requested_treatment?: "paid" | "unpaid";
   approved_treatment?: "paid" | "unpaid" | null;
   approved_by?: string | null;

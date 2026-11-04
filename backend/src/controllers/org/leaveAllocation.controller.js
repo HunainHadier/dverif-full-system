@@ -3,7 +3,8 @@ import { pool } from "../../config/db.js";
 import { ok } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
-import { countLeaveDays, isoDate } from "../../utils/leaveBalance.js";
+import { isoDate } from "../../utils/leaveBalance.js";
+import * as payrollService from "../../services/payroll.service.js";
 
 const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
 const isDefaultUnpaidLeaveType = (name) =>
@@ -283,11 +284,20 @@ export async function getEmployeeLeaveHistory(req, res) {
      ORDER BY lr.start_date DESC, lr.created_at DESC`,
     [uuid]
   );
-  const leaveHistory = requests.map((r) => ({
-    ...r,
-    start_date: isoDate(r.start_date),
-    end_date: isoDate(r.end_date),
-    days: countLeaveDays(r.start_date, r.end_date),
+  const leaveHistory = await Promise.all(requests.map(async (r) => {
+    const startDate = isoDate(r.start_date);
+    const endDate = isoDate(r.end_date);
+    const workingDates = await payrollService.getWorkingDatesBetween({
+      orgId,
+      startDate,
+      endDate,
+    });
+    return {
+      ...r,
+      start_date: startDate,
+      end_date: endDate,
+      days: workingDates.length,
+    };
   }));
 
   return ok(

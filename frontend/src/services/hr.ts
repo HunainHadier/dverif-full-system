@@ -27,6 +27,15 @@ import type {
 } from "./core";
 export const leavesService = {
   types: () => api.get<{ leaveTypes: LeaveType[] }>("/leaves/types").then((r) => r.data.leaveTypes),
+  calendar: (params: { month: number; year: number; from?: string; to?: string }) =>
+    api.get<{
+      month: number;
+      year: number;
+      working_dates: string[];
+      busy_ranges: { start_date: string; end_date: string }[];
+      range_working_days: number | null;
+      range_overlaps: boolean;
+    }>("/leaves/calendar", { params }).then((r) => r.data),
   balance: () =>
     api.get<{ balances: LeaveBalance[] }>("/leaves/balance").then((r) => r.data.balances),
   mine: (

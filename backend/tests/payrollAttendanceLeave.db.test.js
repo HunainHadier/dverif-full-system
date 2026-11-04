@@ -16,7 +16,7 @@ import {
   updateEmployeeSalaryComponent,
 } from "../src/controllers/org/employeeSalaryComponents.controller.js";
 import { setLeaveAllocation } from "../src/controllers/org/leaveAllocation.controller.js";
-import { createLeave, decideLeave, listOrgLeaves } from "../src/controllers/leave.controller.js";
+import { createLeave, decideLeave, listOrgLeaves, myLeaveCalendar } from "../src/controllers/leave.controller.js";
 import { getEmployeeLeaveHistory } from "../src/controllers/org/leaveAllocation.controller.js";
 import {
   addAllowedIp,
@@ -588,6 +588,61 @@ describe.runIf(HAS_DB)("leave requests reach the payslip", () => {
       [emp.uuid],
     );
     expect(allocations).toHaveLength(0);
+  });
+
+  it("leave requests use configured working days and reject non-working endpoints and overlaps", async () => {
+    const emp = await newEmployee({
+      name: "WorkingDaysAndOverlap",
+      allocations: [{ typeId: unpaidTypeId, days: 10 }],
+    });
+    const calendar = await call(myLeaveCalendar, employeeReq(emp, {
+      query: { month: "10", year: "2026", from: "2026-10-09", to: "2026-10-12" },
+    }));
+    expect(calendar.body.data.working_dates).toContain("2026-10-12");
+    expect(calendar.body.data.working_dates).not.toContain("2026-10-11");
+    expect(calendar.body.data.range_working_days).toBe(2);
+
+    await expect(
+      call(createLeave, employeeReq(emp, {
+        body: {
+          leave_type_id: unpaidTypeId,
+          start_date: "2026-10-11",
+          end_date: "2026-10-12",
+          reason: "Sunday start",
+        },
+      })),
+    ).rejects.toMatchObject({ statusCode: 400 });
+
+    const first = await call(createLeave, employeeReq(emp, {
+      body: {
+        leave_type_id: unpaidTypeId,
+        start_date: "2026-10-09",
+        end_date: "2026-10-12",
+        reason: "Friday to Monday",
+      },
+    }));
+    expect(first.body.data.leaveRequest.status).toBe("pending");
+    await expect(
+      call(createLeave, employeeReq(emp, {
+        body: {
+          leave_type_id: unpaidTypeId,
+          start_date: "2026-10-12",
+          end_date: "2026-10-13",
+          reason: "Overlapping Monday",
+        },
+      })),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    await call(decideLeave, adminReq({
+      params: { uuid: first.body.data.leaveRequest.uuid },
+      body: { status: "approved" },
+    }));
+    const [allocation] = await db.query(
+      "SELECT used_days, remaining_days FROM employee_leave_allocations WHERE employee_uuid=? AND leave_type_id=? AND year=?",
+      [emp.uuid, unpaidTypeId, YEAR],
+    );
+    expect(allocation[0].used_days).toBe(2);
+    expect(allocation[0].remaining_days).toBe(8);
   });
 
   it("admin can see past leave requests and employee history shows their date range and balance", async () => {

@@ -190,6 +190,39 @@ export async function getWorkingDaysForMonth({ orgId, month, year, scheduleOverr
   return { workingDays: days.length, workingDates: days, nonWorkingDates, week: null, holidays: new Set() };
 }
 
+export async function getWorkingDatesBetween({ orgId, startDate, endDate, conn = pool }) {
+  const workingDates = new Set();
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  if (
+    typeof startDate !== "string"
+    || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)
+    || typeof endDate !== "string"
+    || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)
+    || Number.isNaN(start.getTime())
+    || Number.isNaN(end.getTime())
+    || start.toISOString().slice(0, 10) !== startDate
+    || end.toISOString().slice(0, 10) !== endDate
+    || startDate > endDate
+  ) {
+    throw new ApiError(400, "A valid working-date range is required.");
+  }
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  while (cursor <= end) {
+    const calendar = await getWorkingDaysForMonth({
+      orgId,
+      month: cursor.getUTCMonth() + 1,
+      year: cursor.getUTCFullYear(),
+      conn,
+    });
+    for (const date of calendar.workingDates) {
+      if (date >= startDate && date <= endDate) workingDates.add(date);
+    }
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return [...workingDates].sort();
+}
+
 export function normalizePayrollRunSchedule(days, month, year) {
   const { m, y } = assertMonthYear(month, year);
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();

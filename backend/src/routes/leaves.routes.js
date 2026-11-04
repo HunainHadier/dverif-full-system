@@ -9,6 +9,7 @@ import {
   createLeave,
   decideLeave,
   myLeaveBalances,
+  myLeaveCalendar,
   myLeaves,
   orgLeaveTypes,
 } from "../controllers/leave.controller.js";
@@ -26,6 +27,7 @@ const staff = [requireRole("org_admin", "sub_admin"), requireActiveSubscription,
 router.use(authUser);
 
 router.get("/types", employeesOnly, asyncHandler(orgLeaveTypes));
+router.get("/calendar", employeesOnly, asyncHandler(myLeaveCalendar));
 router.get("/balance", employeesOnly, asyncHandler(myLeaveBalances));
 router.get("/mine", employeesOnly, asyncHandler(myLeaves));
 router.post("/", employeesOnly, createLeaveLimiter, asyncHandler(createLeave));

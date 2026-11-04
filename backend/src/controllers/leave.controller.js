@@ -5,13 +5,24 @@ import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { createNotificationForUsers } from "./notification.controller.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
-import { countLeaveDays, isoDate, yearOfDate } from "../utils/leaveBalance.js";
+import { isoDate, yearOfDate } from "../utils/leaveBalance.js";
+import * as payrollService from "../services/payroll.service.js";
 
 const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
 const DEFAULT_UNPAID_LEAVE_LABEL = "Unpaid Leave";
 
 function isDefaultUnpaidLeaveType(name) {
   return String(name).trim().toLowerCase() === DEFAULT_UNPAID_LEAVE_TYPE.toLowerCase();
+}
+
+function validIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+async function getWorkingDatesBetween(orgId, startDate, endDate, conn = pool) {
+  return payrollService.getWorkingDatesBetween({ orgId, startDate, endDate, conn });
 }
 
 async function getDefaultUnpaidLeaveType(orgId) {
@@ -239,6 +250,59 @@ export async function orgLeaveTypes(req, res) {
   return ok(res, { leaveTypes: rows }, "Leave types");
 }
 
+export async function myLeaveCalendar(req, res) {
+  if (!req.user.organization) throw new ApiError(400, "User has no organization");
+  const { m, y } = payrollService.assertMonthYear(req.query.month, req.query.year);
+  const [empRows] = await pool.query(
+    "SELECT uuid FROM employees WHERE linked_user_uuid=? AND organization_id=?",
+    [req.user.uuid, req.user.organization]
+  );
+  if (!empRows.length) throw new ApiError(403, "No employee record is linked to your account");
+
+  const calendar = await payrollService.getWorkingDaysForMonth({
+    orgId: req.user.organization,
+    month: m,
+    year: y,
+  });
+  const monthStart = `${y}-${String(m).padStart(2, "0")}-01`;
+  const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const [busyRanges] = await pool.query(
+    `SELECT DATE_FORMAT(start_date, '%Y-%m-%d') AS start_date,
+            DATE_FORMAT(end_date, '%Y-%m-%d') AS end_date
+     FROM leave_requests
+     WHERE employee_uuid=? AND status IN ('pending','approved')
+       AND start_date <= ? AND end_date >= ?`,
+    [empRows[0].uuid, monthEnd, monthStart]
+  );
+
+  let rangeWorkingDays = null;
+  let rangeOverlaps = false;
+  const { from, to } = req.query;
+  if (from !== undefined || to !== undefined) {
+    if (!validIsoDate(from) || !validIsoDate(to) || from > to) {
+      throw new ApiError(400, "A valid from/to date range is required.");
+    }
+    const dates = await getWorkingDatesBetween(req.user.organization, from, to);
+    rangeWorkingDays = dates.length;
+    const [[overlap]] = await pool.query(
+      `SELECT COUNT(*) AS count FROM leave_requests
+       WHERE employee_uuid=? AND status IN ('pending','approved')
+         AND start_date <= ? AND end_date >= ?`,
+      [empRows[0].uuid, to, from]
+    );
+    rangeOverlaps = Number(overlap.count) > 0;
+  }
+
+  return ok(res, {
+    month: m,
+    year: y,
+    working_dates: calendar.workingDates,
+    busy_ranges: busyRanges,
+    range_working_days: rangeWorkingDays,
+    range_overlaps: rangeOverlaps,
+  }, "Leave calendar");
+}
+
 export async function myLeaveBalances(req, res) {
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
   const [empRows] = await pool.query(
@@ -311,7 +375,7 @@ export async function createLeave(req, res) {
   const { leave_type_id, default_unpaid, start_date, end_date, reason } = req.body;
   const requestsDefaultUnpaid = default_unpaid === true;
   if (!requestsDefaultUnpaid && !leave_type_id) throw new ApiError(400, "leave_type_id is required");
-  if (!start_date || !end_date) throw new ApiError(400, "start_date and end_date are required");
+  if (!validIsoDate(start_date) || !validIsoDate(end_date)) throw new ApiError(400, "Valid start_date and end_date are required");
   if (String(start_date) > String(end_date)) throw new ApiError(400, "start_date must be before or equal to end_date");
 
   const [empRows] = await pool.query(
@@ -342,7 +406,12 @@ export async function createLeave(req, res) {
   const requestedTreatment = leaveType.is_paid === "no" ? "unpaid" : "paid";
   const leaveTypeLabel = requestsDefaultUnpaid ? DEFAULT_UNPAID_LEAVE_LABEL : leaveType.name;
 
-  const days = countLeaveDays(start_date, end_date);
+  const workingDates = await getWorkingDatesBetween(req.user.organization, start_date, end_date);
+  if (!workingDates.includes(start_date) || !workingDates.includes(end_date)) {
+    throw new ApiError(400, "Leave start and end dates must be working days in the payroll calendar.");
+  }
+  const days = workingDates.length;
+  if (days < 1) throw new ApiError(400, "Leave range must include at least one working day.");
   const year = yearOfDate(start_date);
 
   // Requirement 3: block submission when the employee has no remaining balance
@@ -355,14 +424,35 @@ export async function createLeave(req, res) {
       `No ${leaveType.name} leave balance remaining for ${year} (${available} day(s) available)`
     );
   }
-  const [result] = await pool.query(
-    `INSERT INTO leave_requests
-       (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, requested_treatment, status)
-     VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'pending')`,
-    [emp.uuid, typeId, start_date, end_date, reason || null, requestedTreatment]
-  );
-
-  const [rows] = await pool.query("SELECT * FROM leave_requests WHERE id=?", [result.insertId]);
+  const conn = await pool.getConnection();
+  let rows;
+  try {
+    await conn.beginTransaction();
+    await conn.query("SELECT uuid FROM employees WHERE uuid=? FOR UPDATE", [emp.uuid]);
+    const [overlaps] = await conn.query(
+      `SELECT uuid FROM leave_requests
+       WHERE employee_uuid=? AND status IN ('pending','approved')
+         AND start_date <= ? AND end_date >= ?
+       LIMIT 1`,
+      [emp.uuid, end_date, start_date]
+    );
+    if (overlaps.length) {
+      throw new ApiError(409, "This leave overlaps an existing pending or approved leave request.");
+    }
+    const [result] = await conn.query(
+      `INSERT INTO leave_requests
+         (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, requested_treatment, status)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'pending')`,
+      [emp.uuid, typeId, start_date, end_date, reason || null, requestedTreatment]
+    );
+    [rows] = await conn.query("SELECT * FROM leave_requests WHERE id=?", [result.insertId]);
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 
   // Notify the org's admins so the request gets reviewed.
   try {
@@ -482,7 +572,11 @@ export async function listOrgLeaves(req, res) {
      LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  return ok(res, paginatedResponse(rows, total, page, limit), "Org leave requests");
+  const items = await Promise.all(rows.map(async (row) => ({
+    ...row,
+    working_days: (await getWorkingDatesBetween(orgId, row.start_date, row.end_date)).length,
+  })));
+  return ok(res, paginatedResponse(items, total, page, limit), "Org leave requests");
 }
 
 export async function decideLeave(req, res) {
@@ -529,7 +623,12 @@ export async function decideLeave(req, res) {
     : null;
 
   if (status === "approved") {
-    const days = countLeaveDays(lr.start_date, lr.end_date);
+    const workingDates = await getWorkingDatesBetween(
+      lr.organization_id,
+      isoDate(lr.start_date),
+      isoDate(lr.end_date)
+    );
+    const days = workingDates.length;
     const year = yearOfDate(lr.start_date);
 
     const conn = await pool.getConnection();

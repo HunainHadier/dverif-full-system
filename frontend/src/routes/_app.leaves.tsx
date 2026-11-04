@@ -258,6 +258,17 @@ function ApplyLeaveDialog({
     enabled: open,
   });
 
+  const calendar = useQuery({
+    queryKey: ["myLeaveCalendar", startDate, endDate],
+    queryFn: () => leavesService.calendar({
+      month: startDate ? Number(startDate.slice(5, 7)) : new Date().getMonth() + 1,
+      year: startDate ? Number(startDate.slice(0, 4)) : new Date().getFullYear(),
+      from: startDate && endDate ? startDate : undefined,
+      to: startDate && endDate ? endDate : undefined,
+    }),
+    enabled: open && Boolean(startDate && endDate && startDate <= endDate),
+  });
+
   const create = useMutation({
     mutationFn: () =>
       leavesService.create({
@@ -287,6 +298,15 @@ function ApplyLeaveDialog({
     if (!leaveTypeId) return toast.error(t("leaves.selectLeaveType"));
     if (!startDate || !endDate) return toast.error(t("leaves.selectDates"));
     if (endDate < startDate) return toast.error(t("leaves.endDateBeforeStart"));
+    if (calendar.isLoading || calendar.isError || !calendar.data) {
+      return toast.error("Working-day calendar is not available. Please try again.");
+    }
+    if (calendar.data.range_overlaps) {
+      return toast.error("This date range overlaps an existing pending or approved leave.");
+    }
+    if (!calendar.data.range_working_days) {
+      return toast.error("Selected date range contains no configured working days.");
+    }
     const reasonText = reason.replace(/\*\*/g, "").replace(/__/g, "").trim();
     if (!reasonText) return toast.error(t("leaves.reasonRequired"));
     create.mutate();
@@ -316,29 +336,46 @@ function ApplyLeaveDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="leave-start">{t("leaves.startDate")}</Label>
-              <Input
-                id="leave-start"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="leave-start">{t("leaves.startDate")}</Label>
+                <Input
+                  id="leave-start"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="leave-end">{t("leaves.endDate")}</Label>
+                <Input
+                  id="leave-end"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="leave-end">{t("leaves.endDate")}</Label>
-              <Input
-                id="leave-end"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
+            {calendar.isError && startDate && endDate && (
+              <p className="text-xs text-destructive">
+                Payroll working-day schedule is unavailable for the selected period.
+              </p>
+            )}
+            {calendar.data?.range_working_days != null && (
+              <p className="text-xs text-muted-foreground">
+                {calendar.data.range_working_days} configured working day(s)
+              </p>
+            )}
+            {calendar.data?.range_overlaps && (
+              <p className="text-xs text-destructive">
+                This range overlaps another pending or approved leave.
+              </p>
+            )}
           </div>
-          {days > 0 && (
+          {days > 0 && calendar.data?.range_working_days != null && (
             <p className="text-xs text-muted-foreground">
-              {t("leaves.daysRequested", { count: days })}
+              {t("leaves.daysRequested", { count: calendar.data.range_working_days })}
             </p>
           )}
           <div className="space-y-2">
@@ -355,7 +392,7 @@ function ApplyLeaveDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={create.isPending}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={submit} disabled={create.isPending}>
+          <Button onClick={submit} disabled={create.isPending || calendar.isLoading || calendar.isError || (startDate !== "" && endDate !== "" && calendar.data?.range_overlaps)}>
             {t("leaves.submitRequest")}
           </Button>
         </DialogFooter>
