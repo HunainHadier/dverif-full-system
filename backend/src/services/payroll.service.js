@@ -518,6 +518,7 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const unpaidLeaveDays = Number(summary.unpaidLeaveDays) || 0;
   const attendedDays = Number(summary.attendedDays) || 0;
   const absentDays = Number(summary.absentDays) || 0;
+  const lateCount = Number(summary.lateCount) || 0;
   const method = policy.salary_calculation_method || "days";
   if (!["hours", "days"].includes(method)) throw new ApiError(409, "Select either working-hours or working-days salary calculation.");
   const lines = [];
@@ -570,6 +571,23 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
       label: `Short working hours (${money(shortHours)} hours)`,
       type: "deduction", source: "auto_short_hours",
       amount: money(hourlyRate * shortHours), basis_value: money(shortHours), basis_unit: "hours",
+    });
+  }
+
+  const lateArrivalThreshold = Number(policy.late_arrival_threshold ?? 1);
+  if (
+    (policy.deduct_salary_for_late_arrivals === true || Number(policy.deduct_salary_for_late_arrivals) === 1)
+    && Number.isInteger(lateArrivalThreshold)
+    && lateArrivalThreshold > 0
+    && lateCount >= lateArrivalThreshold
+  ) {
+    lines.push({
+      label: `Late arrivals (${lateCount}, 1 day x ${perDayRate})`,
+      type: "deduction",
+      source: "auto_late",
+      amount: perDayRate,
+      basis_value: lateCount,
+      basis_unit: "late_arrivals",
     });
   }
 

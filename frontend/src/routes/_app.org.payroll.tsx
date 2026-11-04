@@ -131,6 +131,8 @@ function normalizePayrollSettings(settings: PayrollSettings): PayrollSettings {
     shift_start_time: String(settings.shift_start_time).slice(0, 5),
     shift_end_time: String(settings.shift_end_time).slice(0, 5),
     overtime_multiplier: Number(settings.overtime_multiplier),
+    deduct_salary_for_late_arrivals: settings.deduct_salary_for_late_arrivals ?? false,
+    late_arrival_threshold: Number(settings.late_arrival_threshold ?? 1),
   };
 }
 
@@ -170,6 +172,8 @@ function OrgPayrollPage() {
     shift_start_time: "09:00",
     shift_end_time: "17:00",
     overtime_multiplier: 1.5,
+    deduct_salary_for_late_arrivals: false,
+    late_arrival_threshold: 1,
   });
   const [generateSettingsPeriod, setGenerateSettingsPeriod] = useState("");
   const [generateDayTypes, setGenerateDayTypes] = useState<Record<string, "working" | "off">>({});
@@ -219,6 +223,7 @@ function OrgPayrollPage() {
     queryKey: ["orgPayrollSettings", genMonth, genYear],
     queryFn: () => orgSalaryService.settings(genMonth, genYear),
     enabled: periodOpen,
+    refetchOnMount: "always",
   });
   useEffect(() => {
     if (!payrollSettingsQ.isSuccess) return;
@@ -228,6 +233,8 @@ function OrgPayrollPage() {
       shift_start_time: "09:00",
       shift_end_time: "17:00",
       overtime_multiplier: 1.5,
+      deduct_salary_for_late_arrivals: false,
+      late_arrival_threshold: 1,
     };
     setGenerateSettingsForm(normalizePayrollSettings(settings));
     setGenerateSettingsPeriod(`${genYear}-${genMonth}`);
@@ -321,6 +328,14 @@ function OrgPayrollPage() {
   const generateSettingsKey = `${genYear}-${genMonth}`;
   const generateSettingsReady =
     payrollSettingsQ.isSuccess && generateSettingsPeriod === generateSettingsKey;
+  const configuredGenerateShiftStart = String(payrollSettingsQ.data?.shift_start_time ?? "").slice(0, 5);
+  const configuredGenerateShiftEnd = String(payrollSettingsQ.data?.shift_end_time ?? "").slice(0, 5);
+  const hasConfiguredGenerateShiftTiming = Boolean(
+    payrollSettingsQ.data
+      && /^([01]\d|2[0-3]):[0-5]\d$/.test(configuredGenerateShiftStart)
+      && /^([01]\d|2[0-3]):[0-5]\d$/.test(configuredGenerateShiftEnd)
+      && configuredGenerateShiftEnd > configuredGenerateShiftStart,
+  );
   const generateRunSettings = normalizePayrollSettings(generateSettingsForm);
   const generateRunDays = selectedMonthScheduleDates.map((date, index) => ({
     date,
@@ -1372,6 +1387,45 @@ function OrgPayrollPage() {
                         </div>
                       </div>
                     </div>
+                    <div className="space-y-2 border-t pt-2 text-xs sm:space-y-3 sm:pt-3 sm:text-sm">
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <Checkbox
+                          checked={generateSettingsForm.deduct_salary_for_late_arrivals}
+                          disabled={!canEditPayrollSettings}
+                          onCheckedChange={(checked) => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            deduct_salary_for_late_arrivals: checked === true,
+                          }))}
+                        />
+                        <span>Deduct Salary for Late Arrivals</span>
+                      </label>
+                      <div className="space-y-1">
+                        <Label htmlFor="generate-late-arrival-threshold" className="text-xs text-muted-foreground">
+                          Deduct salary on below number of late arrivals
+                        </Label>
+                        <Input
+                          id="generate-late-arrival-threshold"
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={generateSettingsForm.late_arrival_threshold}
+                          disabled={
+                            !canEditPayrollSettings
+                            || !generateSettingsForm.deduct_salary_for_late_arrivals
+                            || !hasConfiguredGenerateShiftTiming
+                          }
+                          onChange={(event) => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            late_arrival_threshold: Number(event.target.value),
+                          }))}
+                        />
+                        {!hasConfiguredGenerateShiftTiming ? (
+                          <p className="text-xs text-muted-foreground">
+                            Configure organization shift timing first.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
                   </>
                 )}
               </section>
@@ -1481,9 +1535,6 @@ function OrgPayrollPage() {
             {(preview.data?.items ?? []).map((item) => {
               const a = item.attendance;
               const isHoursBased = item.rates.salary_calculation_method === "hours";
-              const hoursPerWorkingDay = a.working_days > 0
-                ? a.expected_working_hours / a.working_days
-                : 0;
               const auto = item.lines.filter((l) => l.source !== "component");
               return (
                 <div key={item.employee_uuid} className="rounded-md border p-3 text-sm">
@@ -1494,61 +1545,36 @@ function OrgPayrollPage() {
                     </span>
                   </div>
 
-                  {/* Show the attendance unit that actually drives salary calculation.
-                      The other unit must not make a days-based payroll look hourly
-                      (or an hours-based payroll look daily). */}
-                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-6">
-                    {isHoursBased ? (
-                      <div>
-                        <span className="text-muted-foreground">Worked hours</span>
-                        <p className="font-medium">{a.worked_hours} / {a.expected_working_hours}</p>
-                        <p className="text-[10px] text-muted-foreground">of scheduled monthly hours</p>
-                      </div>
-                    ) : (
-                      <div>
-                        <span className="text-muted-foreground">
-                          {t("payroll.previewAttended", "Attended")}
-                        </span>
-                        <p className="font-medium">
-                          {a.attended_days} / {a.elapsed_working_days ?? a.working_days}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                          of {a.working_days} scheduled monthly days
-                        </p>
-                      </div>
-                    )}
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3 lg:grid-cols-5">
                     <div>
                       <span className="text-muted-foreground">
-                        {t("payroll.previewUnpaidLeave", "Unpaid leave")}
+                        {t("payroll.previewWorkingDays", "Total Working Days")}
                       </span>
-                      <p className="font-medium">
-                        {isHoursBased
-                          ? `${(a.unpaid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs`
-                          : `${a.unpaid_leave_days} day(s)`}
-                        {a.paid_leave_days > 0 ? (
-                          <span className="ml-1 font-normal text-muted-foreground">
-                            (+{isHoursBased
-                              ? `${(a.paid_leave_days * hoursPerWorkingDay).toFixed(2)} hrs paid`
-                              : `${a.paid_leave_days} paid`})
-                          </span>
-                        ) : null}
-                      </p>
+                      <p className="font-medium">{a.working_days}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Overtime from check-out</span>
-                      <p className="font-medium">{a.actual_overtime_hours}</p>
+                      <span className="text-muted-foreground">
+                        {t("payroll.previewAttended", "Attended Days")}
+                      </span>
+                      <p className="font-medium">{a.attended_days}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        {t("payroll.previewUnpaidLeave", "Unpaid Leave")}
+                      </span>
+                      <p className="font-medium">{a.unpaid_leave_days} day(s)</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        {t("payroll.previewPaidLeave", "Paid Leave")}
+                      </span>
+                      <p className="font-medium">{a.paid_leave_days} day(s)</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground">
                         {t("payroll.previewLate", "Late arrivals")}
                       </span>
                       <p className="font-medium">{a.late_count}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">
-                        {t("payroll.previewOvertime", "Overtime (hrs)")}
-                      </span>
-                      <p className="font-medium">{a.approved_overtime_hours}</p>
                     </div>
                   </div>
 
@@ -1676,10 +1702,13 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     shift_start_time: "09:00",
     shift_end_time: "17:00",
     overtime_multiplier: 1.5,
+    deduct_salary_for_late_arrivals: false,
+    late_arrival_threshold: 1,
   });
   const settingsQ = useQuery({
     queryKey: ["orgPayrollSettings", month, year],
     queryFn: () => orgSalaryService.settings(month, year),
+    refetchOnMount: "always",
   });
   const scheduleQ = useQuery({
     queryKey: ["orgPayrollSchedule", month, year],
@@ -1695,14 +1724,26 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
       shift_start_time: "09:00",
       shift_end_time: "17:00",
       overtime_multiplier: 1.5,
+      deduct_salary_for_late_arrivals: false,
+      late_arrival_threshold: 1,
     };
     setSettingsForm({
       ...settings,
       calculate_overtime: false,
       shift_start_time: String(settings.shift_start_time).slice(0, 5),
       shift_end_time: String(settings.shift_end_time).slice(0, 5),
+      deduct_salary_for_late_arrivals: settings.deduct_salary_for_late_arrivals ?? false,
+      late_arrival_threshold: Number(settings.late_arrival_threshold ?? 1),
     });
   }, [settingsQ.data, settingsQ.isSuccess]);
+  const configuredShiftStart = String(settingsQ.data?.shift_start_time ?? "").slice(0, 5);
+  const configuredShiftEnd = String(settingsQ.data?.shift_end_time ?? "").slice(0, 5);
+  const hasConfiguredShiftTiming = Boolean(
+    settingsQ.data
+      && /^([01]\d|2[0-3]):[0-5]\d$/.test(configuredShiftStart)
+      && /^([01]\d|2[0-3]):[0-5]\d$/.test(configuredShiftEnd)
+      && configuredShiftEnd > configuredShiftStart,
+  );
   useEffect(() => {
     if (!scheduleOpen) return;
     const total = new Date(year, month, 0).getDate();
@@ -1723,7 +1764,11 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
     mutationFn: () => orgSalaryService.saveSettings({ ...settingsForm, month, year }),
-    onSuccess: () => { toast.success("Payroll settings saved"); qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] }); },
+    onSuccess: async (settings) => {
+      qc.setQueryData(["orgPayrollSettings", month, year], settings);
+      toast.success("Payroll settings saved");
+      await qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] });
+    },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save payroll settings"),
   });
   const saveSchedule = useMutation({
@@ -1845,6 +1890,44 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
               <div className="grid grid-cols-2 gap-2">
                 <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
                 <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
+              </div>
+            </div>
+            <div className="space-y-3 border-t pt-3">
+              {settingsQ.isError ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {apiErrorMessage(settingsQ.error, "Could not load payroll policies. Check the database migration and try again.")}
+                </p>
+              ) : null}
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox
+                  checked={settingsForm.deduct_salary_for_late_arrivals}
+                  disabled={!canManage}
+                  onCheckedChange={(checked) => setSettingsForm((s) => ({
+                    ...s,
+                    deduct_salary_for_late_arrivals: checked === true,
+                  }))}
+                />
+                <span>Deduct Salary for Late Arrivals</span>
+              </label>
+              <div className="space-y-1">
+                <Label htmlFor="late-arrival-threshold" className="text-xs">
+                  Deduct salary on below number of late arrivals
+                </Label>
+                <Input
+                  id="late-arrival-threshold"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={settingsForm.late_arrival_threshold}
+                  disabled={!canManage || !settingsForm.deduct_salary_for_late_arrivals || !hasConfiguredShiftTiming}
+                  onChange={(event) => setSettingsForm((s) => ({
+                    ...s,
+                    late_arrival_threshold: Number(event.target.value),
+                  }))}
+                />
+                {!hasConfiguredShiftTiming ? (
+                  <p className="text-xs text-muted-foreground">Configure organization shift timing first.</p>
+                ) : null}
               </div>
             </div>
             {canManage ? <Button className="w-full sm:w-auto" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}

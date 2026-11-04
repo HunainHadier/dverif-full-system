@@ -15,6 +15,7 @@ function calc(overrides = {}) {
     paidLeaveDays: 1,
     unpaidLeaveDays: 1,
     absentDays: 1,
+    lateCount: 0,
     workedHours: 136,
     approvedOvertimeHours: 4,
     actualOvertimeHours: 4,
@@ -84,6 +85,28 @@ describe("monthly attendance payroll calculation", () => {
     expect(enabled.lines.find((line) => line.source === "auto_overtime")?.amount).toBe(1125);
     const disabled = calc({ policy: { ...settings, calculate_overtime: 0 } });
     expect(disabled.lines.some((line) => line.source === "auto_overtime")).toBe(false);
+  });
+
+  it("deducts one working day's salary once late arrivals reach the threshold", () => {
+    const policy = {
+      ...settings,
+      deduct_salary_for_late_arrivals: true,
+      late_arrival_threshold: 3,
+    };
+    const belowThreshold = calc({ lateCount: 2, policy });
+    expect(belowThreshold.lines.some((line) => line.source === "auto_late")).toBe(false);
+
+    const atThreshold = calc({ lateCount: 3, policy });
+    expect(atThreshold.lines.find((line) => line.source === "auto_late")).toMatchObject({
+      type: "deduction",
+      amount: 1500,
+      basis_value: 3,
+      basis_unit: "late_arrivals",
+    });
+
+    const aboveThreshold = calc({ lateCount: 6, policy });
+    expect(aboveThreshold.lines.filter((line) => line.source === "auto_late")).toHaveLength(1);
+    expect(aboveThreshold.totalDeduction).toBe(4500);
   });
 
   it("does not divide by zero when a month has no scheduled working days", () => {

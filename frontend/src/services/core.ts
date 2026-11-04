@@ -1059,6 +1059,8 @@ export type SalaryRecord = {
     shift_start_time: string;
     shift_end_time: string;
     overtime_multiplier: number;
+    deduct_salary_for_late_arrivals?: boolean;
+    late_arrival_threshold?: number;
   } | string | null;
   payroll_schedule_snapshot?: { date: string; day_type: "working" | "off" }[] | string | null;
   notes?: string | null;

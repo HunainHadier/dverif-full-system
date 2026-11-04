@@ -94,12 +94,27 @@ function normalizePayrollRunPolicy(input) {
   if (!Number.isFinite(overtimeMultiplier) || overtimeMultiplier <= 0 || overtimeMultiplier > 5) {
     throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
   }
+  const deductSalaryForLateArrivals = input.deduct_salary_for_late_arrivals ?? false;
+  if (typeof deductSalaryForLateArrivals !== "boolean") {
+    throw new ApiError(400, "deduct_salary_for_late_arrivals must be true or false.");
+  }
+  const lateArrivalThreshold = Number(input.late_arrival_threshold ?? 1);
+  if (
+    deductSalaryForLateArrivals
+    && (!Number.isInteger(lateArrivalThreshold) || lateArrivalThreshold < 1)
+  ) {
+    throw new ApiError(400, "late_arrival_threshold must be a positive whole number.");
+  }
   return {
     salary_calculation_method: salaryCalculationMethod,
     calculate_overtime: input.calculate_overtime,
     shift_start_time: shiftStart,
     shift_end_time: shiftEnd,
     overtime_multiplier: overtimeMultiplier,
+    deduct_salary_for_late_arrivals: deductSalaryForLateArrivals,
+    late_arrival_threshold: Number.isInteger(lateArrivalThreshold) && lateArrivalThreshold > 0
+      ? lateArrivalThreshold
+      : 1,
     hours_per_workday: (endMinutes - startMinutes) / 60,
     currency: CURRENCY,
   };
@@ -112,6 +127,9 @@ function payrollPolicySnapshot(policy) {
     shift_start_time: String(policy.shift_start_time).slice(0, 5),
     shift_end_time: String(policy.shift_end_time).slice(0, 5),
     overtime_multiplier: Number(policy.overtime_multiplier),
+    deduct_salary_for_late_arrivals:
+      Number(policy.deduct_salary_for_late_arrivals) === 1 || policy.deduct_salary_for_late_arrivals === true,
+    late_arrival_threshold: Number(policy.late_arrival_threshold ?? 1),
   };
 }
 
@@ -997,17 +1015,22 @@ export async function getPayrollSettings(req, res) {
   let rows = [];
   if (m !== null) {
     [rows] = await pool.query(
-      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
       [req.scopeOrgId, m, y],
     );
   }
   if (!rows.length) {
     [rows] = await pool.query(
-      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier FROM organization_payroll_settings WHERE organization_id=?",
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold FROM organization_payroll_settings WHERE organization_id=?",
       [req.scopeOrgId],
     );
   }
-  const settings = rows[0] ? { ...rows[0], calculate_overtime: Number(rows[0].calculate_overtime) === 1 } : null;
+  const settings = rows[0] ? {
+    ...rows[0],
+    calculate_overtime: Number(rows[0].calculate_overtime) === 1,
+    deduct_salary_for_late_arrivals: Number(rows[0].deduct_salary_for_late_arrivals) === 1,
+    late_arrival_threshold: Number(rows[0].late_arrival_threshold ?? 1),
+  } : null;
   return ok(res, { settings, month: m, year: y }, "Payroll settings");
 }
 
@@ -1023,15 +1046,35 @@ export async function updatePayrollSettings(req, res) {
   }
   const multiplier = Number(body.overtime_multiplier ?? 1.5);
   if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 5) throw new ApiError(400, "overtime_multiplier must be greater than 0 and at most 5.");
+  const deductSalaryForLateArrivals = body.deduct_salary_for_late_arrivals ?? false;
+  if (typeof deductSalaryForLateArrivals !== "boolean") {
+    throw new ApiError(400, "deduct_salary_for_late_arrivals must be true or false.");
+  }
+  const lateArrivalThreshold = Number(body.late_arrival_threshold ?? 1);
+  if (
+    deductSalaryForLateArrivals
+    && (!Number.isInteger(lateArrivalThreshold) || lateArrivalThreshold < 1)
+  ) {
+    throw new ApiError(400, "late_arrival_threshold must be a positive whole number.");
+  }
+  const normalizedLateArrivalThreshold = Number.isInteger(lateArrivalThreshold) && lateArrivalThreshold > 0
+    ? lateArrivalThreshold
+    : 1;
   await pool.query(
     `INSERT INTO organization_monthly_payroll_settings
-       (organization_id, month, year, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, updated_by_uuid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (organization_id, month, year, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold, updated_by_uuid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE salary_calculation_method=VALUES(salary_calculation_method),
        calculate_overtime=VALUES(calculate_overtime), shift_start_time=VALUES(shift_start_time),
        shift_end_time=VALUES(shift_end_time), overtime_multiplier=VALUES(overtime_multiplier),
+       deduct_salary_for_late_arrivals=VALUES(deduct_salary_for_late_arrivals),
+       late_arrival_threshold=VALUES(late_arrival_threshold),
        updated_by_uuid=VALUES(updated_by_uuid)`,
-    [req.scopeOrgId, m, y, method, body.calculate_overtime ? 1 : 0, body.shift_start_time, body.shift_end_time, multiplier, req.user?.uuid ?? null],
+    [
+      req.scopeOrgId, m, y, method, body.calculate_overtime ? 1 : 0,
+      body.shift_start_time, body.shift_end_time, multiplier,
+      deductSalaryForLateArrivals ? 1 : 0, normalizedLateArrivalThreshold, req.user?.uuid ?? null,
+    ],
   );
   return getPayrollSettings({ ...req, query: { month: m, year: y } }, res);
 }

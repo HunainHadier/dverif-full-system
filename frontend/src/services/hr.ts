@@ -169,7 +169,8 @@ export type PayrollLine = {
     | "component"
     | "auto_unpaid_leave"
     | "auto_absenteeism"
-      | "auto_overtime"
+    | "auto_late"
+    | "auto_overtime"
     | "manual_overtime"
     | "monthly_variable"
     | "manual";
@@ -238,6 +239,8 @@ export type PayrollSettings = {
   shift_start_time: string;
   shift_end_time: string;
   overtime_multiplier: number;
+  deduct_salary_for_late_arrivals: boolean;
+  late_arrival_threshold: number;
 };
 
 export type PayrollEmployeeRow = {

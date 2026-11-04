@@ -46,6 +46,8 @@ const settings = {
   shift_start_time: "10:00",
   shift_end_time: "18:00",
   overtime_multiplier: 2,
+  deduct_salary_for_late_arrivals: true,
+  late_arrival_threshold: 4,
 };
 let monthlyOvertimeAmount = "0.00";
 const days = Array.from({ length: 30 }, (_, index) => {
@@ -251,6 +253,8 @@ describe("run-local payroll overrides", () => {
       shift_start_time: "09:00",
       shift_end_time: "17:00",
       overtime_multiplier: 1.5,
+      deduct_salary_for_late_arrivals: false,
+      late_arrival_threshold: 1,
     };
     const regeneratedDays = days.map((day) => ({
       ...day,
