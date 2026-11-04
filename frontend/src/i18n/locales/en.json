@@ -949,6 +949,7 @@
     "regenerateTitle": "Regenerate payroll for this period?",
     "regenerateConfirm": "This will overwrite existing payroll for {{count}} selected employee(s) for {{period}} — their records will be deleted and recomputed. This cannot be undone.",
     "regenerate": "Regenerate",
+    "action": "Action",
     "preview": "Preview",
     "previewTitle": "Payroll preview",
     "previewDesc": "For {{period}}, {{count}} employee(s). Nothing is saved — generating payroll afterwards stores exactly these figures.",

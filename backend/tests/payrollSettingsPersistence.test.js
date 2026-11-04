@@ -28,6 +28,7 @@ const savedSettings = {
   overtime_multiplier: "1.50",
   deduct_salary_for_late_arrivals: 1,
   late_arrival_threshold: 3,
+  late_grace_minutes: 10,
 };
 
 describe("payroll late-arrival policy persistence", () => {
@@ -45,9 +46,10 @@ describe("payroll late-arrival policy persistence", () => {
     expect(res.body.data.settings).toMatchObject({
       deduct_salary_for_late_arrivals: true,
       late_arrival_threshold: 3,
+      late_grace_minutes: 10,
     });
     expect(pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("deduct_salary_for_late_arrivals, late_arrival_threshold"),
+      expect.stringContaining("deduct_salary_for_late_arrivals, late_arrival_threshold, late_grace_minutes"),
       [7, 11, 2026],
     );
   });
@@ -71,16 +73,36 @@ describe("payroll late-arrival policy persistence", () => {
         overtime_multiplier: 1.5,
         deduct_salary_for_late_arrivals: true,
         late_arrival_threshold: 3,
+        late_grace_minutes: 10,
       },
     }, res);
 
-    expect(pool.query.mock.calls[0][0]).toContain("deduct_salary_for_late_arrivals, late_arrival_threshold");
+    expect(pool.query.mock.calls[0][0]).toContain("deduct_salary_for_late_arrivals, late_arrival_threshold, late_grace_minutes");
     expect(pool.query.mock.calls[0][1]).toEqual([
-      7, 11, 2026, "days", 0, "09:00", "17:00", 1.5, 1, 3, "admin-uuid",
+      7, 11, 2026, "days", 0, "09:00", "17:00", 1.5, 1, 3, 10, "admin-uuid",
     ]);
     expect(res.body.data.settings).toMatchObject({
       deduct_salary_for_late_arrivals: true,
       late_arrival_threshold: 3,
+      late_grace_minutes: 10,
     });
+  });
+
+  it("rejects a grace period outside the supported range", async () => {
+    await expect(updatePayrollSettings({
+      scopeOrgId: 7,
+      user: { uuid: "admin-uuid" },
+      body: {
+        month: 11,
+        year: 2026,
+        salary_calculation_method: "days",
+        calculate_overtime: false,
+        shift_start_time: "09:00",
+        shift_end_time: "17:00",
+        overtime_multiplier: 1.5,
+        late_grace_minutes: 181,
+      },
+    }, response())).rejects.toMatchObject({ statusCode: 400 });
+    expect(pool.query).not.toHaveBeenCalled();
   });
 });

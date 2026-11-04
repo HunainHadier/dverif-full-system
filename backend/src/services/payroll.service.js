@@ -453,7 +453,8 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     // employee still did not clock in, so without this a paid sick-leave day is
     // counted as an absence and docked. That is the bug this argument prevents.
     excludedDates: [...leave.paidDates, ...leave.unpaidDates],
-    lateCutoffMinutes: timeToMinutes(activePolicy.shift_start_time),
+    lateCutoffMinutes:
+      timeToMinutes(activePolicy.shift_start_time) + Number(activePolicy.late_grace_minutes ?? 10),
     overtimeCutoffMinutes: timeToMinutes(activePolicy.shift_end_time),
     excludeOvertimeFromRegularHours: Number(activePolicy.calculate_overtime) === 1,
     conn,
@@ -465,6 +466,10 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     month: m,
     year: y,
     workingDays: eligibleWorkingDates.length,
+    // The org's scheduled working days for the WHOLE month. Kept separate from
+    // `workingDays`, which is clamped to the employee's joining date and is what
+    // the daily/hourly rate and deductions are based on.
+    monthWorkingDays: calendar.workingDays,
     elapsedWorkingDays: elapsedWorkingDates.length,
     calendarDays: new Date(Date.UTC(y, m, 0)).getUTCDate(),
     joiningDate: joiningDate ? isoDate(joiningDate) : null,

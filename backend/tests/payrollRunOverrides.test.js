@@ -48,6 +48,7 @@ const settings = {
   overtime_multiplier: 2,
   deduct_salary_for_late_arrivals: true,
   late_arrival_threshold: 4,
+  late_grace_minutes: 10,
 };
 let monthlyOvertimeAmount = "0.00";
 const days = Array.from({ length: 30 }, (_, index) => {
@@ -255,6 +256,7 @@ describe("run-local payroll overrides", () => {
       overtime_multiplier: 1.5,
       deduct_salary_for_late_arrivals: false,
       late_arrival_threshold: 1,
+      late_grace_minutes: 10,
     };
     const regeneratedDays = days.map((day) => ({
       ...day,

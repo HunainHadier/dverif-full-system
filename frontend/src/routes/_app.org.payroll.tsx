@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, Eye, FileText, Lock, Plus, Trash2, Wallet, Users, CalendarDays, Clock, SlidersHorizontal } from "lucide-react";
+import { Download, Eye, FileText, Loader2, Lock, Plus, Trash2, Wallet, Users, CalendarDays, Clock, SlidersHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
@@ -133,7 +133,104 @@ function normalizePayrollSettings(settings: PayrollSettings): PayrollSettings {
     overtime_multiplier: Number(settings.overtime_multiplier),
     deduct_salary_for_late_arrivals: settings.deduct_salary_for_late_arrivals ?? false,
     late_arrival_threshold: Number(settings.late_arrival_threshold ?? 1),
+    late_grace_minutes: Number(settings.late_grace_minutes ?? 10),
   };
+}
+
+/** JSON columns may arrive parsed or as text depending on the MySQL driver. */
+function parseSnapshotColumn(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The policy that was in force when this payroll record was generated.
+ *
+ * Reading the saved snapshot (instead of today's settings) is what makes the
+ * records-table preview show the same figures that were committed, even if the
+ * organization has changed its payroll policy since. Returns undefined for
+ * records generated before snapshots were stored or for malformed data, in
+ * which case the preview falls back to the current policy.
+ */
+function recordPolicySnapshot(value: unknown): PayrollSettings | undefined {
+  const raw = parseSnapshotColumn(value);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const snapshot = raw as Record<string, unknown>;
+  const method = snapshot.salary_calculation_method;
+  if (method !== "hours" && method !== "days") return undefined;
+  if (
+    typeof snapshot.calculate_overtime !== "boolean"
+    || typeof snapshot.shift_start_time !== "string"
+    || typeof snapshot.shift_end_time !== "string"
+    || !Number.isFinite(Number(snapshot.overtime_multiplier))
+  ) {
+    return undefined;
+  }
+  return {
+    salary_calculation_method: method,
+    calculate_overtime: snapshot.calculate_overtime,
+    shift_start_time: snapshot.shift_start_time.slice(0, 5),
+    shift_end_time: snapshot.shift_end_time.slice(0, 5),
+    overtime_multiplier: Number(snapshot.overtime_multiplier),
+    deduct_salary_for_late_arrivals: snapshot.deduct_salary_for_late_arrivals === true,
+    late_arrival_threshold: Number(snapshot.late_arrival_threshold ?? 1) || 1,
+    late_grace_minutes: Number(snapshot.late_grace_minutes ?? 0),
+  };
+}
+
+/** The working/off calendar stored alongside the record, if it covers the whole month. */
+function recordScheduleSnapshot(
+  value: unknown,
+  month: number,
+  year: number,
+): PayrollRunDay[] | undefined {
+  const raw = parseSnapshotColumn(value);
+  if (!Array.isArray(raw)) return undefined;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (raw.length !== daysInMonth) return undefined;
+  const expectedDates = Array.from(
+    { length: daysInMonth },
+    (_, index) => `${year}-${String(month).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`,
+  );
+  const expected = new Set(expectedDates);
+  const byDate = new Map<string, "working" | "off">();
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+    const day = item as { date?: unknown; day_type?: unknown };
+    if (
+      typeof day.date !== "string"
+      || !expected.has(day.date)
+      || (day.day_type !== "working" && day.day_type !== "off")
+      || byDate.has(day.date)
+    ) {
+      return undefined;
+    }
+    byDate.set(day.date, day.day_type);
+  }
+  return expectedDates.map((date) => ({ date, day_type: byDate.get(date)! }));
+}
+
+/**
+ * Re-run the exact calculation captured by a stored payroll record.
+ *
+ * Settings and schedule come from the record's own snapshots so the preview is
+ * not affected by later policy/calendar edits. They are only sent together
+ * because the backend requires the pair; a record without both falls back to
+ * the organization's current inputs.
+ */
+function recordPreviewInputs(record: SalaryRecord): {
+  settings?: PayrollSettings;
+  days?: PayrollRunDay[];
+} {
+  const month = Number(record.month);
+  const year = Number(record.year);
+  const settings = recordPolicySnapshot(record.payroll_policy_snapshot);
+  const days = recordScheduleSnapshot(record.payroll_schedule_snapshot, month, year);
+  return settings && days ? { settings, days } : {};
 }
 
 function OrgPayrollPage() {
@@ -174,6 +271,7 @@ function OrgPayrollPage() {
     overtime_multiplier: 1.5,
     deduct_salary_for_late_arrivals: false,
     late_arrival_threshold: 1,
+    late_grace_minutes: 10,
   });
   const [generateSettingsPeriod, setGenerateSettingsPeriod] = useState("");
   const [generateDayTypes, setGenerateDayTypes] = useState<Record<string, "working" | "off">>({});
@@ -186,6 +284,12 @@ function OrgPayrollPage() {
   const [deleteTarget, setDeleteTarget] = useState<SalaryRecord | null>(null);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  /**
+   * Which calculation the shared preview modal is showing: the unsaved run from
+   * the generate dialog, or a re-calculation opened from the records table.
+   * Keeping this explicit stops one flow's numbers leaking into the other.
+   */
+  const [previewSource, setPreviewSource] = useState<"generation" | "record" | null>(null);
   const canDelete = user?.org_role === "org_admin";
 
   const MONTHS = Array.from({ length: 12 }, (_, i) =>
@@ -235,6 +339,7 @@ function OrgPayrollPage() {
       overtime_multiplier: 1.5,
       deduct_salary_for_late_arrivals: false,
       late_arrival_threshold: 1,
+      late_grace_minutes: 10,
     };
     setGenerateSettingsForm(normalizePayrollSettings(settings));
     setGenerateSettingsPeriod(`${genYear}-${genMonth}`);
@@ -512,8 +617,60 @@ function OrgPayrollPage() {
         days,
         overtime_amounts: overtimeAmounts,
       }),
-    onSuccess: () => setPreviewOpen(true),
+    onSuccess: () => {
+      setPreviewSource("generation");
+      setPreviewOpen(true);
+    },
   });
+  /**
+   * Preview a record that has already been generated.
+   *
+   * A separate mutation, not a reuse of `preview`, because the generation flow
+   * keeps its own variables for the regenerate confirmation. Sharing would let
+   * a records-table click overwrite the run the user is about to regenerate.
+   * The computation is still the same backend preview endpoint, so the modal
+   * shows exactly the same breakdown as the generate flow.
+   */
+  const recordPreview = useMutation<PayrollPreview, Error, SalaryRecord>({
+    mutationFn: (record) =>
+      orgSalaryService.preview({
+        month: Number(record.month),
+        year: Number(record.year),
+        employee_uuids: [record.employee_uuid],
+        ...recordPreviewInputs(record),
+      }),
+    onSuccess: () => {
+      setPreviewSource("record");
+      setPreviewOpen(true);
+    },
+    onError: (e) => toast.error(apiErrorMessage(e, t("payroll.previewFailed", "Preview failed"))),
+  });
+
+  /**
+   * Both preview flows share one modal. The source decides which mutation's
+   * data is displayed, so the generation preview keeps using its live run while
+   * a records-table eye click shows that record's own recalculation.
+   */
+  const activePreview = previewSource === "record"
+    ? recordPreview.data
+    : previewSource === "generation"
+      ? preview.data
+      : undefined;
+  const activePreviewError = previewSource === "record"
+    ? recordPreview.error
+    : previewSource === "generation"
+      ? preview.error
+      : null;
+  const activePreviewRecord = previewSource === "record" ? recordPreview.variables : undefined;
+  const activePreviewMonth = activePreviewRecord ? Number(activePreviewRecord.month) : genMonth;
+  const activePreviewYear = activePreviewRecord ? Number(activePreviewRecord.year) : genYear;
+  const previewDialogOpen = previewOpen
+    && Boolean(activePreview)
+    && (previewSource === "record" || periodOpen);
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewSource(null);
+  };
   const previewMatchesCurrent = preview.isSuccess
     && preview.variables?.month === genMonth
     && preview.variables?.year === genYear
@@ -814,7 +971,6 @@ function OrgPayrollPage() {
                           <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.deduction")}
                           </TableHead>
-
                           <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.overtimeAmount", "Overtime")}
                           </TableHead>
@@ -893,7 +1049,6 @@ function OrgPayrollPage() {
                                   )}
                                 </div>
                               </TableCell>
-
                               <TableCell
                                 data-label={t("payroll.overtimeAmount", "Overtime")}
                                 className="whitespace-nowrap text-right text-sm"
@@ -1020,7 +1175,9 @@ function OrgPayrollPage() {
                             <TableHead className="whitespace-nowrap text-right">
                               {t("payroll.payslip")}
                             </TableHead>
-                            <TableHead className="whitespace-nowrap text-right">—</TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              {t("payroll.action", "Action")}
+                            </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1106,22 +1263,39 @@ function OrgPayrollPage() {
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
-                              <TableCell data-label="—" className="whitespace-nowrap text-right">
-                                {canDelete ? (
+                              <TableCell data-label="Action" className="whitespace-nowrap text-right">
+                                <div className="flex items-center justify-end gap-1">
                                   <Button
-                                    size="sm"
+                                    size="icon"
                                     variant="ghost"
-                                    className="text-muted-foreground hover:text-destructive"
-                                    disabled={isLocked}
-                                    onClick={() => setDeleteTarget(r)}
+                                    className="h-8 w-8"
+                                    aria-label={t("payroll.previewTitle", "Payroll preview")}
+                                    title={t("payroll.previewTitle", "Payroll preview")}
+                                    disabled={isLocked || recordPreview.isPending}
+                                    onClick={() => recordPreview.mutate(r)}
                                   >
-                                    {isLocked ? (
-                                      <Lock className="h-3.5 w-3.5" />
+                                    {recordPreview.isPending && recordPreview.variables?.uuid === r.uuid ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
                                     ) : (
-                                      <Trash2 className="h-3.5 w-3.5" />
+                                      <Eye className="h-4 w-4" />
                                     )}
                                   </Button>
-                                ) : null}
+                                  {canDelete ? (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="text-muted-foreground hover:text-destructive"
+                                      disabled={isLocked}
+                                      onClick={() => setDeleteTarget(r)}
+                                    >
+                                      {isLocked ? (
+                                        <Lock className="h-3.5 w-3.5" />
+                                      ) : (
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  ) : null}
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -1407,6 +1581,27 @@ function OrgPayrollPage() {
                           </p>
                         ) : null}
                       </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="generate-late-grace-minutes" className="text-xs text-muted-foreground">
+                          Late grace period (minutes)
+                        </Label>
+                        <Input
+                          id="generate-late-grace-minutes"
+                          type="number"
+                          min="0"
+                          max="180"
+                          step="1"
+                          value={generateSettingsForm.late_grace_minutes}
+                          disabled={!canEditPayrollSettings || !hasConfiguredGenerateShiftTiming}
+                          onChange={(event) => setGenerateSettingsForm((settings) => ({
+                            ...settings,
+                            late_grace_minutes: Number(event.target.value),
+                          }))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Employees are on time until {generateSettingsForm.late_grace_minutes} minute(s) after shift start.
+                        </p>
+                      </div>
                     </div>
                   </>
                 )}
@@ -1487,9 +1682,9 @@ function OrgPayrollPage() {
 
       {/* ---------- Payroll preview: what will be computed, and why ---------- */}
       <Dialog
-        open={previewOpen && preview.isSuccess && periodOpen}
+        open={previewDialogOpen}
         onOpenChange={(o) => {
-          setPreviewOpen(o);
+          if (!o) closePreview();
         }}
       >
         <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-2xl">
@@ -1499,22 +1694,22 @@ function OrgPayrollPage() {
             </DialogTitle>
             <DialogDescription>
               {t("payroll.previewDesc", {
-                period: `${MONTHS[genMonth - 1]} ${genYear}`,
-                count: preview.data?.count ?? 0,
+                period: `${MONTHS[activePreviewMonth - 1]} ${activePreviewYear}`,
+                count: activePreview?.count ?? 0,
                 defaultValue:
                   "For {{period}}, {{count}} employee(s). Nothing is saved — generating payroll afterwards will store exactly these figures.",
               })}
             </DialogDescription>
           </DialogHeader>
 
-          {preview.isError ? (
+          {activePreviewError ? (
             <p className="text-sm text-destructive">
-              {apiErrorMessage(preview.error, t("payroll.previewFailed", "Preview failed"))}
+              {apiErrorMessage(activePreviewError, t("payroll.previewFailed", "Preview failed"))}
             </p>
           ) : null}
 
           <div className="space-y-3">
-            {(preview.data?.items ?? []).map((item) => {
+            {(activePreview?.items ?? []).map((item) => {
               const a = item.attendance;
               const isHoursBased = item.rates.salary_calculation_method === "hours";
               const auto = item.lines.filter((l) => l.source !== "component");
@@ -1606,7 +1801,9 @@ function OrgPayrollPage() {
                   <p className="mt-2 text-xs text-muted-foreground">
                     {isHoursBased
                       ? `Salary basis: ${item.rates.divisor} scheduled hours · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
-                      : `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
+                      : item.rates.divisor === a.working_days
+                        ? `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`
+                        : `Salary basis: ${item.rates.divisor} working days after joining (of ${a.working_days} this month) · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
                         count: a.holidays_in_month,
@@ -1620,7 +1817,7 @@ function OrgPayrollPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
+            <Button variant="outline" onClick={closePreview}>
               {t("actions.close", "Close")}
             </Button>
           </DialogFooter>
@@ -1686,6 +1883,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     overtime_multiplier: 1.5,
     deduct_salary_for_late_arrivals: false,
     late_arrival_threshold: 1,
+    late_grace_minutes: 10,
   });
   const settingsQ = useQuery({
     queryKey: ["orgPayrollSettings", month, year],
@@ -1708,6 +1906,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
       overtime_multiplier: 1.5,
       deduct_salary_for_late_arrivals: false,
       late_arrival_threshold: 1,
+      late_grace_minutes: 10,
     };
     setSettingsForm({
       ...settings,
@@ -1716,6 +1915,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
       shift_end_time: String(settings.shift_end_time).slice(0, 5),
       deduct_salary_for_late_arrivals: settings.deduct_salary_for_late_arrivals ?? false,
       late_arrival_threshold: Number(settings.late_arrival_threshold ?? 1),
+      late_grace_minutes: Number(settings.late_grace_minutes ?? 10),
     });
   }, [settingsQ.data, settingsQ.isSuccess]);
   const configuredShiftStart = String(settingsQ.data?.shift_start_time ?? "").slice(0, 5);
@@ -1867,13 +2067,6 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
                 <span>Calculate salary according to working days</span>
               </label>
             </div>
-            <div className="space-y-2 border-t pt-3">
-              <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
-              <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
-                <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
-              </div>
-            </div>
             <div className="space-y-3 border-t pt-3">
               {settingsQ.isError ? (
                 <p role="alert" className="text-sm text-destructive">
@@ -1910,6 +2103,34 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
                 {!hasConfiguredShiftTiming ? (
                   <p className="text-xs text-muted-foreground">Configure organization shift timing first.</p>
                 ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="late-grace-minutes" className="text-xs">
+                  Late grace period (minutes)
+                </Label>
+                <Input
+                  id="late-grace-minutes"
+                  type="number"
+                  min="0"
+                  max="180"
+                  step="1"
+                  value={settingsForm.late_grace_minutes}
+                  disabled={!canManage || !hasConfiguredShiftTiming}
+                  onChange={(event) => setSettingsForm((s) => ({
+                    ...s,
+                    late_grace_minutes: Number(event.target.value),
+                  }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Employees are on time until {settingsForm.late_grace_minutes} minute(s) after shift start.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2 text-sm font-medium"><Clock className="h-4 w-4" /> Organization shift timing</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label className="text-xs">Shift start</Label><Input type="time" value={settingsForm.shift_start_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_start_time: e.target.value }))} /></div>
+                <div><Label className="text-xs">Check-out</Label><Input type="time" value={settingsForm.shift_end_time.slice(0, 5)} disabled={!canManage} onChange={(e) => setSettingsForm((s) => ({ ...s, shift_end_time: e.target.value }))} /></div>
               </div>
             </div>
             {canManage ? <Button className="w-full sm:w-auto" onClick={() => saveSettings.mutate()} disabled={saveSettings.isPending || settingsQ.isLoading}>Save Policies</Button> : null}

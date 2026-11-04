@@ -68,7 +68,9 @@ const LINE_SOURCE_LABELS: Record<string, string> = {
   auto_absenteeism: "Absent days",
   auto_late: "Late arrivals",
   auto_overtime: "Approved overtime",
+  manual_overtime: "Manual overtime",
   auto_expense: "Expense claims",
+  monthly_variable: "Monthly payroll item",
   manual: "Manual adjustment",
 };
 
@@ -282,7 +284,6 @@ function PayrollPage() {
                     <TableHead>{t("orgPayroll.period", "Period")}</TableHead>
                     <TableHead>{t("orgPayroll.basic", "Basic")}</TableHead>
                     <TableHead>{t("orgPayroll.allowances", "Allowances")}</TableHead>
-                    <TableHead>{t("orgPayroll.expenseReimbursement", "Expense reimbursement")}</TableHead>
                     <TableHead>{t("orgPayroll.deductions", "Deductions")}</TableHead>
                     <TableHead>{t("orgPayroll.net", "Net Salary")}</TableHead>
                     <TableHead className="text-right">
@@ -304,9 +305,6 @@ function PayrollPage() {
                       </TableCell>
                       <TableCell data-label="Allowances" className="text-muted-foreground">
                         {money(r.allowances)}
-                      </TableCell>
-                      <TableCell data-label="Expense reimbursement" className="text-muted-foreground">
-                        {money(r.expense_reimbursement ?? 0)}
                       </TableCell>
                       <TableCell data-label="Deductions" className="text-muted-foreground">
                         {money(r.deductions)}

@@ -105,6 +105,10 @@ function normalizePayrollRunPolicy(input) {
   ) {
     throw new ApiError(400, "late_arrival_threshold must be a positive whole number.");
   }
+  const lateGraceMinutes = Number(input.late_grace_minutes ?? 10);
+  if (!Number.isInteger(lateGraceMinutes) || lateGraceMinutes < 0 || lateGraceMinutes > 180) {
+    throw new ApiError(400, "late_grace_minutes must be a whole number between 0 and 180.");
+  }
   return {
     salary_calculation_method: salaryCalculationMethod,
     calculate_overtime: input.calculate_overtime,
@@ -115,6 +119,7 @@ function normalizePayrollRunPolicy(input) {
     late_arrival_threshold: Number.isInteger(lateArrivalThreshold) && lateArrivalThreshold > 0
       ? lateArrivalThreshold
       : 1,
+    late_grace_minutes: lateGraceMinutes,
     hours_per_workday: (endMinutes - startMinutes) / 60,
     currency: CURRENCY,
   };
@@ -130,6 +135,7 @@ function payrollPolicySnapshot(policy) {
     deduct_salary_for_late_arrivals:
       Number(policy.deduct_salary_for_late_arrivals) === 1 || policy.deduct_salary_for_late_arrivals === true,
     late_arrival_threshold: Number(policy.late_arrival_threshold ?? 1),
+    late_grace_minutes: Number(policy.late_grace_minutes ?? 10),
   };
 }
 
@@ -855,7 +861,7 @@ export async function previewPayroll(req, res) {
       net_salary: computed.net,
       lines: computed.lines,
       attendance: {
-        working_days: computed.summary.workingDays,
+        working_days: computed.summary.monthWorkingDays ?? computed.summary.workingDays,
         elapsed_working_days: computed.summary.elapsedWorkingDays,
         attended_days: computed.summary.attendedDays,
         worked_hours: computed.summary.workedHours,
@@ -1015,13 +1021,13 @@ export async function getPayrollSettings(req, res) {
   let rows = [];
   if (m !== null) {
     [rows] = await pool.query(
-      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold, late_grace_minutes FROM organization_monthly_payroll_settings WHERE organization_id=? AND month=? AND year=?",
       [req.scopeOrgId, m, y],
     );
   }
   if (!rows.length) {
     [rows] = await pool.query(
-      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold FROM organization_payroll_settings WHERE organization_id=?",
+      "SELECT salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold, late_grace_minutes FROM organization_payroll_settings WHERE organization_id=?",
       [req.scopeOrgId],
     );
   }
@@ -1030,6 +1036,7 @@ export async function getPayrollSettings(req, res) {
     calculate_overtime: Number(rows[0].calculate_overtime) === 1,
     deduct_salary_for_late_arrivals: Number(rows[0].deduct_salary_for_late_arrivals) === 1,
     late_arrival_threshold: Number(rows[0].late_arrival_threshold ?? 1),
+    late_grace_minutes: Number(rows[0].late_grace_minutes ?? 10),
   } : null;
   return ok(res, { settings, month: m, year: y }, "Payroll settings");
 }
@@ -1060,20 +1067,25 @@ export async function updatePayrollSettings(req, res) {
   const normalizedLateArrivalThreshold = Number.isInteger(lateArrivalThreshold) && lateArrivalThreshold > 0
     ? lateArrivalThreshold
     : 1;
+  const lateGraceMinutes = Number(body.late_grace_minutes ?? 10);
+  if (!Number.isInteger(lateGraceMinutes) || lateGraceMinutes < 0 || lateGraceMinutes > 180) {
+    throw new ApiError(400, "late_grace_minutes must be a whole number between 0 and 180.");
+  }
   await pool.query(
     `INSERT INTO organization_monthly_payroll_settings
-       (organization_id, month, year, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold, updated_by_uuid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (organization_id, month, year, salary_calculation_method, calculate_overtime, shift_start_time, shift_end_time, overtime_multiplier, deduct_salary_for_late_arrivals, late_arrival_threshold, late_grace_minutes, updated_by_uuid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE salary_calculation_method=VALUES(salary_calculation_method),
        calculate_overtime=VALUES(calculate_overtime), shift_start_time=VALUES(shift_start_time),
        shift_end_time=VALUES(shift_end_time), overtime_multiplier=VALUES(overtime_multiplier),
        deduct_salary_for_late_arrivals=VALUES(deduct_salary_for_late_arrivals),
        late_arrival_threshold=VALUES(late_arrival_threshold),
+       late_grace_minutes=VALUES(late_grace_minutes),
        updated_by_uuid=VALUES(updated_by_uuid)`,
     [
       req.scopeOrgId, m, y, method, body.calculate_overtime ? 1 : 0,
       body.shift_start_time, body.shift_end_time, multiplier,
-      deductSalaryForLateArrivals ? 1 : 0, normalizedLateArrivalThreshold, req.user?.uuid ?? null,
+      deductSalaryForLateArrivals ? 1 : 0, normalizedLateArrivalThreshold, lateGraceMinutes, req.user?.uuid ?? null,
     ],
   );
   return getPayrollSettings({ ...req, query: { month: m, year: y } }, res);
@@ -1228,6 +1240,7 @@ export async function listOrgSalaryRecords(req, res) {
   const [rows] = await pool.query(
     `SELECT sr.uuid, sr.employee_uuid, sr.month, sr.year, sr.basic_salary,
             sr.allowances, sr.deductions, sr.expense_reimbursement, sr.net_salary, sr.notes, sr.created_at,
+            sr.payroll_policy_snapshot, sr.payroll_schedule_snapshot,
             e.full_name AS employee_name, e.email AS employee_email, dg.name AS designation,
             o.name AS organization_name
      FROM salary_records sr

@@ -3,8 +3,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Check, ChevronsUpDown, Info, Lock, Plus, ShieldCheck, Trash2, UserCheck } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  ChevronsUpDown,
+  Info,
+  Lock,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  UserCheck,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { DateRange } from "react-day-picker";
 
 import { authStore } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -38,6 +49,7 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Table,
@@ -72,6 +84,23 @@ function localToday(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function parseLocalDate(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatLocalDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatAttendanceDate(value: string): string {
+  return parseLocalDate(value).toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function OrgAttendancePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -103,6 +132,7 @@ function OrgAttendanceContent() {
   const [employeeUuid, setEmployeeUuid] = useState("");
   const [department, setDepartment] = useState("");
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
 
@@ -353,29 +383,65 @@ function OrgAttendanceContent() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:col-span-2 xl:col-span-3">
-              <Input
-                type="date"
-                aria-label="Attendance from date"
-                value={dateFrom}
-                onChange={(e) => {
-                  setDateFrom(e.target.value);
-                  setPage(1);
-                }}
-                className="w-full min-w-0"
-              />
-              <span className="text-xs text-muted-foreground">{t("common.to")}</span>
-              <Input
-                type="date"
-                aria-label="Attendance to date"
-                value={dateTo}
-                onChange={(e) => {
-                  setMonthFilter("");
-                  setDateTo(e.target.value);
-                  setPage(1);
-                }}
-                className="w-full min-w-0"
-              />
+            <div className="min-w-0 sm:col-span-2 xl:col-span-3">
+              <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-label="Select attendance date range"
+                    aria-expanded={datePickerOpen}
+                    className="w-full min-w-0 justify-start gap-2 font-normal"
+                  >
+                    <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    {dateFrom ? (
+                      <span className="min-w-0 truncate">
+                        {formatAttendanceDate(dateFrom)} {t("common.to")}{" "}
+                        {dateTo ? formatAttendanceDate(dateTo) : "Select end date"}
+                      </span>
+                    ) : (
+                      <span className="min-w-0 truncate text-muted-foreground">Select date range</span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-0">
+                  <Calendar
+                    mode="range"
+                    selected={{
+                      from: dateFrom ? parseLocalDate(dateFrom) : undefined,
+                      to: dateTo ? parseLocalDate(dateTo) : undefined,
+                    }}
+                    defaultMonth={dateFrom ? parseLocalDate(dateFrom) : new Date()}
+                    onSelect={(range: DateRange | undefined) => {
+                      setDateFrom(range?.from ? formatLocalDate(range.from) : "");
+                      setDateTo(range?.to ? formatLocalDate(range.to) : "");
+                      setPage(1);
+                      if (range?.from && range?.to) setDatePickerOpen(false);
+                    }}
+                    showOutsideDays={false}
+                  />
+                  <div className="flex items-center justify-between border-t border-border px-3 py-2">
+                    <span className="text-xs text-muted-foreground">
+                      {dateFrom ? "Choose an end date" : "Choose a start date"}
+                    </span>
+                    {(dateFrom || dateTo) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDateFrom("");
+                          setDateTo("");
+                          setPage(1);
+                          setDatePickerOpen(false);
+                        }}
+                      >
+                        Clear range
+                      </Button>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 

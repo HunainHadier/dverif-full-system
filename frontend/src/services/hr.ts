@@ -189,6 +189,7 @@ export type PayrollPreviewItem = {
   net_salary: number | string;
   lines: PayrollLine[];
   attendance: {
+    /** The organization's scheduled working days for the whole month. */
     working_days: number;
     attended_days: number;
     worked_hours: number;
@@ -241,6 +242,7 @@ export type PayrollSettings = {
   overtime_multiplier: number;
   deduct_salary_for_late_arrivals: boolean;
   late_arrival_threshold: number;
+  late_grace_minutes: number;
 };
 
 export type PayrollEmployeeRow = {
@@ -295,8 +297,8 @@ export const orgSalaryService = {
     month: number;
     year: number;
     employee_uuids?: UUID[];
-    settings: PayrollSettings;
-    days: PayrollRunDay[];
+    settings?: PayrollSettings;
+    days?: PayrollRunDay[];
     overtime_amounts?: Record<string, number>;
   }) =>
     api.post<PayrollPreview>("/org/payroll/preview", data).then((r) => r.data),
