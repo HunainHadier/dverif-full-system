@@ -1009,13 +1009,7 @@ function OrgPayrollPage() {
                             </TableHead>
                             <TableHead className="whitespace-nowrap">{t("payroll.period")}</TableHead>
                             <TableHead className="whitespace-nowrap text-right">
-                              {t("payroll.basic")}
-                            </TableHead>
-                            <TableHead className="whitespace-nowrap text-right">
                               {t("payroll.allowances")}
-                            </TableHead>
-                            <TableHead className="whitespace-nowrap text-right">
-                              {t("payroll.expenseReimbursement", "Expense reimbursement")}
                             </TableHead>
                             <TableHead className="whitespace-nowrap text-right">
                               {t("payroll.deductions")}
@@ -1050,22 +1044,10 @@ function OrgPayrollPage() {
                                 {MONTHS[Number(r.month) - 1]} {r.year}
                               </TableCell>
                               <TableCell
-                                data-label="Basic"
-                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                              >
-                                {money(r.basic_salary)}
-                              </TableCell>
-                              <TableCell
                                 data-label="Allowances"
                                 className="whitespace-nowrap text-right text-sm text-muted-foreground"
                               >
                                 {money(r.allowances)}
-                              </TableCell>
-                              <TableCell
-                                data-label="Expense reimbursement"
-                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                              >
-                                {money(r.expense_reimbursement)}
                               </TableCell>
                               <TableCell
                                 data-label="Deductions"
