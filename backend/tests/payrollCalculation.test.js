@@ -98,6 +98,7 @@ describe("monthly attendance payroll calculation", () => {
 
     const atThreshold = calc({ lateCount: 3, policy });
     expect(atThreshold.lines.find((line) => line.source === "auto_late")).toMatchObject({
+      label: "Late arrivals (3)",
       type: "deduction",
       amount: 1500,
       basis_value: 3,

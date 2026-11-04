@@ -542,7 +542,7 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
     const payableDays = Math.min(elapsedWorkingDays, attendedDays + paidLeaveDays);
     payableRatio = elapsedWorkingDays > 0 ? payableDays / elapsedWorkingDays : 1;
     if (unpaidLeaveDays > 0) lines.push({
-      label: `Unpaid leave (${unpaidLeaveDays} day(s) x ${perDayRate})`,
+      label: `Unpaid leave (${unpaidLeaveDays} day(s))`,
       type: "deduction", source: "auto_unpaid_leave",
       amount: money(perDayRate * unpaidLeaveDays), basis_value: unpaidLeaveDays, basis_unit: "days",
     });
@@ -587,7 +587,7 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
     && lateCount >= lateArrivalThreshold
   ) {
     lines.push({
-      label: `Late arrivals (${lateCount}, 1 day x ${perDayRate})`,
+      label: `Late arrivals (${lateCount})`,
       type: "deduction",
       source: "auto_late",
       amount: perDayRate,

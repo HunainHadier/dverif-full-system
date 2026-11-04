@@ -1036,7 +1036,9 @@ export type SalaryRecordLine = {
     | "auto_absenteeism"
     | "auto_late"
     | "auto_overtime"
+    | "manual_overtime"
     | "auto_expense"
+    | "monthly_variable"
     | "manual";
   amount: string | number;
   basis_value?: string | number | null;

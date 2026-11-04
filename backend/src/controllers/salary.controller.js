@@ -1252,6 +1252,26 @@ export async function listOrgSalaryRecords(req, res) {
      LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
+  const recordUuids = rows.map((row) => row.uuid);
+  if (recordUuids.length) {
+    const [lineRows] = await pool.query(
+      `SELECT salary_record_uuid, label, type, source, amount, basis_value, basis_unit
+         FROM salary_record_lines
+        WHERE salary_record_uuid IN (?)
+        ORDER BY salary_record_uuid, FIELD(type, 'earning', 'deduction'), id`,
+      [recordUuids],
+    );
+    const linesByRecord = new Map();
+    for (const line of lineRows) {
+      if (!linesByRecord.has(line.salary_record_uuid)) {
+        linesByRecord.set(line.salary_record_uuid, []);
+      }
+      linesByRecord.get(line.salary_record_uuid).push(line);
+    }
+    for (const row of rows) {
+      row.lines = linesByRecord.get(row.uuid) ?? [];
+    }
+  }
   return ok(res, paginatedResponse(rows, total, page, limit), "Salary records");
 }
 

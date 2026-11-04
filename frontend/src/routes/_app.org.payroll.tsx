@@ -1200,11 +1200,33 @@ function OrgPayrollPage() {
                               >
                                 {MONTHS[Number(r.month) - 1]} {r.year}
                               </TableCell>
-                              <TableCell
-                                data-label="Allowances"
-                                className="whitespace-nowrap text-right text-sm text-muted-foreground"
-                              >
-                                {money(r.allowances)}
+                              <TableCell data-label="Allowances" className="text-right text-sm">
+                                <div className="ml-auto w-fit space-y-1">
+                                  {(r.lines ?? [])
+                                    .filter((line) =>
+                                      line.type === "earning"
+                                      && line.source !== "basic"
+                                      && line.source !== "auto_expense",
+                                    )
+                                    .map((line, index) => (
+                                      <div key={`${line.source}-${line.label}-${index}`} className="flex justify-between gap-3">
+                                        <span className="text-left text-muted-foreground">{line.label}</span>
+                                        <span className="whitespace-nowrap">{money(line.amount)}</span>
+                                      </div>
+                                    ))}
+                                  {!(r.lines ?? []).some((line) =>
+                                    line.type === "earning"
+                                    && line.source !== "basic"
+                                    && line.source !== "auto_expense",
+                                  ) ? (
+                                    <div className="text-muted-foreground">
+                                      {Number(r.allowances) > 0 ? money(r.allowances) : "—"}
+                                    </div>
+                                  ) : null}
+                                  {!(r.lines ?? []).length && Number(r.allowances) > 0 ? (
+                                    <div className="text-xs text-muted-foreground">No itemized breakdown</div>
+                                  ) : null}
+                                </div>
                               </TableCell>
                               <TableCell
                                 data-label="Deductions"
