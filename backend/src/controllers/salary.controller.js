@@ -419,14 +419,6 @@ export async function generatePayroll(req, res) {
   const generatedEmployeeUuids = [];
   // Declared outside the transaction block because it is reported after the commit.
   let claimsPaid = 0;
-  /**
-   * auto_expense lines lifted off the records Regenerate is about to delete, keyed
-   * by employee. Populated inside the transaction and read back in the per-employee
-   * loop; an empty map for an ordinary generate, because there is nothing to carry.
-   */
-  const carriedExpenses = new Map();
-  /** salary_record uuids about to be deleted, so their claims can be re-pointed. */
-  let carriedClaimPointers = [];
   try {
     await conn.beginTransaction();
     const runInputs = await resolvePayrollRunInputs({
@@ -493,40 +485,20 @@ export async function generatePayroll(req, res) {
        * pay the same expense a second time in the second case. That is the one
        * failure this module must never have.
        *
-       * So the lines are carried forward instead. A reimbursement is a disbursement
-       * that already happened, not a value derived from attendance and salary
-       * components, which is exactly what Regenerate exists to recompute. The claim
-       * stays paid, and its paid_via pointer is re-pointed at the new record below
-       * so the audit trail does not dangle.
-       *
-       * Read BEFORE the delete, because the cascade destroys the rows being read.
+       * Paid claims have immutable payment-history rows with a restrictive foreign
+       * key to the salary record. Refuse regeneration rather than orphaning or
+       * silently rewriting a real disbursement.
        */
       const [doomedRecords] = await conn.query(
         `SELECT uuid, employee_uuid FROM salary_records
-          WHERE organization_id=? AND month=? AND year=? AND employee_uuid IN (${placeholders})`,
+          WHERE organization_id=? AND month=? AND year=? AND employee_uuid IN (${placeholders})
+          FOR UPDATE`,
         [orgId, m, y, ...employees.map((e) => e.uuid)]
       );
-
-      carriedExpenses.clear();
-      if (doomedRecords.length) {
-        const recordPlaceholders = doomedRecords.map(() => "?").join(",");
-        const [oldLines] = await conn.query(
-          `SELECT l.salary_record_uuid, r.employee_uuid, l.label, l.type, l.source,
-                  l.amount, l.basis_value, l.basis_unit
-             FROM salary_record_lines l
-             JOIN salary_records r ON r.uuid = l.salary_record_uuid
-            WHERE l.source='auto_expense' AND l.salary_record_uuid IN (${recordPlaceholders})`,
-          doomedRecords.map((r) => r.uuid)
-        );
-        for (const line of oldLines) {
-          if (!carriedExpenses.has(line.employee_uuid)) carriedExpenses.set(line.employee_uuid, []);
-          carriedExpenses.get(line.employee_uuid).push(line);
-        }
-
-        // The claims each carried line disbursed, so they can be re-pointed at the
-        // replacement record once it exists.
-        carriedClaimPointers = doomedRecords.map((r) => r.uuid);
-      }
+      await expenses.assertNoExpensePaymentsForSalaryRecords({
+        conn,
+        salaryRecordUuids: doomedRecords.map((r) => r.uuid),
+      });
 
       await conn.query(
         `DELETE FROM salary_records
@@ -572,6 +544,7 @@ export async function generatePayroll(req, res) {
     }
 
     const createdBy = req.user?.id ?? null;
+    const performedByUuid = req.user?.uuid ?? null;
 
     for (const emp of employees) {
       const overtimeAmount = overtimeAmounts.get(emp.uuid);
@@ -612,16 +585,8 @@ export async function generatePayroll(req, res) {
       // transaction. UUID() inside the INSERT would return the value to nobody.
       const recordUuid = randomUUID();
       generatedEmployeeUuids.push(emp.uuid);
-      const carried = carriedExpenses.get(emp.uuid) ?? [];
-      const carriedExpenseReimbursement = moneyField(
-        carried.reduce((sum, line) => sum + Number(line.amount || 0), 0),
-        "expense reimbursement",
-      );
-      const expenseReimbursement = moneyField(
-        computed.expenseReimbursement + carriedExpenseReimbursement,
-        "expense reimbursement",
-      );
-      const netSalary = moneyField(computed.net + carriedExpenseReimbursement, "net salary");
+      const expenseReimbursement = moneyField(computed.expenseReimbursement, "expense reimbursement");
+      const netSalary = moneyField(computed.net, "net salary");
 
       await conn.query(
         `INSERT INTO salary_records
@@ -661,29 +626,6 @@ export async function generatePayroll(req, res) {
       });
 
       /**
-       * Re-attach the reimbursements carried forward from the deleted record.
-       *
-       * Appended AFTER computed.lines so the carried disbursement is visible on the
-       * payslip alongside anything newly computed - a claim approved since the last
-       * run is picked up in the same regeneration, which is the whole point of
-       * recomputing a period.
-       *
-       * Only the LINE is carried. No claim is re-consumed, because these claims are
-       * already paid; re-consuming them would be a second disbursement.
-       */
-      if (carried.length) {
-        await insertSalaryRecordLines({
-          conn,
-          recordUuid,
-          orgId,
-          employeeUuid: emp.uuid,
-          month: m,
-          year: y,
-          lines: carried,
-        });
-      }
-
-      /**
        * Consume the claims, in the SAME transaction as the salary record.
        *
        * The ordering matters. If this ran first and the payroll then failed, the
@@ -697,22 +639,7 @@ export async function generatePayroll(req, res) {
           orgId,
           salaryRecordUuid: recordUuid,
           claims: computed.approvedClaims,
-        });
-      }
-
-      /**
-       * Re-point the carried claims at their replacement record.
-       *
-       * Left alone, paid_via_salary_record_uuid would name a row the regenerate just
-       * deleted, and the audit trail for a real disbursement would dead-end on a
-       * uuid that resolves to nothing.
-       */
-      if (carried.length && carriedClaimPointers.length) {
-        await expenses.repointClaimsPaidByPayroll({
-          conn,
-          orgId,
-          salaryRecordUuid: recordUuid,
-          previousRecordUuids: carriedClaimPointers,
+          performedByUuid,
         });
       }
     }
@@ -1156,10 +1083,33 @@ export async function deleteSalaryPeriod(req, res) {
   const orgId = req.scopeOrgId;
   const { m, y } = monthYearFields(req.params.month, req.params.year);
 
-  const [result] = await pool.query(
-    "DELETE FROM salary_records WHERE organization_id=? AND month=? AND year=?",
-    [orgId, m, y]
-  );
+  const conn = await pool.getConnection();
+  let result;
+  try {
+    await conn.beginTransaction();
+    const [records] = await conn.query(
+      "SELECT uuid FROM salary_records WHERE organization_id=? AND month=? AND year=? FOR UPDATE",
+      [orgId, m, y],
+    );
+    await expenses.assertNoExpensePaymentsForSalaryRecords({
+      conn,
+      salaryRecordUuids: records.map((record) => record.uuid),
+    });
+    [result] = await conn.query(
+      "DELETE FROM salary_records WHERE organization_id=? AND month=? AND year=?",
+      [orgId, m, y],
+    );
+    await conn.commit();
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch {
+      // Preserve the payroll deletion error.
+    }
+    throw error;
+  } finally {
+    conn.release();
+  }
 
   logAudit({
     ...getActorFromReq(req),
@@ -1179,11 +1129,35 @@ export async function deleteSalaryRecord(req, res) {
   const orgId = req.scopeOrgId;
   assertUuid(req.params.uuid, "Salary record UUID");
 
-  const [result] = await pool.query(
-    "DELETE FROM salary_records WHERE uuid=? AND organization_id=?",
-    [req.params.uuid, orgId]
-  );
-  if (!result.affectedRows) throw new ApiError(404, "Salary record not found");
+  const conn = await pool.getConnection();
+  let result;
+  try {
+    await conn.beginTransaction();
+    const [records] = await conn.query(
+      "SELECT uuid FROM salary_records WHERE uuid=? AND organization_id=? FOR UPDATE",
+      [req.params.uuid, orgId],
+    );
+    if (!records.length) throw new ApiError(404, "Salary record not found");
+    await expenses.assertNoExpensePaymentsForSalaryRecords({
+      conn,
+      salaryRecordUuids: [records[0].uuid],
+    });
+    [result] = await conn.query(
+      "DELETE FROM salary_records WHERE uuid=? AND organization_id=?",
+      [req.params.uuid, orgId],
+    );
+    if (!result.affectedRows) throw new ApiError(404, "Salary record not found");
+    await conn.commit();
+  } catch (error) {
+    try {
+      await conn.rollback();
+    } catch {
+      // Preserve the payroll deletion error.
+    }
+    throw error;
+  } finally {
+    conn.release();
+  }
 
   logAudit({
     ...getActorFromReq(req),

@@ -28,7 +28,7 @@ import type { AuthUser } from "@/lib/auth";
  * sub-admin's JWT, so the "restriction" was cosmetic: it removed a link and bounced
  * navigation, and did nothing to the API.
  *
- * The four module permissions did not exist anywhere — not in the backend's
+ * The delegated module permissions did not exist anywhere — not in the backend's
  * PERMISSION_KEYS, not in the client's FeatureKey, not in the org-admin grant form —
  * so there was nothing for the guards to check. Delegation with no dial on it.
  *
@@ -164,12 +164,13 @@ const MATRIX: Expectation[] = [
 const ALL_ON = Object.fromEntries(FEATURE_KEYS.map((k) => [k, true])) as FeatureAccessMap;
 const ALL_OFF = Object.fromEntries(FEATURE_KEYS.map((k) => [k, false])) as FeatureAccessMap;
 
-/** The four permissions this audit added. Named once so a typo cannot half-pin a check. */
+/** The delegated permissions this audit added. Named once so a typo cannot half-pin a check. */
 const MODULE_PERMISSION_KEYS: FeatureKey[] = [
   "hr_letters",
   "manage_assets",
   "manage_separation",
   "approve_expenses",
+  "create_expenses",
 ];
 
 function user(orgRole: OrgRole, feature_access: FeatureAccessMap | null): AuthUser {

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const h = vi.hoisted(() => ({
   conn: {
@@ -8,6 +9,9 @@ const h = vi.hoisted(() => ({
     rollback: vi.fn(),
     release: vi.fn(),
   },
+  claim: null,
+  payrollPeriods: new Set(),
+  payrollClaims: [],
 }));
 
 vi.mock("../src/config/db.js", () => ({
@@ -15,224 +19,254 @@ vi.mock("../src/config/db.js", () => ({
 }));
 
 import { pool } from "../src/config/db.js";
-import { autoApproveClaim, createClaim } from "../src/services/expenses.service.js";
-import { ATTACHMENT_ENTITY } from "../src/services/expenses.service.js";
-import { parseFeatureAccess } from "../src/utils/permissions.js";
-
-/**
- * THE AUTO-APPROVAL SHORTCUT, AND THE TWO THINGS THAT MUST HOLD.
- *
- * A checkbox that skips a review queue is a shortcut around the one control that
- * decides whether the company pays for something. Two rules keep it honest, and
- * each of these tests kills the shortcut if its rule is removed:
- *
- *   1. AUTHORITY IS SERVER-SIDE. The flag on the request is a claim made by the
- *      sender. `canApproveExpenses` comes from the session, so an account without
- *      the permission gets a PENDING claim even though it sent the flag.
- *   2. NO SELF-APPROVAL. The claimant and the approver are two people on purpose,
- *      and a submission-time checkbox must not become a way around that.
- *
- * Receipts are optional now, so there is no receipt rule to preserve here.
- *
- * And the behaviour that makes the feature usable at all: a REFUSED auto-approval
- * still leaves the claim FILED, pending. Refusing the entire submission would
- * punish the employee for a checkbox the server has to police.
- */
+import {
+  approveOwnClaim,
+  createClaim,
+  expenseReimbursementLine,
+  getApprovedClaimsForPeriod,
+  markClaimsPaidByPayroll,
+  reviewClaim,
+} from "../src/services/expenses.service.js";
+import { hasPermission, parseFeatureAccess } from "../src/utils/permissions.js";
 
 const ORG_ID = 7;
 const ACTOR = "aaaaaaaa-0000-4000-8000-000000000001";
-const CLAIMANT = "aaaaaaaa-0000-4000-8000-000000000002";
+const EMPLOYEE = "aaaaaaaa-0000-4000-8000-000000000002";
 const CLAIM = "aaaaaaaa-0000-4000-8000-000000000003";
-const EMPLOYEE = { uuid: CLAIMANT, full_name: "Ayesha" };
+const EXPENSE_MIGRATION = readFileSync(
+  "migrations/20261226_expense_permissions_payroll_safety.sql",
+  "utf8",
+);
 
-/** A DB router shaped for the claim path. */
-function installDb({ claimAmount = "1000.00" } = {}) {
-  const route = (sql) => {
-    const s = String(sql);
-    /*
-     * Order matters: the generic `SELECT` catch-all comes LAST, and the
-     * employee-roster query is matched explicitly. A catch-all placed above it
-     * answers every SELECT, including the one that decides the claimant exists,
-     * and the failure reads as "Employee not found" on a test that was about
-     * something else entirely.
-     */
-    if (s.includes("SELECT amount FROM expense_claims")) return [[{ amount: claimAmount }]];
-    if (s.includes("uuid, full_name") && s.includes("FROM employees")) {
-      return [[{ ...EMPLOYEE, status: "current_employee" }]];
+function installDb() {
+  const query = async (sql, params = []) => {
+    const text = String(sql);
+    if (text.includes("FROM employees")) {
+      return [[{ uuid: EMPLOYEE, full_name: "Ayesha", status: "current_employee" }]];
     }
-    if (s.includes("INSERT INTO expense_claims")) return [{ insertId: 1 }];
-    // createClaim finishes by re-reading the row it just wrote.
-    if (s.includes("FROM expense_claims")) {
-      return [[{
+    if (text.includes("FROM expense_claims") && text.includes("SELECT *")) {
+      return h.claim ? [[{ ...h.claim }]] : [[]];
+    }
+    if (text.includes("FROM salary_records") && text.includes("employee_uuid=? AND year=?")) {
+      const month = Number(params[3]);
+      const year = Number(params[2]);
+      return [h.payrollPeriods.has(`${year}-${month}`) ? [{ uuid: "existing" }] : []];
+    }
+    if (text.includes("FROM salary_records") && text.includes("employee_uuid=?")) {
+      return [[{ uuid: params[0] }]];
+    }
+    if (text.includes("FROM expense_payroll_period_locks")) return [[]];
+    if (text.includes("FROM attachments")) return [[]];
+    if (text.includes("SELECT c.uuid, c.amount")) return [h.payrollClaims];
+    if (text.includes("INSERT INTO expense_claims")) {
+      h.claim = {
         uuid: CLAIM,
         organization_id: ORG_ID,
-        employee_uuid: CLAIMANT,
+        employee_uuid: EMPLOYEE,
         employee_name: "Ayesha",
-        expense_name: "Taxi to client visit",
-        amount: claimAmount,
+        expense_name: "Taxi",
+        amount: "1000.00",
         expense_date: "2026-09-10",
         description: null,
         status: "pending",
         payment_mode: "payroll",
-      }]];
+        auto_approved: 0,
+        created_by: ACTOR,
+      };
+      return [{ insertId: 1 }];
     }
-    return [{}];
+    if (text.startsWith("UPDATE expense_claims")) {
+      const isPayrollPayment = text.includes("paid_via_salary_record_uuid");
+      if (text.includes("status='pending'") && h.claim?.status !== "pending") {
+        return [{ affectedRows: 0 }];
+      }
+      if (text.includes("SET status='approved'")) {
+        h.claim.status = "approved";
+        h.claim.auto_approved = 1;
+        h.claim.auto_approved_by_uuid = params[0];
+        h.claim.reviewed_by_uuid = params[1];
+        h.claim.reimbursement_month = params[2];
+        h.claim.reimbursement_year = params[3];
+      } else if (text.includes("SET status=?")) {
+        h.claim.status = params[0];
+        h.claim.payment_mode = params[1];
+        h.claim.rejection_reason = params[3];
+      } else if (isPayrollPayment) {
+        h.claim.status = "paid";
+        h.claim.paid_via_salary_record_uuid = params[1];
+      }
+      return [{ affectedRows: 1 }];
+    }
+    return [[]];
   };
-  h.conn.query.mockImplementation(async (sql) => route(sql));
-  pool.query.mockImplementation(async (sql) => route(sql));
-  pool.getConnection.mockResolvedValue(h.conn);
+  h.conn.query.mockImplementation(query);
+  pool.query.mockImplementation(query);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.payrollPeriods = new Set();
+  h.payrollClaims = [];
+  h.claim = {
+    uuid: CLAIM,
+    organization_id: ORG_ID,
+    employee_uuid: EMPLOYEE,
+    employee_name: "Ayesha",
+    expense_name: "Taxi",
+    amount: "1000.00",
+    expense_date: "2026-09-10",
+    description: null,
+    status: "pending",
+    payment_mode: "payroll",
+    auto_approved: 0,
+    created_by: ACTOR,
+  };
   installDb();
 });
 
-describe("autoApproveClaim — the rules the shortcut cannot bypass", () => {
-  it("refuses when the account cannot approve claims, and records the refusal", async () => {
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      canApproveExpenses: false,
-      conn: h.conn,
-    });
-
-    expect(refusal).toMatch(/approve_expenses/);
-    // NOT approved. The update must not have run.
-    const sql = h.conn.query.mock.calls.map(([s]) => String(s)).join("\n");
-    expect(sql).not.toContain("status='approved'");
+describe("independent Sub Admin expense permissions", () => {
+  it("defaults both capabilities off and does not infer one from the other", () => {
+    const defaults = parseFeatureAccess(null);
+    expect(defaults.create_expenses).toBe(false);
+    expect(defaults.approve_expenses).toBe(false);
+    expect(hasPermission({ org_role: "sub_admin", feature_access: { create_expenses: true } }, "create_expenses")).toBe(true);
+    expect(hasPermission({ org_role: "sub_admin", feature_access: { create_expenses: true } }, "approve_expenses")).toBe(false);
+    expect(hasPermission({ org_role: "sub_admin", feature_access: { approve_expenses: true } }, "create_expenses")).toBe(false);
   });
 
-  it("refuses self-approval even for an authorized approver", async () => {
-    // The authority is present. The ONLY thing standing between this and an
-    // approval is that the claimant and the actor are the same person - which is
-    // the rule the requirement says is NOT bypassed.
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: CLAIMANT,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      canApproveExpenses: true,
-      conn: h.conn,
+  describe("expense payment migration contract", () => {
+    it("backfills paid claims and prevents duplicate or cross-tenant payment links", () => {
+      expect(EXPENSE_MIGRATION).toContain("INSERT INTO expense_claim_payments");
+      expect(EXPENSE_MIGRATION).toContain("WHERE c.status = 'paid'");
+      expect(EXPENSE_MIGRATION).toContain("UNIQUE KEY uk_expense_claim_payments_claim (claim_uuid)");
+      expect(EXPENSE_MIGRATION).toContain("FOREIGN KEY (organization_id, claim_uuid, employee_uuid)");
+      expect(EXPENSE_MIGRATION).toContain("FOREIGN KEY (organization_id, salary_record_uuid, employee_uuid)");
+      expect(EXPENSE_MIGRATION).not.toMatch(/DROP\s+TABLE/i);
     });
-
-    expect(refusal).toMatch(/person it reimburses/i);
-  });
-
-  it("approves, and records WHO approved and that the shortcut was used", async () => {
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      canApproveExpenses: true,
-      conn: h.conn,
-    });
-
-    expect(refusal).toBeNull();
-    const updated = h.conn.query.mock.calls.find(([s]) => String(s).includes("status='approved'"));
-    expect(updated).toBeDefined();
-    const [sql, params] = updated;
-    // The actor, in BOTH columns: the reviewed_by column every existing reader
-    // already understands, and the auto_approved_by column that records the
-    // shortcut. Without the second, "how many claims skipped review?" has no
-    // answer anywhere in the database.
-    expect(sql).toContain("auto_approved=1");
-    expect(sql).toContain("auto_approved_by_uuid");
-    expect(sql).toContain("reviewed_by_uuid=?");
-    expect(params).toContain(ACTOR);
-  });
-
-  it("keeps the status guard, so a concurrent manual decision is not overwritten", async () => {
-    await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: CLAIM,
-      canApproveExpenses: true,
-      conn: h.conn,
-    });
-
-    const updated = h.conn.query.mock.calls.find(([s]) => String(s).includes("status='approved'"));
-    // The same guard reviewClaim uses. Two people acting at once must not both
-    // win, and the loser's write must match zero rows.
-    expect(String(updated[0])).toContain("status='pending'");
   });
 });
 
-describe("feature_access — the permission the shortcut is gated on", () => {
-  it("is NOT granted by default", () => {
-    // TRUE_BY_DEFAULT covers attendance, leave and payroll. Approving expenses is
-    // not one of them, which is what makes the permission check meaningful: a
-    // sub_admin with no explicit grant cannot auto-approve.
-    const map = parseFeatureAccess(null);
-    expect(map.approve_expenses).toBe(false);
+describe("Sub Admin own-claim approval bypass", () => {
+  it("approves as part of the create transaction and records the actor", async () => {
+    const claim = await approveOwnClaim({
+      orgId: ORG_ID,
+      actorUuid: ACTOR,
+      claimUuid: CLAIM,
+      conn: h.conn,
+    });
+
+    expect(claim.status).toBe("approved");
+    const update = h.conn.query.mock.calls.find(([sql]) => String(sql).includes("SET status='approved'"));
+    expect(update[0]).toContain("auto_approved=1");
+    expect(update[0]).toContain("auto_approved_by_uuid");
+    expect(update[1]).toContain(ACTOR);
+    expect(update[0]).toContain("status='pending'");
   });
 
-  it("is granted when explicitly set, which is what a delegated reviewer has", () => {
-    const map = parseFeatureAccess(JSON.stringify({ approve_expenses: true }));
-    expect(map.approve_expenses).toBe(true);
+  it("assigns an already-generated payroll period to the next eligible month", async () => {
+    h.payrollPeriods.add("2026-9");
+    await approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn });
+    expect(h.claim.reimbursement_year).toBe(2026);
+    expect(h.claim.reimbursement_month).toBe(10);
+  });
+
+  it("rejects duplicate/concurrent approval after the first state transition", async () => {
+    await approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn });
+    await expect(
+      approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("allows only one of two concurrent approvals to win", async () => {
+    const results = await Promise.allSettled([
+      approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn }),
+      approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
 });
 
-describe("createClaim — still files the claim whatever the shortcut does", () => {
-  it("creates a PENDING claim, which is the path the auto-approval upgrades", async () => {
+describe("expense workflow and payroll eligibility", () => {
+  it("creates claims pending, while a rejection leaves them out of payroll", async () => {
+    h.claim = null;
     await createClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      expenseName: "Taxi to client visit",
+      employeeUuid: EMPLOYEE,
+      expenseName: "Taxi",
       amount: 1000,
       expenseDate: "2026-09-10",
       conn: h.conn,
     });
-
-    const inserted = h.conn.query.mock.calls.find(([s]) => String(s).includes("INSERT INTO expense_claims"));
-    expect(inserted).toBeDefined();
-    expect(String(inserted[0])).toContain("'pending'");
-    // The claim is free text now: the insert names the expense, and carries no
-    // category reference.
-    expect(String(inserted[0])).toContain("expense_name");
-    expect(String(inserted[0])).not.toContain("category_uuid");
-    // No auto-approval columns on the insert path: the claim is filed as pending
-    // and the shortcut is a decision made afterwards, not a column set at birth.
-    expect(String(inserted[0])).not.toContain("auto_approved");
-  });
-
-  it("is independent of the auto-approve decision, so a refusal cannot unfile it", async () => {
-    // The order the controller uses: create, then attempt the decision. A claim
-    // that refused the shortcut is still a claim that exists.
-    const claim = await createClaim({
+    expect(h.claim.status).toBe("pending");
+    const rejected = await reviewClaim({
       orgId: ORG_ID,
       actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      expenseName: "Taxi to client visit",
-      amount: 1000,
-      expenseDate: "2026-09-10",
+      claimUuid: CLAIM,
+      decision: "rejected",
+      rejectionReason: "Receipt details are missing",
       conn: h.conn,
     });
-
-    const refusal = await autoApproveClaim({
-      orgId: ORG_ID,
-      actorUuid: ACTOR,
-      employeeUuid: CLAIMANT,
-      claimUuid: claim.uuid,
-      canApproveExpenses: false,
-      conn: h.conn,
-    });
-
-    expect(refusal).toBeTruthy();
-    // The insert ran and was never rolled back.
-    const inserted = h.conn.query.mock.calls.some(([s]) => String(s).includes("INSERT INTO expense_claims"));
-    expect(inserted).toBe(true);
+    expect(rejected.status).toBe("rejected");
+    expect(h.conn.query.mock.calls.some(([sql]) => String(sql).includes("expense_claim_payments"))).toBe(false);
   });
-});
 
-describe("attachReceipts — the org scoping the receipt follows", () => {
-  it("scopes to the expense_claim entity, not a generic attachment", async () => {
-    // The constant every receipt path scopes by.
-    expect(ATTACHMENT_ENTITY.CLAIM).toBe("expense_claim");
+  it("feeds only approved claims assigned to the payroll period", async () => {
+    h.payrollClaims = [{
+      uuid: CLAIM,
+      amount: "1000.00",
+      expense_date: "2026-09-10",
+      expense_name: "Taxi",
+    }];
+    const claims = await getApprovedClaimsForPeriod({
+      orgId: ORG_ID,
+      employeeUuid: EMPLOYEE,
+      month: 9,
+      year: 2026,
+      conn: h.conn,
+    });
+    expect(claims).toHaveLength(1);
+    const query = h.conn.query.mock.calls.find(([sql]) => String(sql).includes("SELECT c.uuid, c.amount"));
+    expect(query[0]).toContain("status = 'approved'");
+    expect(query[0]).toContain("COALESCE(c.reimbursement_year, c.expense_year)");
+    expect(query[0]).toContain("<= ?");
+    expect(query[1]).toEqual([ORG_ID, EMPLOYEE, 2026, 2026, 9]);
+    expect(expenseReimbursementLine(claims).amount).toBe(1000);
+  });
+
+  it("excludes pending claims and scopes payroll candidates by tenant", async () => {
+    h.payrollClaims = [];
+    const claims = await getApprovedClaimsForPeriod({
+      orgId: ORG_ID,
+      employeeUuid: EMPLOYEE,
+      month: 9,
+      year: 2026,
+      conn: h.conn,
+    });
+    expect(claims).toEqual([]);
+    const query = h.conn.query.mock.calls.find(([sql]) => String(sql).includes("SELECT c.uuid, c.amount"));
+    expect(query[0]).toContain("c.status = 'approved'");
+    expect(query[1][0]).toBe(ORG_ID);
+    expect(query[1][1]).toBe(EMPLOYEE);
+  });
+
+  it("writes exactly one payment history record when payroll consumes a claim", async () => {
+    h.claim.status = "approved";
+    await markClaimsPaidByPayroll({
+      conn: h.conn,
+      orgId: ORG_ID,
+      salaryRecordUuid: "bbbbbbbb-0000-4000-8000-000000000001",
+      claims: [{ uuid: CLAIM }],
+      performedByUuid: ACTOR,
+    });
+    expect(h.claim.status).toBe("paid");
+    expect(h.conn.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO expense_claim_payments"))).toBe(true);
+    await expect(markClaimsPaidByPayroll({
+      conn: h.conn,
+      orgId: ORG_ID,
+      salaryRecordUuid: "bbbbbbbb-0000-4000-8000-000000000002",
+      claims: [{ uuid: CLAIM }],
+    })).rejects.toMatchObject({ statusCode: 409 });
   });
 });

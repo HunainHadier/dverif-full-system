@@ -35,14 +35,20 @@ const ORG_ROUTES = readFileSync("src/routes/org.routes.js", "utf8");
 const REQUIRE_ROLE = readFileSync("src/middleware/requireRole.js", "utf8");
 const REQUIRE_PERMISSION_MW = readFileSync("src/middleware/requirePermission.js", "utf8");
 
-/** The four permissions this audit added. */
-const MODULE_PERMISSIONS = ["hr_letters", "manage_assets", "manage_separation", "approve_expenses"];
+/** The delegated module permissions, including independent expense capabilities. */
+const MODULE_PERMISSIONS = [
+  "hr_letters",
+  "manage_assets",
+  "manage_separation",
+  "approve_expenses",
+  "create_expenses",
+];
 
 /** The self-service keys that predate this work. */
 const SELF_SERVICE = ["attendance", "leave", "payroll"];
 
 describe("PERMISSION_KEYS lists every delegatable permission", () => {
-  it("includes all four HR-module permissions", () => {
+  it("includes the delegated module and expense permissions", () => {
     for (const key of MODULE_PERMISSIONS) {
       expect(PERMISSION_KEYS, `${key} missing`).toContain(key);
     }
@@ -99,6 +105,15 @@ describe("hasPermission honours an explicit grant over the default", () => {
     for (const key of MODULE_PERMISSIONS.filter((k) => k !== "manage_separation")) {
       expect(hasPermission(u, key), `${key} leaked`).toBe(false);
     }
+  });
+
+  it("keeps create and approve expense grants independent", () => {
+    const createOnly = { org_role: "sub_admin", feature_access: { create_expenses: true } };
+    const approveOnly = { org_role: "sub_admin", feature_access: { approve_expenses: true } };
+    expect(hasPermission(createOnly, "create_expenses")).toBe(true);
+    expect(hasPermission(createOnly, "approve_expenses")).toBe(false);
+    expect(hasPermission(approveOnly, "approve_expenses")).toBe(true);
+    expect(hasPermission(approveOnly, "create_expenses")).toBe(false);
   });
 
   it("an org_admin passes on the role alone, with nothing granted", () => {

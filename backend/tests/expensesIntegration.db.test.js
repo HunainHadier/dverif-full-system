@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import {
@@ -197,6 +198,16 @@ async function approvedClaim({ employeeUuid, expenseName = "Probe expense", amou
   return reviewClaim({ orgId, claimUuid: claim.uuid, decision: "approved", conn: db });
 }
 
+async function newSalaryRecord(employeeUuid, uuid = randomUUID()) {
+  await db.query(
+    `INSERT INTO salary_records
+       (uuid, employee_uuid, organization_id, month, year, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [uuid, employeeUuid, orgId, MONTH, YEAR, payrollUserId],
+  );
+  return uuid;
+}
+
 describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
   // -------------------------------------------------------------------------
   // The 20261114 change: same-day duplicates are legitimate again.
@@ -252,13 +263,14 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
   it("a payroll run settles the claims, and a SECOND run settles nothing", async () => {
     const employee = await newEmployee(orgId, "PayrollOnce");
     const claim = await approvedClaim({ employeeUuid: employee, amount: 800 });
+    const salaryRecordUuid = await newSalaryRecord(employee);
 
     const firstRun = await getApprovedClaimsForPeriod({
       orgId, employeeUuid: employee, month: MONTH, year: YEAR, conn: db,
     });
     expect(firstRun).toHaveLength(1);
     await markClaimsPaidByPayroll({
-      conn: db, orgId, salaryRecordUuid: "salary-record-1", claims: firstRun,
+      conn: db, orgId, salaryRecordUuid, claims: firstRun,
     });
 
     const secondRun = await getApprovedClaimsForPeriod({
@@ -275,7 +287,7 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
     );
     expect(rows[0].status).toBe("paid");
     // Traceable to the payslip that carried it - the evidence an audit reads.
-    expect(rows[0].paid_via_salary_record_uuid).toBe("salary-record-1");
+    expect(rows[0].paid_via_salary_record_uuid).toBe(salaryRecordUuid);
     expect(rows[0].paid_at).toBeTruthy();
   });
 
@@ -286,10 +298,13 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
       orgId, employeeUuid: employee, month: MONTH, year: YEAR, conn: db,
     });
 
-    await markClaimsPaidByPayroll({ conn: db, orgId, salaryRecordUuid: "run-a", claims });
+    const firstRecord = await newSalaryRecord(employee);
+    await markClaimsPaidByPayroll({ conn: db, orgId, salaryRecordUuid: firstRecord, claims });
     // A caller holding a stale claim list (two payroll runs racing, or a retry that
     // reused an old payload) must not be able to settle it again.
-    await markClaimsPaidByPayroll({ conn: db, orgId, salaryRecordUuid: "run-b", claims });
+    await expect(
+      markClaimsPaidByPayroll({ conn: db, orgId, salaryRecordUuid: randomUUID(), claims }),
+    ).rejects.toMatchObject({ statusCode: 409 });
 
     const [rows] = await db.query(
       "SELECT status, paid_via_salary_record_uuid FROM expense_claims WHERE uuid=?",
@@ -297,7 +312,7 @@ describe.runIf(HAS_DB)("an expense claim is reimbursed exactly once", () => {
     );
     // The second run matched zero rows: run-b does not overwrite run-a.
     expect(rows[0].status).toBe("paid");
-    expect(rows[0].paid_via_salary_record_uuid).toBe("run-a");
+    expect(rows[0].paid_via_salary_record_uuid).toBe(firstRecord);
   });
 
   it("a paid claim can never be settled again, by hand or in bulk", async () => {
@@ -663,7 +678,7 @@ describe.runIf(HAS_DB)("payroll carries approved claims onto the payslip and con
     expect(Number(unpaid[0].n)).toBe(0);
   });
 
-  it("a REGENERATED period does not pay the claim a second time", async () => {
+  it("a period with a paid claim cannot be regenerated or lose its payment history", async () => {
     const employee = await newPaidEmployee("Regenerated");
     const claim = await approvedClaim({ employeeUuid: employee, amount: 900 });
 
@@ -677,23 +692,20 @@ describe.runIf(HAS_DB)("payroll carries approved claims onto the payslip and con
     // Regenerate rewrites the period from scratch, which is the scenario most likely
     // to double-pay: it deletes and recreates every line, so a naive implementation
     // would re-read the claims. They are 'paid' now, so there is nothing to re-read.
-    const second = fakeRes();
-    await generatePayroll(
+    await expect(generatePayroll(
       {
         scopeOrgId: orgId,
         body: { month: MONTH, year: YEAR, employee_uuids: [employee], regenerate: true },
         user: { id: payrollUserId },
       },
-      second,
-    );
-    expect(second.sent.body.data.expense_claims_paid).toBe(0);
+      fakeRes(),
+    )).rejects.toMatchObject({ statusCode: 409 });
 
     const [lines] = await db.query(
       "SELECT amount FROM salary_record_lines WHERE employee_uuid=? AND source='auto_expense'",
       [employee],
     );
-    // The payslip keeps the reimbursement, because the money really was paid once -
-    // but only the ONE run's worth exists.
+    // The original payslip and paid-claim link stay untouched.
     expect(lines).toHaveLength(1);
     expect(Number(lines[0].amount)).toBe(900);
 
@@ -726,13 +738,14 @@ describe.runIf(HAS_DB)("payroll carries approved claims onto the payslip and con
      * suite, and a test that damages unrelated tests is worse than no test. A
      * rollback needs no broken schema to be meaningful.
      */
+    const salaryRecordUuid = await newSalaryRecord(employee);
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       await markClaimsPaidByPayroll({
         conn,
         orgId,
-        salaryRecordUuid: "record-that-will-not-exist",
+        salaryRecordUuid,
         claims: [{ uuid: claim.uuid, amount: 700 }],
       });
 
@@ -827,5 +840,30 @@ describe.runIf(HAS_DB)("payroll carries approved claims onto the payslip and con
     expect(res.sent.body.data.expense_claims_paid).toBe(0);
     const [rows] = await db.query("SELECT status FROM expense_claims WHERE employee_uuid=?", [employee]);
     expect(rows[0].status).toBe("approved");
+  });
+
+  it("approval after the expense-period payroll is generated carries into the next period", async () => {
+    const employee = await newEmployee(orgId, "LateApproval");
+    await newSalaryRecord(employee);
+    const claim = await approvedClaim({ employeeUuid: employee, amount: 550 });
+
+    expect(Number(claim.reimbursement_year)).toBe(YEAR);
+    expect(Number(claim.reimbursement_month)).toBe(MONTH + 1);
+    const originalPeriod = await getApprovedClaimsForPeriod({
+      orgId,
+      employeeUuid: employee,
+      month: MONTH,
+      year: YEAR,
+      conn: db,
+    });
+    const nextPeriod = await getApprovedClaimsForPeriod({
+      orgId,
+      employeeUuid: employee,
+      month: MONTH + 1,
+      year: YEAR,
+      conn: db,
+    });
+    expect(originalPeriod).toHaveLength(0);
+    expect(nextPeriod.map((entry) => entry.uuid)).toContain(claim.uuid);
   });
 });

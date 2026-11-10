@@ -8,7 +8,7 @@ vi.mock("../src/services/expenses.service.js", () => ({
   getApprovedClaimsForPeriod: vi.fn().mockResolvedValue([]),
   expenseReimbursementLine: vi.fn().mockReturnValue(null),
   markClaimsPaidByPayroll: vi.fn().mockResolvedValue(undefined),
-  repointClaimsPaidByPayroll: vi.fn().mockResolvedValue(undefined),
+  assertNoExpensePaymentsForSalaryRecords: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../src/services/notificationEmail.service.js", () => ({

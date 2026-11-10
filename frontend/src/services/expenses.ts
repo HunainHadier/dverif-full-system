@@ -58,6 +58,7 @@ export type ExpenseClaim = {
   /** Non-null once payroll has carried it, so the payslip can be traced back. */
   paid_via_salary_record_uuid: string | null;
   payment_reference: string | null;
+  created_by: UUID | null;
   created_at: string;
   receipt_count: number;
 };
@@ -239,22 +240,17 @@ export const myExpensesService = {
   /**
    * File one of MY claims.
    *
-   * `auto_approve` is a REQUEST, not an instruction — the server resolves the
-   * approve_expenses permission from the session, not from this field, so a
-   * client that sends it without the authority gets a pending claim rather than an
-   * approved one. The response carries `auto_approve_refusal` when that happens,
-   * which the form shows as a warning instead of an error: the claim itself was
-   * filed either way.
+   * Approval behavior is determined by the authenticated role and server-side
+   * feature permissions, never by client-supplied approval flags.
    */
   create: (data: {
     expense_name: string;
     amount: number;
     expense_date: string;
     description?: string;
-    auto_approve?: boolean;
   }) =>
     api
-      .post<{ claim: ExpenseClaim & { auto_approve_refusal?: string | null } }>("/my/expenses", data)
+      .post<{ claim: ExpenseClaim }>("/my/expenses", data)
       .then((r) => r.data.claim),
 
   /**

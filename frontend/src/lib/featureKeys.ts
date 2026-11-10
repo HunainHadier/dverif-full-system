@@ -11,8 +11,9 @@
  * is silent: a sub-admin whose permission was granted finds the module invisible, and
  * nothing says why.
  *
- * It was felt while adding the four HR-module keys (hr_letters, manage_assets,
- * manage_separation, approve_expenses). TypeScript immediately rejected
+ * It was felt while adding the HR-module keys (hr_letters, manage_assets,
+ * manage_separation, approve_expenses) and the separate create_expenses capability.
+ * TypeScript immediately rejected
  * `FeatureKey` indexing three objects that did not have those properties, which is
  * the compiler correctly reporting that "two sources of truth" was really five.
  *
@@ -46,6 +47,7 @@ export const FEATURE_KEYS = [
   "manage_separation",
   "approve_expenses",
   "manage_recruitment",
+  "create_expenses",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];

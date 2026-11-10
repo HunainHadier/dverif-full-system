@@ -19,9 +19,8 @@ import type { FeatureKey } from "@/lib/routeAccess";
  * `feature` appears here. A key added to the backend and not to this file fails that
  * test rather than being quietly unavailable at runtime.
  *
- * The four HR-module keys were missing here, which meant a sub-admin could not be
- * granted them through the UI at all — the permission existed on the server and was
- * simply unreachable from the screen an org admin uses to grant it.
+ * The HR-module keys and expense-creation permission must all be labelled here,
+ * otherwise a sub-admin denied one sees "undefined" in the access message.
  */
 export type OrgFeatureKey = FeatureKey;
 
@@ -36,6 +35,7 @@ const FEATURE_LABEL: Record<OrgFeatureKey, string> = {
   manage_assets: "Assets",
   manage_separation: "Offboarding",
   approve_expenses: "Expense Approvals",
+  create_expenses: "Create Expense",
   manage_recruitment: "Recruitment",
 };
 

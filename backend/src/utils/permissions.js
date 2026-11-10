@@ -7,8 +7,9 @@ import ApiError from "./ApiError.js";
  * are APPENDED rather than inserted, or those tests fail on a reorder that changed
  * nothing.
  *
- * The four HR-module keys (hr_letters, manage_assets, manage_separation,
- * approve_expenses) exist because those modules were staff-open to EVERY sub-admin
+ * The HR-module keys (hr_letters, manage_assets, manage_separation,
+ * approve_expenses) and the separate create_expenses capability exist because
+ * those modules were staff-open to EVERY sub-admin
  * regardless of feature_access: the role gate said "staff" and nothing said otherwise,
  * so a sub-admin holding none of these saw every one of them. That is delegation with
  * no dial on it.
@@ -43,6 +44,7 @@ export const PERMISSION_KEYS = [
   "manage_separation",
   "approve_expenses",
   "manage_recruitment",
+  "create_expenses",
 ];
 
 /**

@@ -62,6 +62,8 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
 function MyExpensesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const perms = usePermissions();
+  const canCreateClaim = perms.isEmployee || (perms.isSubAdmin && perms.create_expenses);
   const [open, setOpen] = useState(false);
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
 
@@ -152,12 +154,12 @@ function MyExpensesPage() {
         <PageHeader
           title={t("myExpenses.title")}
           description={t("myExpenses.description")}
-          actions={
+          actions={canCreateClaim ? (
             <Button onClick={() => setOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               {t("myExpenses.fileClaim")}
             </Button>
-          }
+          ) : null}
         />
 
         <DataTable
@@ -170,7 +172,9 @@ function MyExpensesPage() {
         />
       </div>
 
-      <NewClaimDialog open={open} onOpenChange={setOpen} onFiled={invalidate} />
+      {canCreateClaim ? (
+        <NewClaimDialog open={open} onOpenChange={setOpen} onFiled={invalidate} />
+      ) : null}
 
       <MyClaimDialog
         uuid={detailUuid}
@@ -203,7 +207,6 @@ function NewClaimDialog({
 }) {
   const { t } = useTranslation();
   const today = new Date().toISOString().slice(0, 10);
-  const perms = usePermissions();
 
   const form = useForm<ClaimForm>({
     defaultValues: {
@@ -222,17 +225,6 @@ function NewClaimDialog({
    * each with its own amount and its own review.
    */
   const [receipt, setReceipt] = useState<File | null>(null);
-  /**
-   * The auto-approve checkbox.
-   *
-   * ENABLED ONLY FOR A ROLE THE SERVER AGREES CAN APPROVE, and that is the point
-   * of the rest of this block: the checkbox is a visibility rule, never the gate.
-   * The server resolves the same permission from the session, so an account that
-   * cannot approve gets a pending claim even if it posts the flag by hand.
-   */
-  const [autoApprove, setAutoApprove] = useState(false);
-  const canApproveExpenses = perms.isOrgAdmin || perms.approve_expenses === true;
-
   // Reset on the closed -> open transition, so a claim started and abandoned does
   // not leave stale amounts behind for the next one.
   const wasOpen = useRef(false);
@@ -245,7 +237,6 @@ function NewClaimDialog({
         description: "",
       });
       setReceipt(null);
-      setAutoApprove(false);
     }
     wasOpen.current = open;
   }, [open, reset, today]);
@@ -282,7 +273,6 @@ function NewClaimDialog({
         amount: Number(values.amount),
         expense_date: values.expense_date,
         description: values.description.trim() || undefined,
-        auto_approve: autoApprove || undefined,
       });
 
       if (receipt) {
@@ -298,14 +288,7 @@ function NewClaimDialog({
     onSuccess: (result) => {
       onFiled();
       onOpenChange(false);
-      /*
-       * A REFUSED AUTO-APPROVAL IS NOT A FAILED SUBMISSION. The claim is filed
-       * and pending; saying otherwise would have the employee try again and file
-       * a second claim. The reason is surfaced as the warning it is.
-       */
-      if (result.claim.auto_approve_refusal) {
-        toast.warning(result.claim.auto_approve_refusal);
-      } else if (result.receiptAttached === false) {
+      if (result.receiptAttached === false) {
         toast.warning(
           `${t("myExpenses.filedToast")} ${t("myExpenses.receiptAttachFailed")}`,
         );
@@ -400,31 +383,6 @@ function NewClaimDialog({
        * checkbox is for. An employee who never sees it gets a pending claim, and
        * an account that posts the flag by hand gets the same thing.
        */}
-      {canApproveExpenses ? (
-        <label className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
-          <input
-            type="checkbox"
-            checked={autoApprove}
-            onChange={(e) => setAutoApprove(e.target.checked)}
-            disabled={submit.isPending}
-            className="mt-0.5"
-          />
-          <span>
-            <span className="font-medium">{t("expenses.autoApproveLabel", "Auto-approve this claim upon submission")}</span>
-            <span className="block text-xs text-muted-foreground">
-              {t("expenses.autoApproveHint", "Skips the approval queue. The approver, time and the fact that review was skipped are all recorded.")}
-            </span>
-            {/*
-             * STATED WHERE IT APPLIES, not buried in a policy document. A person
-             * approving a claim that reimburses them is the self-approval the
-             * module refuses, and the shortcut does not become a way around it.
-             */}
-            <span className="block text-xs text-muted-foreground">
-              {t("expenses.autoApproveSelfExcluded", "Not available for a claim that reimburses yourself.")}
-            </span>
-          </span>
-        </label>
-      ) : null}
     </FormDialog>
   );
 }

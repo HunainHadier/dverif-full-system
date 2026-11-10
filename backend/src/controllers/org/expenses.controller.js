@@ -4,6 +4,7 @@ import { ok, created } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
+import { hasPermission } from "../../utils/permissions.js";
 import {
   listClaims,
   getClaim,
@@ -14,7 +15,7 @@ import {
   reviewClaim,
   markClaimPaid,
   bulkMarkClaimsPaid,
-  autoApproveClaim,
+  approveOwnClaim,
   ATTACHMENT_ENTITY,
 } from "../../services/expenses.service.js";
 
@@ -75,6 +76,17 @@ export async function getExpenseClaim(req, res) {
 }
 
 export async function reviewExpenseClaim(req, res) {
+  const isSubAdmin = req.user?.org_role === "sub_admin";
+  if (isSubAdmin && !hasPermission(req.user, "approve_expenses")) {
+    throw new ApiError(403, "You do not have the 'approve_expenses' permission");
+  }
+  if (isSubAdmin) {
+    const employee = await callerEmployee(req.scopeOrgId, req);
+    const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+    if (employee && employee.uuid === claim.employee_uuid) {
+      throw new ApiError(403, "A sub-admin cannot approve or reject their own expense claim");
+    }
+  }
   const claim = await reviewClaim({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -205,6 +217,13 @@ export async function myExpenseClaims(req, res) {
 
 export async function submitMyExpenseClaim(req, res) {
   const orgId = req.scopeOrgId ?? req.user?.organization;
+  const isSubAdmin = req.user?.org_role === "sub_admin";
+  if (!["employee", "org_admin", "sub_admin"].includes(req.user?.org_role)) {
+    throw new ApiError(403, "This account cannot create an employee expense claim");
+  }
+  if (isSubAdmin && !hasPermission(req.user, "create_expenses")) {
+    throw new ApiError(403, "You do not have the 'create_expenses' permission");
+  }
   const employee = await callerEmployee(orgId, req);
   if (!employee) {
     throw new ApiError(
@@ -216,40 +235,38 @@ export async function submitMyExpenseClaim(req, res) {
   // employee_uuid is NOT read from the body. It is the caller's own row, always.
   // Accepting it would let anyone file a claim against a colleague and have the
   // company reimburse them.
-  const claim = await createClaim({
-    orgId,
-    actorUuid: req.user?.uuid ?? null,
-    employeeUuid: employee.uuid,
-    expenseName: req.body?.expense_name,
-    amount: req.body?.amount,
-    expenseDate: req.body?.expense_date,
-    description: req.body?.description,
-    paymentMode: req.body?.payment_mode,
-  });
-
-  /*
-   * AUTO-APPROVAL, requested by the caller.
-   *
-   * Whether it is HONORED is not this function's decision and not the checkbox's.
-   * `autoApproveClaim` applies the three rules - approve_expenses authority, no
-   * self-approval, and that the claim is still pending - and returns a reason when
-   * it refuses.
-   *
-   * A REFUSAL IS NOT AN ERROR. The claim has already been filed by the time this
-   * runs, and the whole point of the design is that it stays filed: an employee
-   * who ticked a box they cannot act on should not lose their claim, they should
-   * get a pending one. That is why the reason is surfaced as a warning on the
-   * response rather than thrown, and why nothing here rolls anything back.
-   */
-  const autoApproveRefusal = await autoApproveClaim({
-    orgId,
-    actorUuid: req.user?.uuid ?? null,
-    employeeUuid: employee.uuid,
-    claimUuid: claim.uuid,
-    // Read from the request, never from the body. An account that cannot approve
-    // claims must not be able to word itself into being able to by sending a flag.
-    canApproveExpenses: Boolean(req.canApproveExpenses),
-  });
+  const conn = await pool.getConnection();
+  let claimUuid;
+  try {
+    await conn.beginTransaction();
+    const claim = await createClaim({
+      orgId,
+      actorUuid: req.user?.uuid ?? null,
+      employeeUuid: employee.uuid,
+      expenseName: req.body?.expense_name,
+      amount: req.body?.amount,
+      expenseDate: req.body?.expense_date,
+      description: req.body?.description,
+      paymentMode: req.body?.payment_mode,
+      conn,
+    });
+    claimUuid = claim.uuid;
+    if (isSubAdmin) {
+      await approveOwnClaim({
+        orgId,
+        actorUuid: req.user?.uuid ?? null,
+        claimUuid,
+        conn,
+      });
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+  const claim = await getClaim({ orgId, claimUuid });
 
   logAudit({
     ...getActorFromReq(req),
@@ -259,13 +276,23 @@ export async function submitMyExpenseClaim(req, res) {
     details: {
       amount: claim.amount,
       expense_date: claim.expense_date,
-      auto_approve_requested: Boolean(req.body?.auto_approve),
-      auto_approve_refusal: autoApproveRefusal,
+      status: claim.status,
+      approval_bypassed: isSubAdmin,
     },
     req,
   });
+  if (isSubAdmin) {
+    logAudit({
+      ...getActorFromReq(req),
+      action: "expense_claim.auto_approved_own",
+      entityType: ATTACHMENT_ENTITY.CLAIM,
+      entityId: claim.uuid,
+      details: { amount: claim.amount, payment_mode: claim.payment_mode },
+      req,
+    });
+  }
 
-  return created(res, { claim, auto_approve_refusal: autoApproveRefusal }, "Expense claim submitted");
+  return created(res, { claim }, "Expense claim submitted");
 }
 
 export async function myExpenseClaimDetail(req, res) {

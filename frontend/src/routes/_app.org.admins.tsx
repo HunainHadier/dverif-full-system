@@ -115,8 +115,13 @@ const ELEVATED_PERMISSIONS: { key: ElevatedKey; label: string; description: stri
   },
   {
     key: "approve_expenses",
-    label: "Expense Approvals",
-    description: "Review expense claims and settle reimbursements",
+    label: "Approve Employee Expenses",
+    description: "Review and settle expense claims filed by employees or other sub-admins",
+  },
+  {
+    key: "create_expenses",
+    label: "Create Expense",
+    description: "File your own expense claims; your claims are approved automatically",
   },
   {
     key: "manage_recruitment",

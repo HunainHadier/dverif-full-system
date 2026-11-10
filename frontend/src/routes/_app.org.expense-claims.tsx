@@ -21,6 +21,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { PageHeader } from "@/components/common/PageHeader";
+import { useAuth } from "@/lib/auth";
 
 import {
   CLAIM_STATUS_VARIANT,
@@ -88,6 +89,7 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
  */
 function ExpenseClaimsPage() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [fromDate, setFromDate] = useState("");
@@ -242,7 +244,9 @@ function ExpenseClaimsPage() {
             <Eye className="h-4 w-4" />
           </Button>
 
-          {r.status === "pending" ? (
+          {r.status === "pending" &&
+          !(user?.org_role === "sub_admin" && r.employee_uuid === user.uuid) &&
+          !(user?.org_role === "sub_admin" && r.created_by === user.uuid) ? (
             <>
               <Button
                 variant="ghost"

@@ -53,9 +53,10 @@ export type OrgRole = "org_admin" | "sub_admin" | "employee";
  *
  * DEFAULT-DENY, and the split is deliberate: attendance/leave/payroll are an
  * employee's own self-service and default to granted, whereas hr_letters,
- * manage_assets, manage_separation and approve_expenses let someone attest to a
- * third party about another person's employment, spend the company's money, or end a
- * job. Those four did not exist at all until this change — every one of those modules
+ * manage_assets, manage_separation, approve_expenses and create_expenses let someone
+ * attest to another person's employment, spend the company's money, or file claims.
+ * Those keys default to denied, preventing permissionless access to these modules.
+ * Before these permissions existed, each of those modules
  * was reachable by any sub-admin regardless of feature_access — so default-deny is
  * the only defensible starting point for them.
  */
