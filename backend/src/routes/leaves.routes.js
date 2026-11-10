@@ -8,6 +8,7 @@ import { createLeaveLimiter } from "../middleware/rateLimiter.js";
 import {
   createLeave,
   decideLeave,
+  cancelLeave,
   myLeaveBalances,
   myLeaveCalendar,
   myLeaves,
@@ -23,6 +24,7 @@ const router = Router();
 const employeesOnly = [requireRole("employee"), requireActiveSubscription, requireModuleFeature("leave_management")];
 // Approve/reject is shared staff access.
 const staff = [requireRole("org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
+const leaveParticipants = [requireRole("employee", "org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
 
 router.use(authUser);
 
@@ -34,5 +36,6 @@ router.post("/", employeesOnly, createLeaveLimiter, asyncHandler(createLeave));
 
 // Leave decision: org_admin or sub_admin may approve/reject.
 router.patch("/:uuid/decide", staff, asyncHandler(decideLeave));
+router.patch("/:uuid/cancel", leaveParticipants, asyncHandler(cancelLeave));
 
 export default router;

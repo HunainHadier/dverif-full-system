@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { LeaveRequest } from "@/services";
-import { countDays, formatDate, formatDateTime } from "@/lib/utils";
+import { countDays, formatDate, formatDateTime, formatLeaveDays } from "@/lib/utils";
 import { FormattedLeaveReason } from "@/components/leaves/FormattedLeaveReason";
 
 export function LeaveRequestDetailsDialog({
@@ -45,8 +45,20 @@ export function LeaveRequestDetailsDialog({
             />
             <Detail
               label={t("leaves.days", "Days")}
-              value={String(countDays(request.start_date, request.end_date))}
+              value={formatLeaveDays(request.approved_days ?? (request.day_portion && request.day_portion !== "full" ? 0.5 : request.working_days ?? countDays(request.start_date, request.end_date)))}
             />
+            {request.day_portion && request.day_portion !== "full" ? (
+              <Detail
+                label={t("leaves.leaveDuration", "Leave duration")}
+                value={t("leaves.halfDay", "Half day")}
+              />
+            ) : null}
+            {request.approved_treatment || request.requested_treatment ? (
+              <Detail
+                label={t("leaves.payrollTreatment")}
+                value={(request.approved_treatment ?? request.requested_treatment) === "paid" ? t("leaves.paid") : t("leaves.unpaid")}
+              />
+            ) : null}
             <div className="space-y-1">
               <dt className="text-xs text-muted-foreground">{t("leaves.status", "Status")}</dt>
               <dd><StatusBadge status={request.status} /></dd>
@@ -60,6 +72,9 @@ export function LeaveRequestDetailsDialog({
                 label={t("leaves.reviewedAt", "Reviewed at")}
                 value={formatDateTime(request.approved_at)}
               />
+            ) : null}
+            {request.cancelled_at ? (
+              <Detail label={t("leaves.cancelledAt", "Cancelled at")} value={formatDateTime(request.cancelled_at)} />
             ) : null}
             <div className="space-y-1 sm:col-span-2">
               <dt className="text-xs text-muted-foreground">{t("leaves.reason", "Reason")}</dt>

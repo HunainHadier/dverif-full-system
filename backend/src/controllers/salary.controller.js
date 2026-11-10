@@ -641,7 +641,10 @@ export async function generatePayroll(req, res) {
           expenseReimbursement,
           netSalary,
           JSON.stringify(runInputs.policySnapshot),
-          JSON.stringify(runInputs.scheduleSnapshot),
+          JSON.stringify({
+            days: runInputs.scheduleSnapshot,
+            leave_calculation: computed.summary.leaveCalculation,
+          }),
           null,
           createdBy,
         ]
@@ -877,6 +880,8 @@ export async function previewPayroll(req, res) {
         late_count: computed.summary.lateCount,
         paid_leave_days: computed.summary.paidLeaveDays,
         unpaid_leave_days: computed.summary.unpaidLeaveDays,
+        leave_attendance_conflicts: computed.summary.leaveAttendanceConflicts,
+        leave_calculation: computed.summary.leaveCalculation,
         approved_overtime_hours: computed.summary.approvedOvertimeHours,
         holidays_in_month: computed.summary.holidayCount,
       },

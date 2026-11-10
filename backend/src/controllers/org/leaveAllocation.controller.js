@@ -4,6 +4,7 @@ import { ok } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { isoDate } from "../../utils/leaveBalance.js";
+import { getLeaveLedgerBalance, recordLeaveBalanceTransaction } from "../../utils/leaveLedger.js";
 import * as payrollService from "../../services/payroll.service.js";
 
 const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
@@ -146,17 +147,60 @@ export async function setDesignationLeaveAllocation(req, res) {
     );
 
     if (employeeCount) {
-      await conn.query(
-        `INSERT INTO employee_leave_allocations
-           (uuid, employee_uuid, leave_type_id, year, allocated_days, used_days, remaining_days)
-         SELECT UUID(), e.uuid, ?, ?, ?, 0, ?
-         FROM employees e
-         WHERE e.organization_id=? AND e.designation_id=? AND e.status IN ('active','current_employee')
-         ON DUPLICATE KEY UPDATE
-           allocated_days=VALUES(allocated_days),
-           remaining_days=GREATEST(0, VALUES(allocated_days)-used_days)`,
-        [typeId, yr, alloc, alloc, orgId, designation.id]
+      const [employees] = await conn.query(
+        `SELECT uuid FROM employees
+         WHERE organization_id=? AND designation_id=? AND status IN ('active','current_employee')
+         FOR UPDATE`,
+        [orgId, designation.id],
       );
+      for (const employee of employees) {
+        const [[current]] = await conn.query(
+          `SELECT * FROM employee_leave_allocations
+           WHERE employee_uuid=? AND leave_type_id=? AND year=? FOR UPDATE`,
+          [employee.uuid, typeId, yr],
+        );
+        if (!current) {
+          const [inserted] = await conn.query(
+            `INSERT INTO employee_leave_allocations
+               (uuid, employee_uuid, leave_type_id, year, allocated_days, used_days, remaining_days)
+             VALUES (UUID(), ?, ?, ?, ?, 0, ?)`,
+            [employee.uuid, typeId, yr, alloc, alloc],
+          );
+          await recordLeaveBalanceTransaction(conn, {
+            employeeUuid: employee.uuid,
+            leaveTypeId: typeId,
+            allocationId: inserted.insertId,
+            transactionType: "allocation",
+            creditedDays: alloc,
+            previousBalance: 0,
+            updatedBalance: alloc,
+            performedBy: req.user?.uuid || req.admin?.uuid || null,
+            reason: `Initial leave allocation for ${yr} by designation policy.`,
+          });
+          continue;
+        }
+        const previousBalance = await getLeaveLedgerBalance(conn, current.id, current.remaining_days);
+        const updatedBalance = Math.max(0, alloc - Number(current.used_days));
+        await conn.query(
+          "UPDATE employee_leave_allocations SET allocated_days=?, remaining_days=? WHERE id=?",
+          [alloc, updatedBalance, current.id],
+        );
+        const difference = updatedBalance - previousBalance;
+        if (difference !== 0) {
+          await recordLeaveBalanceTransaction(conn, {
+            employeeUuid: employee.uuid,
+            leaveTypeId: typeId,
+            allocationId: current.id,
+            transactionType: "admin_adjustment",
+            creditedDays: difference > 0 ? difference : 0,
+            debitedDays: difference < 0 ? -difference : 0,
+            previousBalance,
+            updatedBalance,
+            performedBy: req.user?.uuid || req.admin?.uuid || null,
+            reason: `Designation policy allocation changed to ${alloc} days for ${yr}.`,
+          });
+        }
+      }
     }
     await conn.commit();
   } catch (err) {
@@ -211,28 +255,65 @@ export async function setLeaveAllocation(req, res) {
     throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" does not use leave allocations.`);
   }
 
-  const [existing] = await pool.query(
-    "SELECT id, used_days FROM employee_leave_allocations WHERE employee_uuid=? AND leave_type_id=? AND year=?",
-    [employee_uuid, typeId, yr]
-  );
-
+  const conn = await pool.getConnection();
   let row;
-  if (existing.length) {
-    const used = existing[0].used_days;
-    const remaining = Math.max(0, alloc - used);
-    await pool.query(
-      "UPDATE employee_leave_allocations SET allocated_days=?, remaining_days=? WHERE id=?",
-      [alloc, remaining, existing[0].id]
+  try {
+    await conn.beginTransaction();
+    const [[existing]] = await conn.query(
+      `SELECT * FROM employee_leave_allocations
+       WHERE employee_uuid=? AND leave_type_id=? AND year=? FOR UPDATE`,
+      [employee_uuid, typeId, yr],
     );
-    row = { id: existing[0].id, allocated_days: alloc, used_days: used, remaining_days: remaining };
-  } else {
-    const [ins] = await pool.query(
-      `INSERT INTO employee_leave_allocations
-         (uuid, employee_uuid, leave_type_id, year, allocated_days, used_days, remaining_days)
-       VALUES (UUID(), ?, ?, ?, ?, 0, ?)`,
-      [employee_uuid, typeId, yr, alloc, alloc]
-    );
-    row = { id: ins.insertId, allocated_days: alloc, used_days: 0, remaining_days: alloc };
+    if (existing) {
+      const used = Number(existing.used_days);
+      const previousBalance = await getLeaveLedgerBalance(conn, existing.id, existing.remaining_days);
+      const remaining = Math.max(0, alloc - used);
+      await conn.query(
+        "UPDATE employee_leave_allocations SET allocated_days=?, remaining_days=? WHERE id=?",
+        [alloc, remaining, existing.id],
+      );
+      row = { id: existing.id, allocated_days: alloc, used_days: used, remaining_days: remaining };
+      const difference = remaining - previousBalance;
+      if (difference !== 0) {
+        await recordLeaveBalanceTransaction(conn, {
+          employeeUuid: employee_uuid,
+          leaveTypeId: typeId,
+          allocationId: existing.id,
+          transactionType: "admin_adjustment",
+          creditedDays: difference > 0 ? difference : 0,
+          debitedDays: difference < 0 ? -difference : 0,
+          previousBalance,
+          updatedBalance: remaining,
+          performedBy: req.user?.uuid || req.admin?.uuid || null,
+          reason: `Admin changed allocation to ${alloc} days for ${yr}.`,
+        });
+      }
+    } else {
+      const [ins] = await conn.query(
+        `INSERT INTO employee_leave_allocations
+           (uuid, employee_uuid, leave_type_id, year, allocated_days, used_days, remaining_days)
+         VALUES (UUID(), ?, ?, ?, ?, 0, ?)`,
+        [employee_uuid, typeId, yr, alloc, alloc],
+      );
+      row = { id: ins.insertId, allocated_days: alloc, used_days: 0, remaining_days: alloc };
+      await recordLeaveBalanceTransaction(conn, {
+        employeeUuid: employee_uuid,
+        leaveTypeId: typeId,
+        allocationId: ins.insertId,
+        transactionType: "allocation",
+        creditedDays: alloc,
+        previousBalance: 0,
+        updatedBalance: alloc,
+        performedBy: req.user?.uuid || req.admin?.uuid || null,
+        reason: `Initial admin allocation for ${yr}.`,
+      });
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
   }
 
   logAudit({
@@ -276,7 +357,7 @@ export async function getEmployeeLeaveHistory(req, res) {
   const [requests] = await pool.query(
     `SELECT lr.uuid, lr.leave_type_id,
             CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN 'Unpaid Leave' ELSE lt.name END AS leave_type_name,
-            lr.start_date, lr.end_date, lr.status,
+            lr.start_date, lr.end_date, lr.status, lr.day_portion, lr.approved_days,
             lr.requested_treatment, lr.approved_treatment
      FROM leave_requests lr
      JOIN leave_types lt ON lt.id = lr.leave_type_id
@@ -296,9 +377,18 @@ export async function getEmployeeLeaveHistory(req, res) {
       ...r,
       start_date: startDate,
       end_date: endDate,
-      days: workingDates.length,
+      days: r.approved_days ?? (r.day_portion === "full" ? workingDates.length : 0.5),
     };
   }));
+  const [ledger] = await pool.query(
+    `SELECT id, leave_type_id, transaction_type, credited_days, debited_days,
+            previous_balance, updated_balance, related_leave_request_uuid,
+            transaction_at, performed_by, reason
+     FROM leave_balance_ledger
+     WHERE employee_uuid=?
+     ORDER BY transaction_at DESC, id DESC`,
+    [uuid],
+  );
 
   return ok(
     res,
@@ -308,6 +398,7 @@ export async function getEmployeeLeaveHistory(req, res) {
       employee_email: emp.email,
       balances,
       leave_history: leaveHistory,
+      balance_ledger: ledger,
     },
     "Employee leave history"
   );

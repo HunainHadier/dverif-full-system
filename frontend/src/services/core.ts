@@ -920,7 +920,7 @@ export type LeaveType = {
   id: number;
   name: string;
   days_allowed_per_year: number;
-  is_paid?: "yes" | "no";
+  is_paid: "yes" | "no";
   organization_uuid?: UUID | null;
   organization_name?: string | null;
   created_at?: string;
@@ -937,7 +937,11 @@ export type LeaveRequest = {
   start_date: string;
   end_date: string;
   reason?: string | null;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  day_portion?: "full" | "half";
+  approved_days?: number | string | null;
+  cancelled_by?: UUID | null;
+  cancelled_at?: string | null;
   working_days?: number;
   requested_treatment?: "paid" | "unpaid";
   approved_treatment?: "paid" | "unpaid" | null;
@@ -951,18 +955,18 @@ export type LeaveRequest = {
 export type LeaveBalance = {
   id: number;
   year: number;
-  total_allocated: number;
-  used: number;
-  remaining: number;
+  total_allocated: number | string;
+  used: number | string;
+  remaining: number | string;
   leave_type_id: number;
   leave_type_name: string;
 };
 
 export type LeaveAllocation = {
   leave_type_id: number;
-  allocated_days: number;
-  used_days: number;
-  remaining_days: number;
+  allocated_days: number | string;
+  used_days: number | string;
+  remaining_days: number | string;
 };
 
 export type EmployeeLeaveAllocation = {
@@ -978,11 +982,25 @@ export type EmployeeLeaveAllocation = {
 
 export type EmployeeLeaveAllocationHistory = {
   year: number;
-  allocated_days: number;
-  used_days: number;
-  remaining_days: number;
+  allocated_days: number | string;
+  used_days: number | string;
+  remaining_days: number | string;
   leave_type_id: number;
   leave_type_name: string;
+};
+
+export type LeaveBalanceLedgerEntry = {
+  id: number;
+  leave_type_id: number;
+  transaction_type: "opening_balance" | "allocation" | "leave_approved" | "leave_cancelled" | "admin_adjustment";
+  credited_days: number | string;
+  debited_days: number | string;
+  previous_balance: number | string;
+  updated_balance: number | string;
+  related_leave_request_uuid: UUID | null;
+  transaction_at: string;
+  performed_by: UUID | null;
+  reason: string;
 };
 
 /* Platform user leaves */
@@ -1080,7 +1098,11 @@ export type SalaryRecord = {
     late_arrival_threshold?: number;
     late_grace_minutes?: number;
   } | string | null;
-  payroll_schedule_snapshot?: { date: string; day_type: "working" | "off" }[] | string | null;
+  payroll_schedule_snapshot?:
+    | { date: string; day_type: "working" | "off" }[]
+    | { days: { date: string; day_type: "working" | "off" }[]; leave_calculation?: unknown }
+    | string
+    | null;
   notes?: string | null;
   created_at?: string;
   employee_name?: string | null;

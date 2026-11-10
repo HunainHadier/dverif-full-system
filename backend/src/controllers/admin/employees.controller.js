@@ -747,6 +747,16 @@ export async function deleteEmployee(req, res) {
     throw new ApiError(409, "Cannot delete an employee who is a linked platform user. Deactivate the user account first.");
   }
 
+  const [[leaveHistory]] = await pool.query(
+    `SELECT
+       (SELECT COUNT(*) FROM leave_requests WHERE employee_uuid=?) AS request_count,
+       (SELECT COUNT(*) FROM leave_balance_ledger WHERE employee_uuid=?) AS ledger_count`,
+    [uuid, uuid],
+  );
+  if (Number(leaveHistory.request_count) || Number(leaveHistory.ledger_count)) {
+    throw new ApiError(409, "Cannot hard-delete an employee with leave history or balance ledger entries. Deactivate the employee to preserve the audit trail.");
+  }
+
   await pool.query("DELETE FROM employees WHERE uuid=?", [uuid]);
 
   logAudit({

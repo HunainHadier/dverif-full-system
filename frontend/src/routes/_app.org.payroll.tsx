@@ -206,7 +206,12 @@ function recordScheduleSnapshot(
   month: number,
   year: number,
 ): PayrollRunDay[] | undefined {
-  const raw = parseSnapshotColumn(value);
+  const parsed = parseSnapshotColumn(value);
+  const raw = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as { days?: unknown }).days
+      : undefined;
   if (!Array.isArray(raw)) return undefined;
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   if (raw.length !== daysInMonth) return undefined;
@@ -1892,6 +1897,14 @@ function OrgPayrollPage() {
                       <p className="font-medium">{a.late_count}</p>
                     </div>
                   </div>
+
+                  {a.leave_attendance_conflicts.length > 0 && (
+                    <p className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-800">
+                      {t("payroll.leaveAttendanceConflict", { conflicts: a.leave_attendance_conflicts.map((conflict) =>
+                        `${conflict.date} (${t(conflict.resolution === "attendance_takes_precedence" ? "payroll.attendanceCountedLeaveExcluded" : "payroll.leaveTreatmentApplied")})`,
+                      ).join(", ") })}
+                    </p>
+                  )}
 
                   {item.rates.skip_reason ? (
                     // Stated rather than left blank: an employee with no automatic

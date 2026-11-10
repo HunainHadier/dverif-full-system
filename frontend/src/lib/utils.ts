@@ -136,6 +136,13 @@ export function formatCurrency(
   }
 }
 
+/** Format leave-day quantities without padding whole days with trailing zeros. */
+export function formatLeaveDays(value: number | string, locale: string = uiLocale()): string {
+  const days = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(days)) return "—";
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(days);
+}
+
 /** Normalize a feature_access value (object or JSON string) into booleans. */
 /**
  * Normalise a raw feature_access value into a complete boolean map.

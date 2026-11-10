@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { computeAutomaticLines, filterWorkingDatesFrom, filterWorkingDatesThrough, prorateSalaryPeriods } from "../src/services/payroll.service.js";
+import {
+  computeAutomaticLines,
+  filterWorkingDatesFrom,
+  filterWorkingDatesThrough,
+  getApprovedLeaveForMonth,
+  prorateSalaryPeriods,
+} from "../src/services/payroll.service.js";
 
 const settings = {
   salary_calculation_method: "days",
@@ -78,6 +84,63 @@ describe("monthly attendance payroll calculation", () => {
     expect(result.payableRatio).toBe(0.85);
     expect(result.totalDeduction).toBe(4500);
     expect(result.lines.find((line) => line.source === "auto_short_hours")?.amount).toBe(1500);
+  });
+
+  it("calculates paid and unpaid half-day leave as 0.5 payroll days", () => {
+    const shared = {
+      workingDays: 20,
+      monthWorkingDays: 20,
+      elapsedWorkingDays: 1,
+      attendedDays: 0,
+      absentDays: 0.5,
+      lateCount: 0,
+      workedHours: 0,
+      approvedOvertimeHours: 0,
+      policy: settings,
+    };
+    const paid = computeAutomaticLines({
+      summary: { ...shared, paidLeaveDays: 0.5, unpaidLeaveDays: 0 },
+      basicSalary: 30000,
+      policy: settings,
+    });
+    expect(paid.payableRatio).toBe(0.5);
+    expect(paid.lines.find((line) => line.source === "auto_absenteeism")?.basis_value).toBe(0.5);
+    expect(paid.lines.some((line) => line.source === "auto_unpaid_leave")).toBe(false);
+
+    const unpaid = computeAutomaticLines({
+      summary: { ...shared, paidLeaveDays: 0, unpaidLeaveDays: 0.5 },
+      basicSalary: 30000,
+      policy: settings,
+    });
+    expect(unpaid.lines.find((line) => line.source === "auto_unpaid_leave")?.basis_value).toBe(0.5);
+    expect(unpaid.lines.find((line) => line.source === "auto_unpaid_leave")?.amount).toBe(750);
+    expect(unpaid.lines.find((line) => line.source === "auto_absenteeism")?.amount).toBe(750);
+    expect(unpaid.totalDeduction).toBe(1500);
+  });
+
+  it("clips approved half-day leave to the configured working date", async () => {
+    const conn = {
+      query: async () => [[{
+        uuid: "00000000-0000-4000-8000-000000000001",
+        start_date: "2026-10-12",
+        end_date: "2026-10-12",
+        day_portion: "half",
+        approved_days: "0.50",
+        leave_type: "Sick leave",
+        treatment: "paid",
+      }], []],
+    };
+    const result = await getApprovedLeaveForMonth({
+      employeeUuid: "00000000-0000-4000-8000-000000000002",
+      month: 10,
+      year: 2026,
+      workingDates: ["2026-10-12"],
+      conn,
+    });
+    expect(result.paidLeaveDays).toBe(0.5);
+    expect(result.paidDaysByDate).toEqual({ "2026-10-12": 0.5 });
+    expect(result.calculationRequests[0].day_portion).toBe("half");
+    expect(result.calculationRequests[0].days_in_period).toBe(0.5);
   });
 
   it("pays overtime only when the independent overtime setting is enabled", () => {

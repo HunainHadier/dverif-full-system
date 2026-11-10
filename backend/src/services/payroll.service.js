@@ -340,7 +340,16 @@ export async function getWorkingDaysForMonth({ orgId, month, year, scheduleOverr
     "SELECT schedule_date, day_type FROM organization_monthly_work_schedules WHERE organization_id=? AND schedule_date BETWEEN ? AND ?",
     [orgId, firstDay, lastDay],
   );
-  if (rows.length !== daysInMonth) throw new ApiError(409, "Monthly working schedule is incomplete. Configure every date as a working day or off day before payroll generation.");
+  if (rows.length !== daysInMonth) {
+    const configured = new Set(rows.map((row) => isoDate(row.schedule_date)));
+    const missingDates = Array.from({ length: daysInMonth }, (_, index) =>
+      `${y}-${String(m).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`,
+    ).filter((date) => !configured.has(date));
+    throw new ApiError(
+      409,
+      `Monthly working schedule is incomplete for ${y}-${String(m).padStart(2, "0")}. Missing date(s): ${missingDates.slice(0, 10).join(", ")}${missingDates.length > 10 ? ", ..." : ""}. Configure every date as a working day or off day.`,
+    );
+  }
   const days = rows.filter((r) => r.day_type === "working").map((r) => isoDate(r.schedule_date));
   const nonWorkingDates = new Set(rows.filter((r) => r.day_type === "off").map((r) => isoDate(r.schedule_date)));
   return { workingDays: days.length, workingDates: days, nonWorkingDates, week: null, holidays: new Set() };
@@ -443,7 +452,8 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
   assertUuid(employeeUuid, "Employee UUID");
 
   const [rows] = await conn.query(
-    `SELECT lr.start_date, lr.end_date, lt.name AS leave_type,
+    `SELECT lr.uuid, lr.start_date, lr.end_date, lr.day_portion, lr.approved_days,
+            lt.name AS leave_type,
             COALESCE(lr.approved_treatment, lr.requested_treatment, 'unpaid') AS treatment
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
@@ -455,32 +465,50 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
   );
 
   const working = new Set(workingDates);
-  const paidDays = new Set();
-  const unpaidDays = new Set();
+  const paidDays = new Map();
+  const unpaidDays = new Map();
+  const calculationRequests = [];
 
   for (const r of rows) {
     const target = String(r.treatment) === "unpaid" ? unpaidDays : paidDays;
-    // Clamp the request to the month, then step through it inclusively.
-    let d = isoDate(r.start_date) < firstDay ? firstDay : isoDate(r.start_date);
+    const start = isoDate(r.start_date) < firstDay ? firstDay : isoDate(r.start_date);
     const end = isoDate(r.end_date) > lastDay ? lastDay : isoDate(r.end_date);
-    const cursor = new Date(`${d}T00:00:00Z`);
-    const stop = `${end}T00:00:00Z`;
-    while (cursor.toISOString().slice(0, 10) <= stop) {
+    const cursor = new Date(`${start}T00:00:00Z`);
+    const stop = new Date(`${end}T00:00:00Z`);
+    let requestDays = 0;
+    while (cursor <= stop) {
       const iso = cursor.toISOString().slice(0, 10);
-      if (working.has(iso)) target.add(iso);
+      if (working.has(iso)) {
+        const fraction = r.day_portion === "full" ? 1 : 0.5;
+        target.set(iso, Math.min(1, (target.get(iso) || 0) + fraction));
+        requestDays += fraction;
+      }
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
+    calculationRequests.push({
+      uuid: r.uuid,
+      leave_type: r.leave_type,
+      treatment: r.treatment,
+      start_date: isoDate(r.start_date),
+      end_date: isoDate(r.end_date),
+      day_portion: r.day_portion || "full",
+      days_in_period: requestDays,
+    });
   }
 
-  // A day cannot be both paid and unpaid leave. Paid wins, because the more
-  // expensive reading (a deduction) must never come from two overlapping rows.
-  for (const d of paidDays) unpaidDays.delete(d);
+  // Paid leave takes precedence for legacy overlapping rows so a single
+  // scheduled day can never receive both a leave credit and a deduction.
+  for (const date of paidDays.keys()) unpaidDays.delete(date);
 
   return {
-    paidLeaveDays: paidDays.size,
-    unpaidLeaveDays: unpaidDays.size,
-    paidDates: [...paidDays].sort(),
-    unpaidDates: [...unpaidDays].sort(),
+    paidLeaveDays: [...paidDays.values()].reduce((sum, days) => sum + days, 0),
+    unpaidLeaveDays: [...unpaidDays.values()].reduce((sum, days) => sum + days, 0),
+    paidDates: [...paidDays.keys()].sort(),
+    unpaidDates: [...unpaidDays.keys()].sort(),
+    excludedDayFractions: Object.fromEntries([...paidDays, ...unpaidDays]),
+    paidDaysByDate: Object.fromEntries(paidDays),
+    unpaidDaysByDate: Object.fromEntries(unpaidDays),
+    calculationRequests,
     requests: rows,
   };
 }
@@ -495,7 +523,7 @@ export async function getApprovedLeaveForMonth({ employeeUuid, month, year, work
  * as unpaid absence. An employee on approved leave has no attendance row either,
  * which is the other half of the same double-count.
  */
-export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, lateCutoffMinutes = null, overtimeCutoffMinutes = null, excludeOvertimeFromRegularHours = false, conn = pool }) {
+export async function getAttendanceForMonth({ employeeUuid, month, year, workingDates, excludedDates, excludedDayFractions = null, lateCutoffMinutes = null, overtimeCutoffMinutes = null, excludeOvertimeFromRegularHours = false, conn = pool }) {
   const { m, y } = assertMonthYear(month, year);
   const { firstDay, lastDay } = monthBounds(m, y);
   assertUuid(employeeUuid, "Employee UUID");
@@ -509,8 +537,10 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
 
   const working = new Set(workingDates);
   const excused = new Set(excludedDates ?? []);
+  const excusedFractions = excludedDayFractions ?? Object.fromEntries([...excused].map((date) => [date, 1]));
 
   const presentDates = new Set();
+  const recordDates = new Set();
   let lateCount = 0;
   let workedHours = 0;
   let actualOvertimeHours = 0;
@@ -519,6 +549,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   for (const r of rows) {
     const iso = isoDate(r.date);
     if (!working.has(iso)) continue;
+    recordDates.add(iso);
     // A workday is complete only when both clock-in and clock-out exist.
     // If a completed attendance record overlaps approved leave, the attendance
     // record wins: the day is treated as worked, not as leave or absence.
@@ -548,7 +579,10 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
   // Never negative: a manually entered attendance row can otherwise push this
   // below zero and then a negative day count becomes a negative deduction, which
   // reads as a pay rise.
-  const excusedCount = [...excused].filter((d) => working.has(d) && !presentDates.has(d)).length;
+  const excusedCount = [...excused].reduce((sum, date) => {
+    if (!working.has(date) || presentDates.has(date)) return sum;
+    return sum + Math.min(1, Math.max(0, Number(excusedFractions[date]) || 0));
+  }, 0);
   const absentDays = Math.max(0, working.size - presentDates.size - excusedCount);
 
   return {
@@ -559,6 +593,7 @@ export async function getAttendanceForMonth({ employeeUuid, month, year, working
     absentDays,
     lateCount,
     presentDates: [...presentDates].sort(),
+    recordDates: [...recordDates].sort(),
   };
 }
 
@@ -642,6 +677,7 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     // employee still did not clock in, so without this a paid sick-leave day is
     // counted as an absence and docked. That is the bug this argument prevents.
     excludedDates: [...leave.paidDates, ...leave.unpaidDates],
+    excludedDayFractions: leave.excludedDayFractions,
     lateCutoffMinutes:
       timeToMinutes(activePolicy.shift_start_time) + Number(activePolicy.late_grace_minutes ?? 10),
     overtimeCutoffMinutes: timeToMinutes(activePolicy.shift_end_time),
@@ -650,6 +686,36 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
   });
 
   const overtime = await getApprovedOvertimeForMonth({ employeeUuid, month: m, year: y, conn });
+  const attended = new Set(attendance.presentDates);
+  const paidLeaveDays = Object.entries(leave.paidDaysByDate)
+    .filter(([date]) => !attended.has(date))
+    .reduce((sum, [, days]) => sum + Number(days), 0);
+  const unpaidLeaveDays = Object.entries(leave.unpaidDaysByDate)
+    .filter(([date]) => !attended.has(date))
+    .reduce((sum, [, days]) => sum + Number(days), 0);
+  const recorded = new Set(attendance.recordDates);
+  const { firstDay, lastDay } = monthBounds(m, y);
+  const workingDateSet = new Set(elapsedWorkingDates);
+  const leaveAttendanceConflicts = leave.calculationRequests.flatMap((request) => {
+    const dates = [];
+    const start = request.start_date < firstDay ? firstDay : request.start_date;
+    const end = request.end_date > lastDay ? lastDay : request.end_date;
+    const cursor = new Date(`${start}T00:00:00Z`);
+    const stop = new Date(`${end}T00:00:00Z`);
+    while (cursor <= stop) {
+      const date = cursor.toISOString().slice(0, 10);
+      if (recorded.has(date) && workingDateSet.has(date)) dates.push(date);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return dates.map((date) => ({
+      date,
+      leave_request_uuid: request.uuid,
+      leave_type: request.leave_type,
+      treatment: request.treatment,
+      day_portion: request.day_portion,
+      resolution: attended.has(date) ? "attendance_takes_precedence" : "attendance_record_present",
+    }));
+  });
 
   return {
     month: m,
@@ -669,8 +735,15 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
     workedHours: attendance.workedHours,
     absentDays: attendance.absentDays,
     lateCount: attendance.lateCount,
-    paidLeaveDays: leave.paidDates.filter((date) => !attendance.presentDates.includes(date)).length,
-    unpaidLeaveDays: leave.unpaidDates.filter((date) => !attendance.presentDates.includes(date)).length,
+    paidLeaveDays,
+    unpaidLeaveDays,
+    leaveAttendanceConflicts,
+    leaveCalculation: {
+      paid_leave_days: paidLeaveDays,
+      unpaid_leave_days: unpaidLeaveDays,
+      requests: leave.calculationRequests,
+      attendance_conflicts: leaveAttendanceConflicts,
+    },
     approvedOvertimeHours: money(overtime.requests.reduce((sum, request) => {
       const date = isoDate(request.work_date);
       return sum + Math.min(Number(request.approved_hours) || 0, Number(attendance.actualOvertimeByDate[date]) || 0);

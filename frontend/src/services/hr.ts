@@ -18,6 +18,7 @@ import type {
   LeaveBalance,
   EmployeeLeaveAllocation,
   EmployeeLeaveAllocationHistory,
+  LeaveBalanceLedgerEntry,
   AttendanceRecord,
   MissingAttendanceRecord,
   IpRule,
@@ -53,8 +54,11 @@ export const leavesService = {
     default_unpaid?: boolean;
     start_date: string;
     end_date: string;
+    day_portion?: "full" | "half";
     reason?: string;
   }) => api.post<{ leaveRequest: LeaveRequest }>("/leaves", data).then((r) => r.data.leaveRequest),
+  cancel: (uuid: UUID) =>
+    api.patch<{ leaveRequest: LeaveRequest }>(`/leaves/${uuid}/cancel`).then((r) => r.data.leaveRequest),
   decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
     api
       .patch<{ leaveRequest: LeaveRequest }>(`/leaves/${uuid}/decide`, data)
@@ -64,14 +68,14 @@ export const leavesService = {
 export const orgLeavesService = {
   types: () =>
     api.get<{ leaveTypes: LeaveType[] }>("/org/leave-types").then((r) => r.data.leaveTypes),
-  createType: (data: { name: string; days_allowed_per_year?: number }) =>
+  createType: (data: { name: string; days_allowed_per_year?: number; is_paid?: "yes" | "no" }) =>
     api.post<{ leaveType: LeaveType }>("/org/leave-types", data).then((r) => r.data.leaveType),
-  updateType: (id: number, data: { name: string; days_allowed_per_year?: number }) =>
+  updateType: (id: number, data: { name: string; days_allowed_per_year?: number; is_paid?: "yes" | "no" }) =>
     api.put<{ leaveType: LeaveType }>(`/org/leave-types/${id}`, data).then((r) => r.data.leaveType),
   deleteType: (id: number) => api.delete(`/org/leave-types/${id}`).then((r) => r.data),
   list: (params: { page?: number; limit?: number; status?: string; search?: string; dateFrom?: string; dateTo?: string; employee_uuid?: UUID; leave_type_id?: number; include_all?: boolean } = {}) =>
     api.get<Paginated<LeaveRequest>>("/org/leaves", { params }).then((r) => r.data),
-  decide: (uuid: UUID, data: { status: "approved" | "rejected"; approved_treatment?: "paid" | "unpaid" }) =>
+  decide: (uuid: UUID, data: { status: "approved" | "rejected" }) =>
     api
       .patch<{ leaveRequest: LeaveRequest }>(`/leaves/${uuid}/decide`, data)
       .then((r) => r.data.leaveRequest),
@@ -119,10 +123,13 @@ export const orgLeaveAllocationService = {
           start_date: string;
           end_date: string;
           days: number;
-          status: "pending" | "approved" | "rejected";
+          status: "pending" | "approved" | "rejected" | "cancelled";
+          day_portion?: "full" | "half";
+          approved_days?: number | string | null;
           requested_treatment: "paid" | "unpaid";
           approved_treatment: "paid" | "unpaid" | null;
         }[];
+        balance_ledger: LeaveBalanceLedgerEntry[];
       }>(`/org/employees/${employee_uuid}/leave-allocations`)
       .then((r) => r.data),
 };
@@ -244,6 +251,35 @@ export type PayrollPreviewItem = {
     late_count: number;
     paid_leave_days: number;
     unpaid_leave_days: number;
+    leave_attendance_conflicts: {
+      date: string;
+      leave_request_uuid: UUID;
+      leave_type: string;
+      treatment: "paid" | "unpaid";
+      day_portion: "full" | "half";
+      resolution: "attendance_takes_precedence" | "attendance_record_present";
+    }[];
+    leave_calculation: {
+      paid_leave_days: number;
+      unpaid_leave_days: number;
+      requests: {
+        uuid: UUID;
+        leave_type: string;
+        treatment: "paid" | "unpaid";
+        start_date: string;
+        end_date: string;
+        day_portion: "full" | "half";
+        days_in_period: number;
+      }[];
+      attendance_conflicts: {
+        date: string;
+        leave_request_uuid: UUID;
+        leave_type: string;
+        treatment: "paid" | "unpaid";
+        day_portion: "full" | "half";
+        resolution: "attendance_takes_precedence" | "attendance_record_present";
+      }[];
+    };
     approved_overtime_hours: number;
     holidays_in_month: number;
   };

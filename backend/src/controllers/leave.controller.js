@@ -6,6 +6,7 @@ import { parsePagination, paginatedResponse } from "../utils/pagination.js";
 import { createNotificationForUsers } from "./notification.controller.js";
 import { logAudit, getActorFromReq } from "../utils/auditLog.js";
 import { isoDate, yearOfDate } from "../utils/leaveBalance.js";
+import { getLeaveLedgerBalance, recordLeaveBalanceTransaction } from "../utils/leaveLedger.js";
 import * as payrollService from "../services/payroll.service.js";
 
 const DEFAULT_UNPAID_LEAVE_TYPE = "Unpaid Leave (Default)";
@@ -82,7 +83,7 @@ async function resolveScopeOrgId(req) {
 export async function listLeaveTypes(req, res) {
   const orgId = await resolveScopeOrgId(req);
   const [rows] = await pool.query(
-    `SELECT lt.id, lt.name, lt.days_allowed_per_year, lt.created_at,
+    `SELECT lt.id, lt.name, lt.days_allowed_per_year, lt.is_paid, lt.created_at,
             o.uuid AS organization_uuid, o.name AS organization_name
      FROM leave_types lt
      JOIN organizations o ON o.id = lt.organization_id
@@ -96,7 +97,9 @@ export async function listLeaveTypes(req, res) {
 export async function createLeaveType(req, res) {
   const orgId = await resolveScopeOrgId(req);
   const { name, days_allowed_per_year } = req.body;
+  const isPaid = req.body?.is_paid ?? "yes";
   if (!name || !String(name).trim()) throw new ApiError(400, "name is required");
+  if (!["yes", "no"].includes(isPaid)) throw new ApiError(400, "is_paid must be yes or no.");
   if (isDefaultUnpaidLeaveType(name)) {
     throw new ApiError(400, `"${DEFAULT_UNPAID_LEAVE_TYPE}" is reserved for employee unpaid leave requests.`);
   }
@@ -109,8 +112,8 @@ export async function createLeaveType(req, res) {
   let result;
   try {
     [result] = await pool.query(
-      "INSERT INTO leave_types (organization_id, name, days_allowed_per_year) VALUES (?, ?, ?)",
-      [orgId, String(name).trim(), days]
+      "INSERT INTO leave_types (organization_id, name, days_allowed_per_year, is_paid) VALUES (?, ?, ?, ?)",
+      [orgId, String(name).trim(), days, isPaid]
     );
   } catch (e) {
     if (String(e.message).includes("Duplicate")) {
@@ -120,7 +123,7 @@ export async function createLeaveType(req, res) {
   }
 
   const [rows] = await pool.query(
-    "SELECT id, name, days_allowed_per_year FROM leave_types WHERE id=?",
+    "SELECT id, name, days_allowed_per_year, is_paid FROM leave_types WHERE id=?",
     [result.insertId]
   );
   logAudit({
@@ -128,7 +131,7 @@ export async function createLeaveType(req, res) {
     action: "leave_type.create",
     entityType: "leave_type",
     entityId: String(result.insertId),
-    details: { organization_id: orgId, name, days },
+    details: { organization_id: orgId, name, days, is_paid: isPaid },
     req,
   });
   return created(res, { leaveType: rows[0] }, "Leave type created");
@@ -140,7 +143,7 @@ export async function updateLeaveType(req, res) {
   if (isNaN(id)) throw new ApiError(400, "Invalid leave type id");
 
   const [exists] = await pool.query(
-    "SELECT id, name FROM leave_types WHERE id=? AND organization_id=?",
+    "SELECT id, name, is_paid FROM leave_types WHERE id=? AND organization_id=?",
     [id, orgId]
   );
   if (!exists.length) throw new ApiError(404, "Leave type not found");
@@ -162,19 +165,36 @@ export async function updateLeaveType(req, res) {
     if (isNaN(days) || days < 0) throw new ApiError(400, "days_allowed_per_year must be a non-negative integer");
     updates.days_allowed_per_year = days;
   }
+  if (req.body?.is_paid !== undefined) {
+    if (!["yes", "no"].includes(req.body.is_paid)) throw new ApiError(400, "is_paid must be yes or no.");
+    updates.is_paid = req.body.is_paid;
+  }
   if (!Object.keys(updates).length) throw new ApiError(400, "Nothing to update");
 
+  const conn = await pool.getConnection();
   try {
-    await pool.query("UPDATE leave_types SET ? WHERE id=?", [updates, id]);
+    await conn.beginTransaction();
+    await conn.query("SELECT id FROM leave_types WHERE id=? AND organization_id=? FOR UPDATE", [id, orgId]);
+    await conn.query("UPDATE leave_types SET ? WHERE id=?", [updates, id]);
+    if (updates.is_paid !== undefined) {
+      await conn.query(
+        "UPDATE leave_requests SET requested_treatment=? WHERE leave_type_id=? AND status='pending'",
+        [updates.is_paid === "no" ? "unpaid" : "paid", id],
+      );
+    }
+    await conn.commit();
   } catch (e) {
+    await conn.rollback();
     if (String(e.message).includes("Duplicate")) {
       throw new ApiError(409, "A leave type with this name already exists for the organization");
     }
     throw e;
+  } finally {
+    conn.release();
   }
 
   const [rows] = await pool.query(
-    "SELECT id, name, days_allowed_per_year FROM leave_types WHERE id=?",
+    "SELECT id, name, days_allowed_per_year, is_paid FROM leave_types WHERE id=?",
     [id]
   );
   logAudit({
@@ -205,8 +225,11 @@ export async function deleteLeaveType(req, res) {
   try {
     await pool.query("DELETE FROM leave_types WHERE id=?", [id]);
   } catch (e) {
-    if (String(e.message).includes("fk_leave_requests_type")) {
-      throw new ApiError(409, "Cannot delete — leave requests already exist for this type");
+    if (
+      String(e.message).includes("fk_leave_requests_type")
+      || String(e.message).includes("fk_leave_ledger_type")
+    ) {
+      throw new ApiError(409, "Cannot delete — leave requests or balance ledger history already exist for this type.");
     }
     throw e;
   }
@@ -306,8 +329,8 @@ export async function myLeaveCalendar(req, res) {
 export async function myLeaveBalances(req, res) {
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
   const [empRows] = await pool.query(
-    "SELECT uuid FROM employees WHERE linked_user_uuid=?",
-    [req.user.uuid]
+    "SELECT uuid FROM employees WHERE linked_user_uuid=? AND organization_id=?",
+    [req.user.uuid, req.user.organization]
   );
   if (!empRows.length) return ok(res, { balances: [] }, "Leave balances");
 
@@ -328,12 +351,12 @@ export async function myLeaveBalances(req, res) {
 export async function myLeaves(req, res) {
   const { page, limit, offset } = parsePagination(req.query);
   const [empRows] = await pool.query(
-    "SELECT uuid FROM employees WHERE linked_user_uuid=?",
-    [req.user.uuid]
+    "SELECT uuid FROM employees WHERE linked_user_uuid=? AND organization_id=?",
+    [req.user.uuid, req.user.organization]
   );
   if (!empRows.length) return ok(res, paginatedResponse([], 0, page, limit), "My leaves");
 
-  const status = typeof req.query.status === "string" && ["pending", "approved", "rejected"].includes(req.query.status) ? req.query.status : "";
+  const status = typeof req.query.status === "string" && ["pending", "approved", "rejected", "cancelled"].includes(req.query.status) ? req.query.status : "";
   const dateFrom = typeof req.query.dateFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateFrom) ? req.query.dateFrom : "";
   const dateTo = typeof req.query.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateTo) ? req.query.dateTo : "";
   const conditions = ["lr.employee_uuid=?"];
@@ -353,6 +376,8 @@ export async function myLeaves(req, res) {
             DATE_FORMAT(lr.end_date, '%Y-%m-%d') AS end_date,
             lr.reason, lr.status, lr.approved_by, lr.approved_at,
             lr.created_at, lr.employee_uuid, lr.leave_type_id,
+            lr.day_portion, lr.approved_days, lr.requested_treatment, lr.approved_treatment,
+            lr.cancelled_by, lr.cancelled_at,
             CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name
      FROM leave_requests lr
      JOIN leave_types lt ON lt.id = lr.leave_type_id
@@ -373,19 +398,29 @@ export async function createLeave(req, res) {
     );
   }
   const { leave_type_id, default_unpaid, start_date, end_date, reason } = req.body;
+  const dayPortion = req.body?.day_portion ?? "full";
+  if (!["full", "half"].includes(dayPortion)) {
+    throw new ApiError(400, "day_portion must be full or half.");
+  }
+  if (dayPortion !== "full" && start_date !== end_date) {
+    throw new ApiError(400, "Half-day leave must apply to exactly one date.");
+  }
   const requestsDefaultUnpaid = default_unpaid === true;
   if (!requestsDefaultUnpaid && !leave_type_id) throw new ApiError(400, "leave_type_id is required");
   if (!validIsoDate(start_date) || !validIsoDate(end_date)) throw new ApiError(400, "Valid start_date and end_date are required");
   if (String(start_date) > String(end_date)) throw new ApiError(400, "start_date must be before or equal to end_date");
 
   const [empRows] = await pool.query(
-    "SELECT uuid, organization_id, is_platform_user FROM employees WHERE linked_user_uuid=?",
-    [req.user.uuid]
+    "SELECT uuid, organization_id, is_platform_user, joining_date FROM employees WHERE linked_user_uuid=? AND organization_id=?",
+    [req.user.uuid, req.user.organization]
   );
   if (!empRows.length) throw new ApiError(403, "No employee record is linked to your account");
   const emp = empRows[0];
   if (emp.is_platform_user !== "yes") throw new ApiError(403, "Your account is not a platform user");
   if (emp.organization_id !== req.user.organization) throw new ApiError(403, "Organization mismatch");
+  if (emp.joining_date && start_date < isoDate(emp.joining_date)) {
+    throw new ApiError(400, "Leave cannot start before the employee's joining date.");
+  }
 
   let leaveType;
   if (requestsDefaultUnpaid) {
@@ -406,12 +441,7 @@ export async function createLeave(req, res) {
   const requestedTreatment = leaveType.is_paid === "no" ? "unpaid" : "paid";
   const leaveTypeLabel = requestsDefaultUnpaid ? DEFAULT_UNPAID_LEAVE_LABEL : leaveType.name;
 
-  const workingDates = await getWorkingDatesBetween(req.user.organization, start_date, end_date);
-  if (!workingDates.includes(start_date) || !workingDates.includes(end_date)) {
-    throw new ApiError(400, "Leave start and end dates must be working days in the payroll calendar.");
-  }
-  const days = workingDates.length;
-  if (days < 1) throw new ApiError(400, "Leave range must include at least one working day.");
+  let days;
   const year = yearOfDate(start_date);
 
   // Requirement 3: block submission when the employee has no remaining balance
@@ -429,6 +459,20 @@ export async function createLeave(req, res) {
   try {
     await conn.beginTransaction();
     await conn.query("SELECT uuid FROM employees WHERE uuid=? FOR UPDATE", [emp.uuid]);
+    const workingDates = await getWorkingDatesBetween(
+      req.user.organization,
+      start_date,
+      end_date,
+      conn,
+    );
+    if (!workingDates.includes(start_date) || !workingDates.includes(end_date)) {
+      throw new ApiError(400, "Leave start and end dates must be working days in the payroll calendar.");
+    }
+    if (dayPortion !== "full" && workingDates.length !== 1) {
+      throw new ApiError(400, "Half-day leave must apply to one configured working day.");
+    }
+    days = dayPortion === "full" ? workingDates.length : 0.5;
+    if (days < 0.5) throw new ApiError(400, "Leave range must include at least one working day.");
     const [overlaps] = await conn.query(
       `SELECT uuid FROM leave_requests
        WHERE employee_uuid=? AND status IN ('pending','approved')
@@ -441,9 +485,9 @@ export async function createLeave(req, res) {
     }
     const [result] = await conn.query(
       `INSERT INTO leave_requests
-         (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, requested_treatment, status)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'pending')`,
-      [emp.uuid, typeId, start_date, end_date, reason || null, requestedTreatment]
+         (uuid, employee_uuid, leave_type_id, start_date, end_date, reason, requested_treatment, day_portion, status)
+       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [emp.uuid, typeId, start_date, end_date, reason || null, requestedTreatment, dayPortion]
     );
     [rows] = await conn.query("SELECT * FROM leave_requests WHERE id=?", [result.insertId]);
     await conn.commit();
@@ -507,21 +551,17 @@ export async function listOrgLeaves(req, res) {
     ? req.query.dateFrom : "";
   const dateTo = typeof req.query.dateTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.dateTo)
     ? req.query.dateTo : "";
-  const includeAll = req.query.include_all === "true";
 
   let whereClause = "WHERE e.organization_id = ?";
   const params = [orgId];
-  // Filter requests by overlap with the selected period. With no explicit
-  // period, show requests active today unless the caller asks for all history.
+  // Review queues must include future requests as well as requests active today.
   if (dateFrom || dateTo) {
     const from = dateFrom || dateTo;
     const to = dateTo || dateFrom;
     whereClause += " AND lr.start_date <= ? AND lr.end_date >= ?";
     params.push(to, from);
-  } else if (!includeAll) {
-    whereClause += " AND lr.start_date <= CURDATE() AND lr.end_date >= CURDATE()";
   }
-  if (["pending", "approved", "rejected"].includes(status)) {
+  if (["pending", "approved", "rejected", "cancelled"].includes(status)) {
     whereClause += " AND lr.status = ?";
     params.push(status);
   }
@@ -558,6 +598,7 @@ export async function listOrgLeaves(req, res) {
             DATE_FORMAT(lr.start_date, '%Y-%m-%d') AS start_date,
             DATE_FORMAT(lr.end_date, '%Y-%m-%d') AS end_date,
             lr.reason, lr.status, lr.requested_treatment, lr.approved_treatment,
+            lr.day_portion, lr.approved_days, lr.cancelled_by, lr.cancelled_at,
             lr.approved_by, lr.approved_at, lr.created_at,
             e.uuid AS employee_uuid, e.full_name AS employee_name,
             e.email AS employee_email, dg.name AS designation,
@@ -572,115 +613,158 @@ export async function listOrgLeaves(req, res) {
      LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  const items = await Promise.all(rows.map(async (row) => ({
-    ...row,
-    working_days: (await getWorkingDatesBetween(orgId, row.start_date, row.end_date)).length,
-  })));
+  const items = await Promise.all(rows.map(async (row) => {
+    const [schedule] = await pool.query(
+      `SELECT schedule_date, day_type
+       FROM organization_monthly_work_schedules
+       WHERE organization_id=? AND schedule_date BETWEEN ? AND ?`,
+      [orgId, row.start_date, row.end_date],
+    );
+    const start = new Date(`${row.start_date}T00:00:00Z`);
+    const end = new Date(`${row.end_date}T00:00:00Z`);
+    const dateCount = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    const scheduleComplete = Number.isFinite(dateCount) && dateCount > 0 && schedule.length === dateCount;
+    return {
+      ...row,
+      working_days: row.approved_days ?? (
+        row.day_portion !== "full" ? 0.5 : scheduleComplete
+          ? schedule.filter((day) => day.day_type === "working").length
+          : null
+      ),
+    };
+  }));
   return ok(res, paginatedResponse(items, total, page, limit), "Org leave requests");
 }
 
 export async function decideLeave(req, res) {
   const { uuid } = req.params;
   const { status } = req.body;
-  const requestedTreatment = String(req.body?.approved_treatment ?? "").toLowerCase();
   assertUuid(uuid, "Leave request UUID");
   if (!["approved", "rejected"].includes(status)) {
     throw new ApiError(400, "status must be approved or rejected");
   }
-
+  const requestedApprovalTreatment = req.body?.approved_treatment;
+  if (
+    requestedApprovalTreatment !== undefined
+    && (status !== "approved" || !["paid", "unpaid"].includes(requestedApprovalTreatment))
+  ) {
+    throw new ApiError(400, "approved_treatment must be paid or unpaid and can only be set when approving a leave.");
+  }
   const actorUuid = req.admin?.uuid || req.user?.uuid || null;
-
-  const [rows] = await pool.query(
-    `SELECT lr.*, lt.name AS leave_type_system_name,
-            CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name,
-            lt.days_allowed_per_year,
-            e.organization_id, e.linked_user_uuid, e.full_name AS employee_name
-     FROM leave_requests lr
-     JOIN leave_types lt ON lt.id = lr.leave_type_id
-     JOIN employees e ON e.uuid = lr.employee_uuid
-     WHERE lr.uuid=?`,
-    [uuid]
-  );
-  if (!rows.length) throw new ApiError(404, "Leave request not found");
-  const lr = rows[0];
-  if (lr.status !== "pending") throw new ApiError(409, "Leave request has already been decided");
-
-  // Permission scoping (route restricts this to org_admin / sub_admin)
-  if (!req.admin) {
-    if (req.user?.org_role !== "org_admin" && req.user?.org_role !== "sub_admin") {
-      throw new ApiError(403, "Only org admins, sub-admins or platform admins can decide leave requests");
-    }
-    if (lr.organization_id !== req.user.organization) {
-      throw new ApiError(403, "This leave request is not part of your organization");
-    }
+  if (!req.admin && !["org_admin", "sub_admin"].includes(req.user?.org_role)) {
+    throw new ApiError(403, "Only authorized organization admins can decide leave requests.");
   }
 
-  if (status === "approved" && requestedTreatment && !["paid", "unpaid"].includes(requestedTreatment)) {
-    throw new ApiError(400, "approved_treatment must be paid or unpaid.");
-  }
-  const finalTreatment = status === "approved"
-    ? requestedTreatment || String(lr.requested_treatment || "unpaid")
-    : null;
-
-  if (status === "approved") {
-    const workingDates = await getWorkingDatesBetween(
-      lr.organization_id,
-      isoDate(lr.start_date),
-      isoDate(lr.end_date)
+  const conn = await pool.getConnection();
+  let lr;
+  let finalTreatment = null;
+  let days = 0;
+  try {
+    await conn.beginTransaction();
+    const [initial] = await conn.query(
+      "SELECT employee_uuid FROM leave_requests WHERE uuid=?",
+      [uuid],
     );
-    const days = workingDates.length;
-    const year = yearOfDate(lr.start_date);
+    if (!initial.length) throw new ApiError(404, "Leave request not found");
+    await conn.query("SELECT uuid FROM employees WHERE uuid=? FOR UPDATE", [initial[0].employee_uuid]);
+    const [rows] = await conn.query(
+      `SELECT lr.*, lt.name AS leave_type_system_name, lt.is_paid,
+              CASE WHEN lt.name = '${DEFAULT_UNPAID_LEAVE_TYPE}' THEN '${DEFAULT_UNPAID_LEAVE_LABEL}' ELSE lt.name END AS leave_type_name,
+              e.organization_id, e.linked_user_uuid, e.full_name AS employee_name,
+              e.joining_date
+       FROM leave_requests lr
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
+       JOIN employees e ON e.uuid = lr.employee_uuid
+       WHERE lr.uuid=? FOR UPDATE`,
+      [uuid],
+    );
+    if (!rows.length) throw new ApiError(404, "Leave request not found");
+    lr = rows[0];
+    if (lr.status !== "pending") throw new ApiError(409, "Leave request has already been decided");
+    if (!req.admin && lr.organization_id !== req.user.organization) {
+      throw new ApiError(403, "This leave request is not part of your organization.");
+    }
 
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      const isDefaultUnpaid = isDefaultUnpaidLeaveType(lr.leave_type_system_name)
-        && String(lr.requested_treatment || "unpaid") === "unpaid";
-      if (!isDefaultUnpaid) {
-        const alloc = await getAllocation(conn, lr.employee_uuid, lr.leave_type_id, year);
-        if (!alloc) {
-          throw new ApiError(409, "No leave balance is allocated for this leave type this year");
-        }
-        const [[bal]] = await conn.query(
-          "SELECT * FROM employee_leave_allocations WHERE id=? FOR UPDATE",
-          [alloc.id]
+    if (status === "approved") {
+      const startDate = isoDate(lr.start_date);
+      const endDate = isoDate(lr.end_date);
+      if (lr.joining_date && startDate < isoDate(lr.joining_date)) {
+        throw new ApiError(409, "Leave cannot be approved for dates before the employee's joining date.");
+      }
+      const [overlaps] = await conn.query(
+        `SELECT uuid FROM leave_requests
+         WHERE employee_uuid=? AND uuid<>? AND status IN ('pending','approved')
+           AND start_date <= ? AND end_date >= ?
+         LIMIT 1`,
+        [lr.employee_uuid, uuid, endDate, startDate],
+      );
+      if (overlaps.length) {
+        throw new ApiError(409, "This request conflicts with another pending or approved leave request.");
+      }
+      const workingDates = await getWorkingDatesBetween(lr.organization_id, startDate, endDate, conn);
+      if (!workingDates.includes(startDate) || !workingDates.includes(endDate)) {
+        throw new ApiError(409, "Leave start and end dates must be working days in the payroll calendar.");
+      }
+      if (lr.day_portion !== "full" && (startDate !== endDate || workingDates.length !== 1)) {
+        throw new ApiError(409, "Half-day leave must apply to exactly one configured working day.");
+      }
+      days = lr.day_portion === "full" ? workingDates.length : 0.5;
+      if (days < 0.5) throw new ApiError(409, "Leave range must include at least one working day.");
+
+      finalTreatment = requestedApprovalTreatment ?? (lr.is_paid === "no" ? "unpaid" : "paid");
+      const isDefaultUnpaid = isDefaultUnpaidLeaveType(lr.leave_type_system_name);
+      let allocation = null;
+      if (!isDefaultUnpaid && finalTreatment === "paid") {
+        const [[row]] = await conn.query(
+          `SELECT * FROM employee_leave_allocations
+           WHERE employee_uuid=? AND leave_type_id=? AND year=? FOR UPDATE`,
+          [lr.employee_uuid, lr.leave_type_id, yearOfDate(lr.start_date)],
         );
-        if (bal.remaining_days < days) {
-          throw new ApiError(
-            409,
-            `Insufficient ${lr.leave_type_name} balance — ${days} day(s) requested, ${bal.remaining_days} available`
-          );
+        allocation = row || null;
+        if (!allocation) throw new ApiError(409, "No leave balance is allocated for this leave type this year.");
+        const previousBalance = await getLeaveLedgerBalance(conn, allocation.id, allocation.remaining_days);
+        if (previousBalance < days) {
+          throw new ApiError(409, `Insufficient ${lr.leave_type_name} balance — ${days} day(s) requested, ${previousBalance} available.`);
         }
+        const updatedBalance = previousBalance - days;
         await conn.query(
-          "UPDATE employee_leave_allocations SET used_days=used_days+?, remaining_days=remaining_days-? WHERE id=?",
-          [days, days, alloc.id]
+          "UPDATE employee_leave_allocations SET used_days=used_days+?, remaining_days=? WHERE id=?",
+          [days, updatedBalance, allocation.id],
         );
+        await recordLeaveBalanceTransaction(conn, {
+          employeeUuid: lr.employee_uuid,
+          leaveTypeId: lr.leave_type_id,
+          allocationId: allocation.id,
+          transactionType: "leave_approved",
+          debitedDays: days,
+          previousBalance,
+          updatedBalance,
+          leaveRequestUuid: uuid,
+          performedBy: actorUuid,
+          reason: `Approved ${lr.leave_type_name} leave from ${startDate} to ${endDate}.`,
+        });
       }
       const [decision] = await conn.query(
-        "UPDATE leave_requests SET status='approved', approved_treatment=?, approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
-        [finalTreatment, actorUuid, uuid]
+        `UPDATE leave_requests
+         SET status='approved', approved_treatment=?, approved_days=?,
+             approved_by=?, approved_at=NOW()
+         WHERE uuid=? AND status='pending'`,
+        [finalTreatment, days, actorUuid, uuid],
       );
-      // Guard against two concurrent approvals of the same request: if the
-      // row was already decided between our read and this update, undo the
-      // balance deduction we just made.
-      if (!decision.affectedRows) {
-        throw new ApiError(409, "Leave request has already been decided");
-      }
-      await conn.commit();
-    } catch (e) {
-      await conn.rollback();
-      throw e;
-    } finally {
-      conn.release();
+      if (!decision.affectedRows) throw new ApiError(409, "Leave request has already been decided.");
+    } else {
+      const [decision] = await conn.query(
+        "UPDATE leave_requests SET status='rejected', approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
+        [actorUuid, uuid],
+      );
+      if (!decision.affectedRows) throw new ApiError(409, "Leave request has already been decided.");
     }
-  } else {
-    const [decision] = await pool.query(
-      "UPDATE leave_requests SET status='rejected', approved_by=?, approved_at=NOW() WHERE uuid=? AND status='pending'",
-      [actorUuid, uuid]
-    );
-    if (!decision.affectedRows) {
-      throw new ApiError(409, "Leave request has already been decided");
-    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
   }
 
   // Notify the requesting employee.
@@ -712,10 +796,122 @@ export async function decideLeave(req, res) {
     action: status === "approved" ? "leave.approve" : "leave.reject",
     entityType: "leave_request",
     entityId: uuid,
-    details: { status, requested_treatment: lr.requested_treatment || "unpaid", approved_treatment: finalTreatment },
+    details: { status, requested_treatment: lr.requested_treatment || "unpaid", approved_treatment: finalTreatment, days },
     req,
   });
 
   const [final] = await pool.query("SELECT * FROM leave_requests WHERE uuid=?", [uuid]);
   return ok(res, { leaveRequest: final[0] }, "Leave request updated");
+}
+
+export async function cancelLeave(req, res) {
+  const { uuid } = req.params;
+  assertUuid(uuid, "Leave request UUID");
+  const actorUuid = req.admin?.uuid || req.user?.uuid || null;
+  const conn = await pool.getConnection();
+  let leave;
+  let restoredDays = 0;
+  try {
+    await conn.beginTransaction();
+    const [initial] = await conn.query("SELECT employee_uuid FROM leave_requests WHERE uuid=?", [uuid]);
+    if (!initial.length) throw new ApiError(404, "Leave request not found");
+    await conn.query("SELECT uuid FROM employees WHERE uuid=? FOR UPDATE", [initial[0].employee_uuid]);
+    const [rows] = await conn.query(
+      `SELECT lr.*, lt.name AS leave_type_name, lt.is_paid,
+              e.organization_id, e.linked_user_uuid
+       FROM leave_requests lr
+       JOIN leave_types lt ON lt.id=lr.leave_type_id
+       JOIN employees e ON e.uuid=lr.employee_uuid
+       WHERE lr.uuid=? FOR UPDATE`,
+      [uuid],
+    );
+    if (!rows.length) throw new ApiError(404, "Leave request not found");
+    leave = rows[0];
+    const isOwner = leave.linked_user_uuid === req.user?.uuid;
+    if (!req.admin && !isOwner) throw new ApiError(403, "You may only cancel your own leave request.");
+    if (!req.admin && leave.organization_id !== req.user?.organization) {
+      throw new ApiError(403, "This leave request is not part of your organization.");
+    }
+    if (!["pending", "approved"].includes(leave.status)) {
+      throw new ApiError(409, "Only pending or approved leave requests can be cancelled.");
+    }
+
+    const approvedTreatment = leave.approved_treatment
+      ?? (leave.is_paid === "no" ? "unpaid" : "paid");
+    if (
+      leave.status === "approved"
+      && approvedTreatment === "paid"
+      && !isDefaultUnpaidLeaveType(leave.leave_type_name)
+    ) {
+      const year = yearOfDate(leave.start_date);
+      const [[allocation]] = await conn.query(
+        `SELECT * FROM employee_leave_allocations
+         WHERE employee_uuid=? AND leave_type_id=? AND year=? FOR UPDATE`,
+        [leave.employee_uuid, leave.leave_type_id, year],
+      );
+      if (!allocation) throw new ApiError(409, "The approved leave balance allocation no longer exists.");
+      const [[approval]] = await conn.query(
+        `SELECT debited_days FROM leave_balance_ledger
+         WHERE related_leave_request_uuid=? AND transaction_type='leave_approved'`,
+        [uuid],
+      );
+      const [[priorCancellation]] = await conn.query(
+        `SELECT id FROM leave_balance_ledger
+         WHERE related_leave_request_uuid=? AND transaction_type='leave_cancelled'`,
+        [uuid],
+      );
+      if (priorCancellation) throw new ApiError(409, "This leave balance has already been restored.");
+      restoredDays = approval
+        ? Number(approval.debited_days)
+        : Number(leave.approved_days ?? (await getWorkingDatesBetween(
+          leave.organization_id,
+          isoDate(leave.start_date),
+          isoDate(leave.end_date),
+          conn,
+        )).length);
+      if (!approval && leave.day_portion !== "full") restoredDays = 0.5;
+      const previousBalance = await getLeaveLedgerBalance(conn, allocation.id, allocation.remaining_days);
+      const updatedBalance = previousBalance + restoredDays;
+      await conn.query(
+        "UPDATE employee_leave_allocations SET used_days=GREATEST(0, used_days-?), remaining_days=? WHERE id=?",
+        [restoredDays, updatedBalance, allocation.id],
+      );
+      await recordLeaveBalanceTransaction(conn, {
+        employeeUuid: leave.employee_uuid,
+        leaveTypeId: leave.leave_type_id,
+        allocationId: allocation.id,
+        transactionType: "leave_cancelled",
+        creditedDays: restoredDays,
+        previousBalance,
+        updatedBalance,
+        leaveRequestUuid: uuid,
+        performedBy: actorUuid,
+        reason: `Cancelled approved ${leave.leave_type_name} leave and restored ${restoredDays} day(s).`,
+      });
+    }
+    const [result] = await conn.query(
+      `UPDATE leave_requests
+       SET status='cancelled', cancelled_by=?, cancelled_at=NOW()
+       WHERE uuid=? AND status IN ('pending','approved')`,
+      [actorUuid, uuid],
+    );
+    if (!result.affectedRows) throw new ApiError(409, "Leave request has already been cancelled.");
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  logAudit({
+    ...getActorFromReq(req),
+    action: "leave.cancel",
+    entityType: "leave_request",
+    entityId: uuid,
+    details: { previous_status: leave.status, restored_days: restoredDays },
+    req,
+  });
+  const [final] = await pool.query("SELECT * FROM leave_requests WHERE uuid=?", [uuid]);
+  return ok(res, { leaveRequest: final[0] }, "Leave request cancelled");
 }

@@ -12,6 +12,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
   Users,
   XCircle,
@@ -59,12 +60,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  orgService,
   orgLeavesService,
   orgLeaveAllocationService,
   type LeaveRequest,
   type LeaveType,
 } from "@/services";
-import { countDays, formatDate, formatDateTime, parseFeatureAccess } from "@/lib/utils";
+import { countDays, formatDate, formatDateTime, formatLeaveDays, parseFeatureAccess } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/leaves")({
   beforeLoad: () => {
@@ -113,7 +115,7 @@ function OrgLeavesContent() {
   const [selectedLeave, setSelectedLeave] = useState<LeaveRequest | null>(null);
   const [confirming, setConfirming] = useState<LeaveRequest | null>(null);
   const [decideAction, setDecideAction] = useState<"approved" | "rejected">("approved");
-  const [approvalTreatment, setApprovalTreatment] = useState<"paid" | "unpaid">("unpaid");
+  const [approvalTreatment, setApprovalTreatment] = useState<"paid" | "unpaid">("paid");
   const [typeDialog, setTypeDialog] = useState<{ open: boolean; editing: LeaveType | null }>({
     open: false,
     editing: null,
@@ -131,11 +133,19 @@ function OrgLeavesContent() {
   const list = useQuery({
     queryKey: ["orgLeaves", page, search, status, employeeUuid, leaveTypeId],
     queryFn: () => orgLeavesService.list({ page, limit: PAGE_SIZE, search, status, employee_uuid: employeeUuid || undefined, leave_type_id: leaveTypeId ? Number(leaveTypeId) : undefined, include_all: true }),
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const decide = useMutation({
-    mutationFn: ({ uuid, decision, treatment }: { uuid: string; decision: "approved" | "rejected"; treatment?: "paid" | "unpaid" }) =>
-      orgLeavesService.decide(uuid, { status: decision, approved_treatment: treatment }),
+    mutationFn: ({ uuid, decision, treatment }: {
+      uuid: string;
+      decision: "approved" | "rejected";
+      treatment?: "paid" | "unpaid";
+    }) => orgLeavesService.decide(uuid, {
+      status: decision,
+      ...(decision === "approved" && treatment ? { approved_treatment: treatment } : {}),
+    }),
     onSuccess: (_data, vars) => {
       toast.success(
         vars.decision === "approved" ? t("orgLeaves.leaveApproved") : t("orgLeaves.leaveRejected"),
@@ -158,6 +168,14 @@ function OrgLeavesContent() {
   });
 
   const items = list.data?.items ?? [];
+  const listErrorMessage = (
+    list.error as { response?: { data?: { message?: unknown } }; message?: unknown } | null
+  )?.response?.data?.message;
+  const listErrorText = typeof listErrorMessage === "string"
+    ? listErrorMessage
+    : list.error instanceof Error && list.error.message
+      ? list.error.message
+      : t("orgLeaves.loadFailed");
 
   const moduleLocked = isModuleFlagOff("leave_management");
   if (moduleLocked) return <ModuleFeatureLockedCard feature="leave_management" />;
@@ -197,6 +215,7 @@ function OrgLeavesContent() {
                     <div key={lt.id} className="flex items-center justify-between px-3 py-2">
                       <div className="flex items-center gap-2 text-sm">
                         <span className="font-medium text-foreground">{lt.name}</span>
+                        <span className="text-xs text-muted-foreground">{lt.is_paid === "no" ? t("orgLeaves.unpaidLeave") : t("orgLeaves.paidLeave")}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Button
@@ -279,14 +298,33 @@ function OrgLeavesContent() {
                     <SelectItem value="pending">{t("status.pending")}</SelectItem>
                     <SelectItem value="approved">{t("status.approved")}</SelectItem>
                     <SelectItem value="rejected">{t("status.rejected")}</SelectItem>
+                    <SelectItem value="cancelled">{t("status.cancelled")}</SelectItem>
                     <SelectItem value="all">{t("orgLeaves.all")}</SelectItem>
                   </SelectContent>
                 </Select>
                 </div>
               </div>
 
+              <div className="flex justify-end border-b border-border px-4 py-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={list.isFetching}
+                  onClick={() => void list.refetch()}
+                >
+                  <RefreshCw className={`mr-2 h-3.5 w-3.5${list.isFetching ? " animate-spin" : ""}`} />
+                  {t("orgLeaves.refresh")}
+                </Button>
+              </div>
+
               {list.isLoading ? (
                 <TableSkeleton />
+              ) : list.isError ? (
+                <div role="alert" className="p-6 text-center text-sm text-destructive">
+                  <p>{t("orgLeaves.loadFailed")}</p>
+                  <p className="mt-1 break-words text-xs">{listErrorText}</p>
+                </div>
               ) : items.length === 0 ? (
                 <div className="p-6">
                   <EmptyState
@@ -319,6 +357,9 @@ function OrgLeavesContent() {
                             {t("orgLeaves.days")}
                           </TableHead>
                           <TableHead className="whitespace-nowrap">
+                            {t("orgLeaves.payrollTreatment")}
+                          </TableHead>
+                          <TableHead className="whitespace-nowrap">
                             {t("orgLeaves.status")}
                           </TableHead>
                           <TableHead className="text-right whitespace-nowrap">
@@ -347,7 +388,21 @@ function OrgLeavesContent() {
                               {formatDate(r.start_date)} → {formatDate(r.end_date)}
                             </TableCell>
                             <TableCell data-label="Days" className="whitespace-nowrap text-sm text-foreground">
-                              {r.working_days ?? countDays(r.start_date, r.end_date)}
+                              {(() => {
+                                const days = r.approved_days ?? (
+                                  r.day_portion && r.day_portion !== "full"
+                                    ? 0.5
+                                    : r.working_days ?? (r.status === "pending" ? null : countDays(r.start_date, r.end_date))
+                                );
+                                return days === null ? "—" : formatLeaveDays(days);
+                              })()}
+                            </TableCell>
+                            <TableCell data-label="Payroll treatment" className="whitespace-nowrap text-sm">
+                              {(r.approved_treatment ?? r.requested_treatment) === "paid"
+                                ? <span className="text-success">{t("orgLeaves.paidLeave")}</span>
+                                : (r.approved_treatment ?? r.requested_treatment) === "unpaid"
+                                  ? <span className="text-warning">{t("orgLeaves.unpaidLeave")}</span>
+                                  : "—"}
                             </TableCell>
                             <TableCell data-label="Status" className="whitespace-nowrap">
                               <StatusBadge status={r.status} />
@@ -373,8 +428,8 @@ function OrgLeavesContent() {
                                       className="h-7 text-xs"
                                       disabled={isLocked}
                                       onClick={() => {
-                                        setApprovalTreatment(r.requested_treatment ?? "unpaid");
                                         setDecideAction("approved");
+                                        setApprovalTreatment(r.requested_treatment === "unpaid" ? "unpaid" : "paid");
                                         setConfirming(r);
                                       }}
                                     >
@@ -426,18 +481,38 @@ function OrgLeavesContent() {
 
       <Dialog open={!!confirming && decideAction === "approved"} onOpenChange={(o) => !o && setConfirming(null)}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Approve leave request</DialogTitle><DialogDescription>Choose whether this leave will be paid or unpaid in payroll.</DialogDescription></DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="leave-approval-treatment">Leave payment</Label>
-            <Select value={approvalTreatment} onValueChange={(value) => setApprovalTreatment(value as "paid" | "unpaid")}>
+          <DialogHeader>
+            <DialogTitle>{t("orgLeaves.approveTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("orgLeaves.approveTreatment")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="leave-approval-treatment">{t("orgLeaves.payrollTreatment")}</Label>
+            <Select
+              value={approvalTreatment}
+              onValueChange={(value) => setApprovalTreatment(value as "paid" | "unpaid")}
+            >
               <SelectTrigger id="leave-approval-treatment"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="unpaid">Unpaid</SelectItem>
+                <SelectItem value="paid">{t("orgLeaves.paidLeave")}</SelectItem>
+                <SelectItem value="unpaid">{t("orgLeaves.unpaidLeave")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button><Button onClick={() => confirming && decide.mutate({ uuid: confirming.uuid, decision: "approved", treatment: approvalTreatment })} disabled={decide.isPending}>Confirm Approval</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button>
+            <Button
+              onClick={() => confirming && decide.mutate({
+                uuid: confirming.uuid,
+                decision: "approved",
+                treatment: approvalTreatment,
+              })}
+              disabled={decide.isPending}
+            >
+              Confirm Approval
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <ConfirmDialog
@@ -451,14 +526,14 @@ function OrgLeavesContent() {
             ? decideAction === "approved"
               ? t("orgLeaves.approveDescription", {
                   name: confirming.employee_name ?? t("orgLeaves.thisEmployee"),
-                  days: confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
+                  days: confirming.approved_days ?? confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
                   leaveType: confirming.leave_type_name,
                   startDate: confirming.start_date,
                   endDate: confirming.end_date,
                 })
               : t("orgLeaves.rejectDescription", {
                   name: confirming.employee_name ?? t("orgLeaves.thisEmployee"),
-                  days: confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
+                  days: confirming.approved_days ?? confirming.working_days ?? countDays(confirming.start_date, confirming.end_date),
                   leaveType: confirming.leave_type_name,
                   startDate: confirming.start_date,
                   endDate: confirming.end_date,
@@ -750,9 +825,9 @@ function HistoryDialog({
         employee_name: string;
         balances: {
           year: number;
-          allocated_days: number;
-          used_days: number;
-          remaining_days: number;
+          allocated_days: number | string;
+          used_days: number | string;
+          remaining_days: number | string;
           leave_type_name: string;
         }[];
         leave_history: {
@@ -761,7 +836,17 @@ function HistoryDialog({
           start_date: string;
           end_date: string;
           days: number;
-          status: "pending" | "approved" | "rejected";
+          status: "pending" | "approved" | "rejected" | "cancelled";
+        }[];
+        balance_ledger: {
+          id: number;
+          transaction_type: string;
+          credited_days: number | string;
+          debited_days: number | string;
+          previous_balance: number | string;
+          updated_balance: number | string;
+          transaction_at: string;
+          reason: string;
         }[];
       }
     | null
@@ -781,7 +866,7 @@ function HistoryDialog({
         </DialogHeader>
         {isLoading ? (
           <TableSkeleton />
-        ) : !history || (history.balances.length === 0 && history.leave_history.length === 0) ? (
+        ) : !history || (history.balances.length === 0 && history.leave_history.length === 0 && history.balance_ledger.length === 0) ? (
           <p className="text-sm text-muted-foreground">{t("orgLeaves.allocNoHistory")}</p>
         ) : (
           <div className="max-h-[55vh] space-y-4 overflow-auto">
@@ -828,6 +913,36 @@ function HistoryDialog({
                 </TableBody>
               </Table>
             )}
+            {history.balance_ledger.length > 0 && (
+              <div>
+                <h3 className="mb-2 text-sm font-medium">Leave balance ledger</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="whitespace-nowrap">Transaction</TableHead>
+                      <TableHead className="whitespace-nowrap">Credit</TableHead>
+                      <TableHead className="whitespace-nowrap">Debit</TableHead>
+                      <TableHead className="whitespace-nowrap">Balance</TableHead>
+                      <TableHead className="whitespace-nowrap">Date / reason</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.balance_ledger.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="whitespace-nowrap">{entry.transaction_type.replace(/_/g, " ")}</TableCell>
+                        <TableCell>{entry.credited_days}</TableCell>
+                        <TableCell>{entry.debited_days}</TableCell>
+                        <TableCell>{entry.previous_balance} → {entry.updated_balance}</TableCell>
+                        <TableCell className="min-w-48 text-xs">
+                          <div>{formatDateTime(entry.transaction_at)}</div>
+                          <div className="text-muted-foreground">{entry.reason}</div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
         )}
         <DialogFooter>
@@ -852,16 +967,20 @@ function LeaveTypeDialog({
   const qc = useQueryClient();
   const { t } = useTranslation();
   const [name, setName] = useState("");
+  const [isPaid, setIsPaid] = useState<"yes" | "no">("yes");
 
   useEffect(() => {
-    if (open) setName(editing?.name ?? "");
+    if (open) {
+      setName(editing?.name ?? "");
+      setIsPaid(editing?.is_paid ?? "yes");
+    }
   }, [open, editing]);
 
   const save = useMutation({
     mutationFn: () =>
       editing
-        ? orgLeavesService.updateType(editing.id, { name })
-        : orgLeavesService.createType({ name }),
+        ? orgLeavesService.updateType(editing.id, { name, is_paid: isPaid })
+        : orgLeavesService.createType({ name, is_paid: isPaid }),
     onSuccess: () => {
       toast.success(editing ? t("orgLeaves.leaveTypeUpdated") : t("orgLeaves.leaveTypeCreated"));
       qc.invalidateQueries({ queryKey: ["orgLeaveTypes"] });
@@ -893,6 +1012,16 @@ function LeaveTypeDialog({
               onChange={(e) => setName(e.target.value)}
               placeholder={t("orgLeaves.namePlaceholder")}
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="lt-paid">{t("orgLeaves.payrollTreatment")}</Label>
+            <Select value={isPaid} onValueChange={(value) => setIsPaid(value as "yes" | "no")}>
+              <SelectTrigger id="lt-paid"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="yes">{t("orgLeaves.paidLeave")}</SelectItem>
+                <SelectItem value="no">{t("orgLeaves.unpaidLeave")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <DialogFooter>

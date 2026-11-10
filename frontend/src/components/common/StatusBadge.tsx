@@ -15,6 +15,7 @@ const styles: Record<string, string> = {
   unverified: "bg-destructive/12 text-destructive border-destructive/25 dark:bg-destructive/15",
   rejected: "bg-destructive/12 text-destructive border-destructive/25 dark:bg-destructive/15",
   approved: "bg-success/12 text-success border-success/25 dark:bg-success/15",
+  cancelled: "bg-muted text-muted-foreground border-border",
   checked_out: "bg-success/12 text-success border-success/25 dark:bg-success/15",
   checked_in:
     "bg-warning/15 text-warning-foreground border-warning/30 dark:bg-warning/20 dark:text-warning",
