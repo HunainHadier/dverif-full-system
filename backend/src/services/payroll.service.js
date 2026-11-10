@@ -134,11 +134,21 @@ export async function getPayrollSettings(orgId, conn = pool, month = null, year 
   }
   if (!rows.length) throw new ApiError(409, "Payroll settings are not configured. Select a salary calculation method and configure the organization shift times.");
   const settings = rows[0];
+  const salaryCalculationPolicy = normalizePayrollPolicy(
+    settings.salary_calculation_policy,
+    settings.salary_calculation_method,
+  );
   const start = timeToMinutes(settings.shift_start_time);
   const end = timeToMinutes(settings.shift_end_time);
   const shiftHours = end > start ? (end - start) / 60 : 0;
   if (shiftHours <= 0) throw new ApiError(409, "Organization check-out time must be later than shift start time.");
-  return { ...settings, hours_per_workday: shiftHours, currency: CURRENCY };
+  return {
+    ...settings,
+    salary_calculation_policy: salaryCalculationPolicy,
+    salary_calculation_method: payrollAttendanceBasis(salaryCalculationPolicy),
+    hours_per_workday: shiftHours,
+    currency: CURRENCY,
+  };
 }
 
 export function assertMonthYear(month, year) {
@@ -161,7 +171,153 @@ function monthBounds(month, year) {
 
 /** Round to 2dp. DECIMAL arrives from mysql2 as a string and must not concat. */
 function money(n) {
-  return Math.round(Number(n) * 100) / 100;
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+const MAX_PAYROLL_AMOUNT = 999999999999.99;
+
+export const PAYROLL_POLICIES = Object.freeze([
+  "working_days_only",
+  "working_days_and_hours",
+  "number_of_days_only",
+  "number_of_days_and_hours",
+]);
+
+export function normalizePayrollPolicy(policy, legacyMethod = "days") {
+  if (PAYROLL_POLICIES.includes(policy)) return policy;
+  if (policy !== undefined && policy !== null) {
+    throw new ApiError(400, "Select one of the four supported payroll policies.");
+  }
+  if (legacyMethod === "hours") return "working_days_and_hours";
+  if (legacyMethod === "days") return "working_days_only";
+  throw new ApiError(400, "Select one of the four supported payroll policies.");
+}
+
+export function payrollAttendanceBasis(policy) {
+  return policy.endsWith("_hours") ? "hours" : "days";
+}
+
+/** Shared component and net-pay calculation used by payroll previews and runs. */
+export function calculatePayrollAmounts({
+  basicSalary,
+  components = [],
+  monthlyVariables = [],
+  automaticLines = [],
+  overtimeAmount = 0,
+  expenseReimbursement = 0,
+  selectedComponentUuids,
+}) {
+  const basic = Number(basicSalary);
+  if (!Number.isFinite(basic) || basic < 0 || basic > MAX_PAYROLL_AMOUNT) {
+    throw new ApiError(409, "Basic salary must be a finite non-negative amount.");
+  }
+  const selected = selectedComponentUuids === undefined
+    ? null
+    : new Set(selectedComponentUuids);
+  const available = new Set(components.map((component) => component.assignment_uuid));
+  if (selected && [...selected].some((uuid) => !available.has(uuid))) {
+    throw new ApiError(400, "Selected salary components must be active assignments for this employee.");
+  }
+
+  const lines = [];
+  let allowanceTotal = 0;
+  let deductionTotal = 0;
+  const addLine = (line, label) => {
+    const amount = Number(line.amount);
+    if (!Number.isFinite(amount) || amount < 0 || amount > MAX_PAYROLL_AMOUNT) {
+      throw new ApiError(409, `${label} must be a finite non-negative amount.`);
+    }
+    if (line.type !== "allowance" && line.type !== "deduction") {
+      throw new ApiError(409, `${label} has an invalid salary component type.`);
+    }
+    const rounded = money(amount);
+    const normalized = {
+      label: String(line.label ?? label),
+      type: line.type === "deduction" ? "deduction" : "earning",
+      source: line.source,
+      amount: rounded,
+      basis_value: line.basis_value ?? null,
+      basis_unit: line.basis_unit ?? null,
+      ...(line.assignment_uuid ? { assignment_uuid: line.assignment_uuid } : {}),
+    };
+    lines.push(normalized);
+    if (line.type === "deduction") deductionTotal += rounded;
+    else allowanceTotal += rounded;
+  };
+
+  for (const component of components) {
+    if (selected && !selected.has(component.assignment_uuid)) continue;
+    if (typeof component.assignment_uuid !== "string" || !component.assignment_uuid) {
+      throw new ApiError(409, "An assigned salary component is missing its assignment identifier.");
+    }
+    if (component.type !== "allowance" && component.type !== "deduction") {
+      throw new ApiError(409, "An assigned salary component has an invalid type.");
+    }
+    const amount = Number(component.amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new ApiError(409, `Salary component "${component.name}" has an invalid amount.`);
+    }
+    const percentage = component.is_percentage === true
+      || component.is_percentage === 1
+      || component.is_percentage === "1";
+    if (![true, false, 0, 1, "0", "1"].includes(component.is_percentage)) {
+      throw new ApiError(409, `Salary component "${component.name}" has an invalid calculation type.`);
+    }
+    addLine({
+      label: component.name,
+      type: component.type,
+      source: "component",
+      amount: percentage ? basic * amount / 100 : amount,
+      assignment_uuid: component.assignment_uuid,
+    }, component.name);
+  }
+
+  for (const variable of monthlyVariables) {
+    addLine({
+      label: variable.label,
+      type: variable.type,
+      source: "monthly_variable",
+      amount: variable.amount,
+    }, variable.label);
+  }
+  for (const line of automaticLines) {
+    const type = line.type === "deduction" ? "deduction" : line.type === "earning" ? "allowance" : null;
+    if (!type) throw new ApiError(409, "An automatic payroll line has an invalid type.");
+    addLine({ ...line, type }, line.label);
+  }
+
+  const overtime = Number(overtimeAmount);
+  const reimbursement = Number(expenseReimbursement);
+  if (!Number.isFinite(overtime) || overtime < 0 || overtime > MAX_PAYROLL_AMOUNT) {
+    throw new ApiError(400, "Overtime amount must be a finite non-negative amount.");
+  }
+  if (!Number.isFinite(reimbursement) || reimbursement < 0 || reimbursement > MAX_PAYROLL_AMOUNT) {
+    throw new ApiError(409, "Expense reimbursement must be a finite non-negative amount.");
+  }
+  if (overtime > 0) addLine({
+    label: "Overtime",
+    type: "allowance",
+    source: "manual_overtime",
+    amount: overtime,
+  }, "Overtime");
+  if (reimbursement > 0) addLine({
+    label: "Expense reimbursement",
+    type: "allowance",
+    source: "auto_expense",
+    amount: reimbursement,
+  }, "Expense reimbursement");
+
+  const allowances = money(allowanceTotal);
+  const deductions = money(deductionTotal);
+  const expense = money(reimbursement);
+  const net = money(basic + allowances - deductions);
+  if ([allowances, deductions, expense, net].some((amount) => amount > MAX_PAYROLL_AMOUNT)) {
+    throw new ApiError(409, "Calculated payroll exceeds the maximum supported money amount.");
+  }
+  if (net < 0) {
+    throw new ApiError(409, `Calculated net salary is negative (${net.toFixed(2)}). Review the salary components and deductions.`);
+  }
+  return { allowances: money(allowances - expense), deductions, expenseReimbursement: expense, net, lines };
 }
 
 /**
@@ -534,17 +690,17 @@ export async function getMonthlyAttendanceAndLeaveSummary({ employeeUuid, orgId,
  * read `basis_value`, got undefined, and the payslip rendered "22 days" in the
  * label with an empty basis next to it.
  *
- * A zero working-day count is not an error the caller should have to handle: an
- * employee who joined and left mid-month, or an org that worked zero days, would
- * otherwise divide by zero and produce Infinity, which becomes NaN in the SQL
- * parameter and a corrupt salary row. There is simply nothing to prorate against,
- * so no automatic line is produced and `workingDays: 0` is returned so the
- * payslip can say why it is empty rather than silently showing nothing.
+ * A zero selected salary denominator or zero shift duration is rejected before
+ * rate calculation, rather than producing Infinity/NaN or a plausible-looking
+ * zero-pay line.
  */
 export function computeAutomaticLines({ summary, basicSalary, policy = summary?.policy }) {
   if (!policy) throw new ApiError(409, "Payroll settings are not configured.");
-  const basic = Number(basicSalary) || 0;
+  const basic = Number(basicSalary);
+  if (!Number.isFinite(basic) || basic < 0) throw new ApiError(409, "Basic salary must be a finite non-negative amount.");
   const workingDays = Number(summary.workingDays) || 0;
+  const scheduledWorkingDays = Number(summary.monthWorkingDays ?? workingDays) || 0;
+  const calendarDays = Number(summary.calendarDays) || 0;
   const shiftHours = Number(policy.hours_per_workday) || 0;
   const expectedHours = workingDays * shiftHours;
   const elapsedWorkingDays = Math.min(
@@ -557,18 +713,32 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const attendedDays = Number(summary.attendedDays) || 0;
   const absentDays = Number(summary.absentDays) || 0;
   const lateCount = Number(summary.lateCount) || 0;
-  const method = policy.salary_calculation_method || "days";
-  if (!["hours", "days"].includes(method)) throw new ApiError(409, "Select either working-hours or working-days salary calculation.");
+  const payrollPolicy = normalizePayrollPolicy(
+    policy.salary_calculation_policy,
+    policy.salary_calculation_method || "days",
+  );
+  const method = payrollAttendanceBasis(payrollPolicy);
+  const calendarBased = payrollPolicy.startsWith("number_of_days_");
+  const salaryDayDivisor = calendarBased ? calendarDays : scheduledWorkingDays;
+  if (salaryDayDivisor <= 0 && !calendarBased) {
+    throw new ApiError(409, "Payroll cannot be calculated because the monthly schedule has no working days.");
+  }
+  if (calendarBased && calendarDays <= 0) {
+    throw new ApiError(409, "Payroll cannot be calculated because the selected month has no calendar days.");
+  }
+  if (method === "hours" && shiftHours <= 0) {
+    throw new ApiError(409, "Payroll cannot be calculated because the configured shift duration is zero.");
+  }
   const lines = [];
-  if (workingDays <= 0 || basic <= 0) return {
+  if (basic <= 0) return {
     lines, perDayRate: 0, hourlyRate: 0, perDayHours: shiftHours,
-    totalDeduction: 0, totalAddition: 0, workingDays, divisor: 0,
-    payableRatio: 0, skipReason: workingDays <= 0 ? "no_working_days" : "no_basic_salary",
-    method, expectedHours, workedHours: Number(summary.workedHours || 0),
+    totalDeduction: 0, totalAddition: 0, workingDays, divisor: salaryDayDivisor,
+    payableRatio: 0, skipReason: "no_basic_salary",
+    method, payrollPolicy, expectedHours, workedHours: Number(summary.workedHours || 0),
   };
 
-  const perDayRate = money(basic / workingDays);
-  const hourlyRate = expectedHours > 0 ? money(basic / expectedHours) : 0;
+  const perDayRate = money(basic / salaryDayDivisor);
+  const hourlyRate = shiftHours > 0 ? money(basic / salaryDayDivisor / shiftHours) : 0;
   let payableRatio = 1;
 
   if (method === "days") {
@@ -640,8 +810,9 @@ export function computeAutomaticLines({ summary, basicSalary, policy = summary?.
   const totalAddition = money(lines.filter((l) => l.type === "earning").reduce((sum, line) => sum + line.amount, 0));
   return {
     lines, perDayRate, hourlyRate, perDayHours: shiftHours, totalDeduction, totalAddition,
-    workingDays, divisor: method === "hours" ? expectedHours : workingDays,
-    payableRatio, skipReason: null, method, expectedHours,
+    workingDays,
+    divisor: method === "hours" ? salaryDayDivisor * shiftHours : salaryDayDivisor,
+    payableRatio, skipReason: null, method, payrollPolicy, expectedHours,
     workedHours: Number(summary.workedHours || 0),
   };
 }

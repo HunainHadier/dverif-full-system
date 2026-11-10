@@ -110,11 +110,9 @@ describe("monthly attendance payroll calculation", () => {
     expect(aboveThreshold.totalDeduction).toBe(4500);
   });
 
-  it("does not divide by zero when a month has no scheduled working days", () => {
-    const result = calc({ workingDays: 0 });
-    expect(result.skipReason).toBe("no_working_days");
-    expect(result.divisor).toBe(0);
-    expect(result.lines).toEqual([]);
+  it("rejects a zero working-day denominator without dividing by zero", () => {
+    expect(() => calc({ workingDays: 0 }))
+      .toThrow("Payroll cannot be calculated because the monthly schedule has no working days.");
   });
 
   it("returns no automatic deduction for a missing basic salary", () => {

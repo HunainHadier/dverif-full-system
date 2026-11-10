@@ -42,6 +42,7 @@ const employee = {
 };
 const settings = {
   salary_calculation_method: "hours",
+  salary_calculation_policy: "working_days_and_hours",
   calculate_overtime: true,
   shift_start_time: "10:00",
   shift_end_time: "18:00",
@@ -170,6 +171,22 @@ describe("run-local payroll overrides", () => {
     expect(pool.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO payroll_employee_overtime"))).toBe(false);
   });
 
+  it("rejects a component selection that is not assigned to the payroll employee", async () => {
+    await expect(previewPayroll(request({
+      settings,
+      days,
+      component_selections: {
+        [employee.uuid]: {
+          allowance_uuids: ["d42b99cc-4874-4aeb-855d-51b03e7e5ed1"],
+          deduction_uuids: [],
+        },
+      },
+    }), response())).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("active assignments"),
+    });
+  });
+
   it("uses the run-local calendar without querying the organization's saved schedule", async () => {
     const calendar = await payrollService.getWorkingDaysForMonth({
       orgId: 7,
@@ -250,6 +267,7 @@ describe("run-local payroll overrides", () => {
 
     const regeneratedSettings = {
       salary_calculation_method: "days",
+      salary_calculation_policy: "working_days_only",
       calculate_overtime: false,
       shift_start_time: "09:00",
       shift_end_time: "17:00",

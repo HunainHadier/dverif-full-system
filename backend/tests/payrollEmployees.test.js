@@ -29,10 +29,22 @@ describe("listPayrollEmployees", () => {
       .mockResolvedValueOnce([[{ total: 1 }]])
       .mockResolvedValueOnce([[employee]])
       .mockResolvedValueOnce([[
-        { employee_uuid: employee.uuid, amount: "500", name: "Transport", type: "allowance", is_percentage: 0 },
-        { employee_uuid: employee.uuid, amount: "10", name: "Housing", type: "allowance", is_percentage: 1 },
-        { employee_uuid: employee.uuid, amount: "1500", name: "Tax", type: "deduction", is_percentage: 0 },
-        { employee_uuid: employee.uuid, amount: "5", name: "Insurance", type: "deduction", is_percentage: 1 },
+        {
+          assignment_uuid: "d42b99cc-4874-4aeb-855d-51b03e7e5ed1",
+          employee_uuid: employee.uuid, amount: "500", name: "Transport", type: "allowance", is_percentage: 0,
+        },
+        {
+          assignment_uuid: "61e66edf-1860-4400-9340-1537c5e0b9a1",
+          employee_uuid: employee.uuid, amount: "10", name: "Housing", type: "allowance", is_percentage: 1,
+        },
+        {
+          assignment_uuid: "9f1fb123-a201-4cb0-889d-f9b78c46fc37",
+          employee_uuid: employee.uuid, amount: "1500", name: "Tax", type: "deduction", is_percentage: 0,
+        },
+        {
+          assignment_uuid: "a2a3c4b8-471c-4c38-99fb-bc5552280843",
+          employee_uuid: employee.uuid, amount: "5", name: "Insurance", type: "deduction", is_percentage: 1,
+        },
       ]]);
 
     const res = mockRes();
@@ -43,14 +55,14 @@ describe("listPayrollEmployees", () => {
       {
         ...employee,
         allowance_items: [
-          { name: "Transport", amount: 500 },
-          { name: "Housing", amount: 10000 },
+          { uuid: "d42b99cc-4874-4aeb-855d-51b03e7e5ed1", name: "Transport", amount: 500 },
+          { uuid: "61e66edf-1860-4400-9340-1537c5e0b9a1", name: "Housing", amount: 10000 },
         ],
         deduction_items: [
-          { name: "Tax", amount: 1500 },
-          { name: "Insurance", amount: 5000 },
+          { uuid: "9f1fb123-a201-4cb0-889d-f9b78c46fc37", name: "Tax", amount: 1500 },
+          { uuid: "a2a3c4b8-471c-4c38-99fb-bc5552280843", name: "Insurance", amount: 5000 },
         ],
-        allowances: 10500,
+        allowances: 12500,
         deductions: 6500,
         overtime_amount: 2000,
         net_salary: 106000,

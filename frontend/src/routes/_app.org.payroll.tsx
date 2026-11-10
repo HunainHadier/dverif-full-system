@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,6 +82,10 @@ export const Route = createFileRoute("/_app/org/payroll")({
 });
 
 const PAGE_SIZE = 10;
+type PayrollComponentSelections = Record<string, {
+  allowance_uuids: string[];
+  deduction_uuids: string[];
+}>;
 
 function PayrollOvertimeInput({
   value,
@@ -125,8 +130,12 @@ function apiErrorMessage(e: unknown, fallback: string) {
 }
 
 function normalizePayrollSettings(settings: PayrollSettings): PayrollSettings {
+  const salaryCalculationPolicy = settings.salary_calculation_policy
+    ?? (settings.salary_calculation_method === "hours" ? "working_days_and_hours" : "working_days_only");
   return {
     ...settings,
+    salary_calculation_policy: salaryCalculationPolicy,
+    salary_calculation_method: salaryCalculationPolicy.endsWith("_hours") ? "hours" : "days",
     calculate_overtime: false,
     shift_start_time: String(settings.shift_start_time).slice(0, 5),
     shift_end_time: String(settings.shift_end_time).slice(0, 5),
@@ -161,7 +170,15 @@ function recordPolicySnapshot(value: unknown): PayrollSettings | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const snapshot = raw as Record<string, unknown>;
   const method = snapshot.salary_calculation_method;
-  if (method !== "hours" && method !== "days") return undefined;
+  const salaryCalculationPolicy = typeof snapshot.salary_calculation_policy === "string"
+    ? snapshot.salary_calculation_policy
+    : method === "hours" ? "working_days_and_hours" : method === "days" ? "working_days_only" : null;
+  if (
+    salaryCalculationPolicy !== "working_days_only"
+    && salaryCalculationPolicy !== "working_days_and_hours"
+    && salaryCalculationPolicy !== "number_of_days_only"
+    && salaryCalculationPolicy !== "number_of_days_and_hours"
+  ) return undefined;
   if (
     typeof snapshot.calculate_overtime !== "boolean"
     || typeof snapshot.shift_start_time !== "string"
@@ -171,7 +188,8 @@ function recordPolicySnapshot(value: unknown): PayrollSettings | undefined {
     return undefined;
   }
   return {
-    salary_calculation_method: method,
+    salary_calculation_policy: salaryCalculationPolicy,
+    salary_calculation_method: salaryCalculationPolicy.endsWith("_hours") ? "hours" : "days",
     calculate_overtime: snapshot.calculate_overtime,
     shift_start_time: snapshot.shift_start_time.slice(0, 5),
     shift_end_time: snapshot.shift_end_time.slice(0, 5),
@@ -264,6 +282,7 @@ function OrgPayrollPage() {
   const [genYear, setGenYear] = useState(new Date().getFullYear());
   const [periodPickerOpen, setPeriodPickerOpen] = useState(false);
   const [generateSettingsForm, setGenerateSettingsForm] = useState<PayrollSettings>({
+    salary_calculation_policy: "working_days_only",
     salary_calculation_method: "days",
     calculate_overtime: false,
     shift_start_time: "09:00",
@@ -332,6 +351,7 @@ function OrgPayrollPage() {
   useEffect(() => {
     if (!payrollSettingsQ.isSuccess) return;
     const settings = payrollSettingsQ.data ?? {
+      salary_calculation_policy: "working_days_only" as const,
       salary_calculation_method: "days" as const,
       calculate_overtime: false,
       shift_start_time: "09:00",
@@ -370,6 +390,20 @@ function OrgPayrollPage() {
   }, [payrollScheduleQ.data, payrollScheduleQ.isSuccess, genMonth, genYear]);
 
   const allEmployees = employeesQ.data?.items ?? [];
+  const [componentSelections, setComponentSelections] = useState<PayrollComponentSelections>({});
+  const resolvedComponentSelections = Object.fromEntries(allEmployees.map((employee) => {
+    const saved = componentSelections[employee.uuid];
+    const allowanceUuids = new Set(employee.allowance_items.map((item) => item.uuid));
+    const deductionUuids = new Set(employee.deduction_items.map((item) => item.uuid));
+    return [employee.uuid, {
+      allowance_uuids: saved
+        ? saved.allowance_uuids.filter((uuid) => allowanceUuids.has(uuid))
+        : [...allowanceUuids],
+      deduction_uuids: saved
+        ? saved.deduction_uuids.filter((uuid) => deductionUuids.has(uuid))
+        : [...deductionUuids],
+    }];
+  }));
   const filteredEmployees = empSearch.trim()
     ? allEmployees.filter((e) => {
       const q = empSearch.trim().toLowerCase();
@@ -385,6 +419,10 @@ function OrgPayrollPage() {
   // Prune selections that no longer exist (e.g. employee deleted).
   const validSelected = new Set(
     [...selected].filter((id) => allEmployees.some((e) => e.uuid === id)),
+  );
+  const runComponentSelections = Object.fromEntries(
+    (validSelected.size ? allEmployees.filter((employee) => validSelected.has(employee.uuid)) : allEmployees)
+      .map((employee) => [employee.uuid, resolvedComponentSelections[employee.uuid]]),
   );
   const allVisibleSelected =
     filteredEmployees.length > 0 && filteredEmployees.every((e) => validSelected.has(e.uuid));
@@ -467,6 +505,7 @@ function OrgPayrollPage() {
     settings: generateRunSettings,
     days: generateRunDays,
     overtimeAmounts: runOvertimeAmounts,
+    componentSelections: runComponentSelections,
   });
   const canEditPayrollSettings = perms.payroll;
   const setGenerateScheduleEveryDay = (dayType: "working" | "off") =>
@@ -506,6 +545,31 @@ function OrgPayrollPage() {
     });
   };
 
+  const togglePayrollComponent = (
+    employeeUuid: string,
+    type: "allowance" | "deduction",
+    assignmentUuid: string,
+    checked: boolean,
+  ) => {
+    setComponentSelections((current) => {
+      const currentSelection = resolvedComponentSelections[employeeUuid];
+      const selectedUuids = new Set(current[employeeUuid]?.[type === "allowance" ? "allowance_uuids" : "deduction_uuids"]
+        ?? currentSelection?.[type === "allowance" ? "allowance_uuids" : "deduction_uuids"]
+        ?? []);
+      if (checked) selectedUuids.add(assignmentUuid);
+      else selectedUuids.delete(assignmentUuid);
+      return {
+        ...current,
+        [employeeUuid]: {
+          ...currentSelection,
+          ...(type === "allowance"
+            ? { allowance_uuids: [...selectedUuids] }
+            : { deduction_uuids: [...selectedUuids] }),
+        },
+      };
+    });
+  };
+
   const openPayrollGeneration = () => {
     setGenMonth(employeeMonth);
     setGenYear(employeeYear);
@@ -541,9 +605,10 @@ function OrgPayrollPage() {
       settings: PayrollSettings;
       days: PayrollRunDay[];
       overtimeAmounts: Record<string, number>;
+      componentSelections: PayrollComponentSelections;
     }
   >({
-    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts, componentSelections }) =>
       orgSalaryService.generate({
         month,
         year,
@@ -551,6 +616,7 @@ function OrgPayrollPage() {
         settings,
         days,
         overtime_amounts: overtimeAmounts,
+        component_selections: componentSelections,
       }),
     onSuccess: (res, variables) => {
       toast.success(
@@ -605,10 +671,11 @@ function OrgPayrollPage() {
       settings: PayrollSettings;
       days: PayrollRunDay[];
       overtimeAmounts: Record<string, number>;
+      componentSelections: PayrollComponentSelections;
       settingsFingerprint: string;
     }
   >({
-    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts, componentSelections }) =>
       orgSalaryService.preview({
         month,
         year,
@@ -616,6 +683,7 @@ function OrgPayrollPage() {
         settings,
         days,
         overtime_amounts: overtimeAmounts,
+        component_selections: componentSelections,
       }),
     onSuccess: () => {
       setPreviewSource("generation");
@@ -692,9 +760,10 @@ function OrgPayrollPage() {
       settings: PayrollSettings;
       days: PayrollRunDay[];
       overtimeAmounts: Record<string, number>;
+      componentSelections: PayrollComponentSelections;
     }
   >({
-    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts }) =>
+    mutationFn: ({ uuids, month, year, settings, days, overtimeAmounts, componentSelections }) =>
       orgSalaryService.generate({
         month,
         year,
@@ -703,6 +772,7 @@ function OrgPayrollPage() {
         settings,
         days,
         overtime_amounts: overtimeAmounts,
+        component_selections: componentSelections,
       }),
     onSuccess: (res, variables) => {
       toast.success(t("payroll.regenerated", { count: res.count }));
@@ -984,7 +1054,16 @@ function OrgPayrollPage() {
                           const draftKey = overtimeDraftKey(emp.uuid, employeeMonth, employeeYear);
                           const overtimeValue = overtimeDrafts[draftKey] ?? String(emp.overtime_amount);
                           const overtimeAmount = overtimeValue.trim() === "" ? 0 : Number(overtimeValue);
-                          const estimatedNet = Number(emp.net_salary) + overtimeAmount - Number(emp.overtime_amount);
+                          const selectedComponents = resolvedComponentSelections[emp.uuid];
+                          const selectedAllowances = emp.allowance_items
+                            .filter((item) => selectedComponents.allowance_uuids.includes(item.uuid))
+                            .reduce((sum, item) => sum + item.amount, 0);
+                          const selectedDeductions = emp.deduction_items
+                            .filter((item) => selectedComponents.deduction_uuids.includes(item.uuid))
+                            .reduce((sum, item) => sum + item.amount, 0);
+                          const estimatedNet = Math.round((
+                            Number(emp.basic_salary ?? 0) + selectedAllowances + overtimeAmount - selectedDeductions
+                          ) * 100) / 100;
                           return (
                             <TableRow key={emp.uuid}>
                               <TableCell className="w-10">
@@ -1018,15 +1097,25 @@ function OrgPayrollPage() {
                                 className="whitespace-nowrap text-right text-sm"
                               >
                                 <div className="space-y-1">
-                                  {emp.allowance_items.length > 0 ? emp.allowance_items.map((item, index) => (
-                                    <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                                      <span className="text-muted-foreground">{item.name}</span>
+                                  {emp.allowance_items.length > 0 ? emp.allowance_items.map((item) => (
+                                    <label key={item.uuid} className="flex items-center justify-between gap-3">
+                                      <span className="flex items-center gap-2 text-muted-foreground">
+                                        <Checkbox
+                                          checked={selectedComponents.allowance_uuids.includes(item.uuid)}
+                                          disabled={!perms.payroll || isLocked}
+                                          onCheckedChange={(checked) => togglePayrollComponent(
+                                            emp.uuid, "allowance", item.uuid, checked === true,
+                                          )}
+                                          aria-label={`Include allowance ${item.name} for ${emp.full_name}`}
+                                        />
+                                        {item.name}
+                                      </span>
                                       <span>{money(item.amount)}</span>
-                                    </div>
+                                    </label>
                                   )) : <span className="text-muted-foreground">—</span>}
                                   {emp.allowance_items.length > 1 && (
                                     <div className="border-t border-border pt-1 font-medium">
-                                      {money(emp.allowances)}
+                                      {money(selectedAllowances)}
                                     </div>
                                   )}
                                 </div>
@@ -1036,15 +1125,25 @@ function OrgPayrollPage() {
                                 className="whitespace-nowrap text-right text-sm"
                               >
                                 <div className="space-y-1">
-                                  {emp.deduction_items.length > 0 ? emp.deduction_items.map((item, index) => (
-                                    <div key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                                      <span className="text-muted-foreground">{item.name}</span>
+                                  {emp.deduction_items.length > 0 ? emp.deduction_items.map((item) => (
+                                    <label key={item.uuid} className="flex items-center justify-between gap-3">
+                                      <span className="flex items-center gap-2 text-muted-foreground">
+                                        <Checkbox
+                                          checked={selectedComponents.deduction_uuids.includes(item.uuid)}
+                                          disabled={!perms.payroll || isLocked}
+                                          onCheckedChange={(checked) => togglePayrollComponent(
+                                            emp.uuid, "deduction", item.uuid, checked === true,
+                                          )}
+                                          aria-label={`Include deduction ${item.name} for ${emp.full_name}`}
+                                        />
+                                        {item.name}
+                                      </span>
                                       <span>{money(item.amount)}</span>
-                                    </div>
+                                    </label>
                                   )) : <span className="text-muted-foreground">—</span>}
                                   {emp.deduction_items.length > 1 && (
                                     <div className="border-t border-border pt-1 font-medium">
-                                      {money(emp.deductions)}
+                                      {money(selectedDeductions)}
                                     </div>
                                   )}
                                 </div>
@@ -1508,30 +1607,35 @@ function OrgPayrollPage() {
                 ) : (
                   <>
                     <div className="space-y-2 text-xs sm:space-y-3 sm:text-sm">
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Checkbox
-                          checked={generateSettingsForm.salary_calculation_method === "hours"}
-                          disabled={!canEditPayrollSettings}
-                          onCheckedChange={() => setGenerateSettingsForm((settings) => ({
-                            ...settings,
-                            salary_calculation_method: "hours",
-                          }))}
-                          aria-label={t("payroll.salaryByHours")}
-                        />
-                        <span>{t("payroll.salaryByHours")}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Checkbox
-                          checked={generateSettingsForm.salary_calculation_method === "days"}
-                          disabled={!canEditPayrollSettings}
-                          onCheckedChange={() => setGenerateSettingsForm((settings) => ({
-                            ...settings,
-                            salary_calculation_method: "days",
-                          }))}
-                          aria-label={t("payroll.salaryByDays")}
-                        />
-                        <span>{t("payroll.salaryByDays")}</span>
-                      </div>
+                      <Label>{t("payroll.calculationPolicy", "Calculation policy for this payroll run")}</Label>
+                      <RadioGroup
+                        value={generateSettingsForm.salary_calculation_policy}
+                        aria-label={t("payroll.calculationPolicy", "Calculation policy for this payroll run")}
+                        disabled={!canEditPayrollSettings}
+                        onValueChange={(value: PayrollSettings["salary_calculation_policy"]) => setGenerateSettingsForm((settings) => ({
+                          ...settings,
+                          salary_calculation_policy: value,
+                          salary_calculation_method: value.endsWith("_hours") ? "hours" : "days",
+                        }))}
+                        className="grid gap-2 sm:grid-cols-2"
+                      >
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                          <RadioGroupItem value="working_days_only" />
+                          Working Days Only
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                          <RadioGroupItem value="working_days_and_hours" />
+                          Working Days &amp; Hours
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                          <RadioGroupItem value="number_of_days_only" />
+                          Number of Days Only
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                          <RadioGroupItem value="number_of_days_and_hours" />
+                          Number of Days &amp; Hours
+                        </label>
+                      </RadioGroup>
                     </div>
                     <div className="border-t pt-2 text-xs sm:pt-3 sm:text-sm">
                       <div className="mb-2 flex items-center gap-1.5 font-medium sm:gap-2">
@@ -1663,6 +1767,7 @@ function OrgPayrollPage() {
                   settings: generateRunSettings,
                   days: generateRunDays,
                   overtimeAmounts: runOvertimeAmounts,
+                  componentSelections: runComponentSelections,
                   settingsFingerprint: generatePayrollFingerprint,
                 })
               }
@@ -1690,6 +1795,7 @@ function OrgPayrollPage() {
                     settings: generateRunSettings,
                     days: generateRunDays,
                     overtimeAmounts: runOvertimeAmounts,
+                    componentSelections: runComponentSelections,
                   })
                 }
                 disabled={generate.isPending || regenerate.isPending || !previewMatchesCurrent || scheduleUnavailable || payrollPoliciesUnavailable || !generateSettingsReady || hasInvalidOvertimeDraft}
@@ -1740,6 +1846,7 @@ function OrgPayrollPage() {
                 : Number(item.expense_reimbursement) || 0;
               const calculatedReimbursement = Number(item.expense_reimbursement) || 0;
               const previewNet = Number(item.net_salary) - calculatedReimbursement + reimbursement;
+              const isCalendarBased = item.rates.salary_calculation_policy.startsWith("number_of_days_");
               const auto = item.lines.filter((l) => l.source !== "component" && l.source !== "auto_expense");
               const expenseClaims = previewSource === "generation"
                 ? item.expense_reimbursement_details?.claims ?? []
@@ -1855,10 +1962,12 @@ function OrgPayrollPage() {
 
                   <p className="mt-2 text-xs text-muted-foreground">
                     {isHoursBased
-                      ? `Salary basis: ${item.rates.divisor} scheduled hours · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
-                      : item.rates.divisor === a.working_days
-                        ? `Salary basis: ${item.rates.divisor} working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`
-                        : `Salary basis: ${item.rates.divisor} working days after joining (of ${a.working_days} this month) · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
+                      ? isCalendarBased
+                        ? `Salary basis: ${a.calendar_days} calendar days × shift duration · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
+                        : `Salary basis: ${item.rates.divisor} scheduled hours · hourly rate ${item.rates.currency} ${money(item.rates.hourly)}`
+                      : isCalendarBased
+                        ? `Salary basis: ${item.rates.divisor} calendar days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`
+                        : `Salary basis: ${item.rates.divisor} scheduled working days · daily rate ${item.rates.currency} ${money(item.rates.per_day)}`}
                     {a.holidays_in_month > 0
                       ? ` · ${t("payroll.previewHolidays", {
                         count: a.holidays_in_month,
@@ -1905,6 +2014,9 @@ function OrgPayrollPage() {
             settings: previewedRun.settings,
             days: previewedRun.days,
             overtimeAmounts: overtimeAmountsFor(alreadyGeneratedSelected),
+            componentSelections: Object.fromEntries(
+              alreadyGeneratedSelected.map((uuid) => [uuid, previewedRun.componentSelections[uuid]]),
+            ),
           });
         }}
       />
@@ -1931,6 +2043,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [settingsForm, setSettingsForm] = useState<PayrollSettings>({
+    salary_calculation_policy: "working_days_only",
     salary_calculation_method: "days",
     calculate_overtime: false,
     shift_start_time: "09:00",
@@ -1941,8 +2054,8 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     late_grace_minutes: 10,
   });
   const settingsQ = useQuery({
-    queryKey: ["orgPayrollSettings", month, year],
-    queryFn: () => orgSalaryService.settings(month, year),
+    queryKey: ["orgPayrollDefaultSettings"],
+    queryFn: () => orgSalaryService.settings(),
     refetchOnMount: "always",
   });
   const scheduleQ = useQuery({
@@ -1954,6 +2067,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     if (!settingsQ.isSuccess) return;
     const settings = settingsQ.data ?? {
+      salary_calculation_policy: "working_days_only" as const,
       salary_calculation_method: "days" as const,
       calculate_overtime: false,
       shift_start_time: "09:00",
@@ -2000,11 +2114,14 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
     setDayTypes(next);
   }, [scheduleOpen, scheduleQ.data, month, year]);
   const saveSettings = useMutation({
-    mutationFn: () => orgSalaryService.saveSettings({ ...settingsForm, month, year }),
+    mutationFn: () => orgSalaryService.saveSettings({ ...settingsForm, scope: "organization" }),
     onSuccess: async (settings) => {
-      qc.setQueryData(["orgPayrollSettings", month, year], settings);
-      toast.success("Payroll settings saved");
-      await qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] });
+      qc.setQueryData(["orgPayrollDefaultSettings"], settings);
+      toast.success("Organization default payroll policy saved");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["orgPayrollDefaultSettings"] }),
+        qc.invalidateQueries({ queryKey: ["orgPayrollSettings"] }),
+      ]);
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? "Could not save payroll settings"),
   });
@@ -2081,7 +2198,7 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
           {/* Policies — right. */}
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2">
-              <div><h3 className="font-semibold">Policies</h3><p className="text-xs text-muted-foreground">Choose policies for this month.</p></div>
+              <div><h3 className="font-semibold">Organization default policy</h3><p className="text-xs text-muted-foreground">Payroll-run changes are month-specific and do not change this default.</p></div>
               <Popover open={periodPickerOpen} onOpenChange={setPeriodPickerOpen}>
                 <PopoverTrigger asChild>
                   <Button type="button" variant="outline" size="sm" className="shrink-0">
@@ -2112,15 +2229,36 @@ function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="space-y-3">
-              <label className="flex cursor-pointer items-start gap-2 text-sm">
-                <Checkbox checked={settingsForm.salary_calculation_method === "hours"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "hours" }))} />
-                <span>Calculate salary according to working hours</span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 text-sm">
-                <Checkbox checked={settingsForm.salary_calculation_method === "days"} disabled={!canManage} onCheckedChange={() => setSettingsForm((s) => ({ ...s, salary_calculation_method: "days" }))} />
-                <span>Calculate salary according to working days</span>
-              </label>
+            <div className="space-y-2">
+              <Label>Default payroll calculation policy</Label>
+              <RadioGroup
+                value={settingsForm.salary_calculation_policy}
+                aria-label="Default payroll calculation policy"
+                disabled={!canManage}
+                onValueChange={(value: PayrollSettings["salary_calculation_policy"]) => setSettingsForm((settings) => ({
+                  ...settings,
+                  salary_calculation_policy: value,
+                  salary_calculation_method: value.endsWith("_hours") ? "hours" : "days",
+                }))}
+                className="grid gap-2 sm:grid-cols-2"
+              >
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 text-sm hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                  <RadioGroupItem value="working_days_only" />
+                  Working Days Only
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 text-sm hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                  <RadioGroupItem value="working_days_and_hours" />
+                  Working Days &amp; Hours
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 text-sm hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                  <RadioGroupItem value="number_of_days_only" />
+                  Number of Days Only
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border p-2 text-sm hover:bg-accent has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                  <RadioGroupItem value="number_of_days_and_hours" />
+                  Number of Days &amp; Hours
+                </label>
+              </RadioGroup>
             </div>
             <div className="space-y-3 border-t pt-3">
               {settingsQ.isError ? (

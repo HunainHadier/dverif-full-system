@@ -222,6 +222,7 @@ export type PayrollPreviewItem = {
   attendance: {
     /** The organization's scheduled working days for the whole month. */
     working_days: number;
+    calendar_days: number;
     attended_days: number;
     worked_hours: number;
     expected_working_hours: number;
@@ -238,6 +239,7 @@ export type PayrollPreviewItem = {
     hourly: number;
     divisor: number;
     salary_calculation_method: "hours" | "days";
+    salary_calculation_policy: PayrollSettings["salary_calculation_policy"];
     expected_hours: number;
     worked_hours: number;
     payable_ratio: number;
@@ -266,6 +268,12 @@ export type PayrollPreview = {
 };
 
 export type PayrollSettings = {
+  salary_calculation_policy:
+    | "working_days_only"
+    | "working_days_and_hours"
+    | "number_of_days_only"
+    | "number_of_days_and_hours";
+  /** Kept as the attendance-basis compatibility field for older clients. */
   salary_calculation_method: "hours" | "days";
   calculate_overtime: boolean;
   shift_start_time: string;
@@ -283,8 +291,8 @@ export type PayrollEmployeeRow = {
   designation: string | null;
   department: string | null;
   basic_salary: number | string | null;
-  allowance_items: { name: string; amount: number }[];
-  deduction_items: { name: string; amount: number }[];
+  allowance_items: { uuid: UUID; name: string; amount: number }[];
+  deduction_items: { uuid: UUID; name: string; amount: number }[];
   allowances: number | string;
   deductions: number | string;
   overtime_amount: number | string;
@@ -297,9 +305,11 @@ export type PayrollRunDay = { date: string; day_type: "working" | "off" };
 export const orgSalaryService = {
   employees: (params: { page?: number; limit?: number; month?: number; year?: number } = {}) =>
     api.get<Paginated<PayrollEmployeeRow>>("/org/payroll-employees", { params }).then((r) => r.data),
-  settings: (month: number, year: number) =>
-    api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings", { params: { month, year } }).then((r) => r.data.settings),
-  saveSettings: (data: PayrollSettings & { month: number; year: number }) =>
+  settings: (month?: number, year?: number) =>
+    api.get<{ settings: PayrollSettings | null }>("/org/payroll-settings", {
+      params: month === undefined || year === undefined ? undefined : { month, year },
+    }).then((r) => r.data.settings),
+  saveSettings: (data: PayrollSettings & ({ scope: "organization" } | { scope: "month"; month: number; year: number })) =>
     api.put<{ settings: PayrollSettings }>("/org/payroll-settings", data).then((r) => r.data.settings),
   schedule: (month: number, year: number) => api.get<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", { params: { month, year } }).then((r) => r.data),
   saveSchedule: (data: { month: number; year: number; days: { date: string; day_type: "working" | "off" }[] }) => api.put<{ month: number; year: number; days: MonthlyWorkDay[] }>("/org/payroll-schedule", data).then((r) => r.data),
@@ -331,6 +341,7 @@ export const orgSalaryService = {
     settings?: PayrollSettings;
     days?: PayrollRunDay[];
     overtime_amounts?: Record<string, number>;
+    component_selections?: Record<string, { allowance_uuids: UUID[]; deduction_uuids: UUID[] }>;
   }) =>
     api.post<PayrollPreview>("/org/payroll/preview", data).then((r) => r.data),
   generate: (data: {
@@ -341,6 +352,7 @@ export const orgSalaryService = {
     settings: PayrollSettings;
     days: PayrollRunDay[];
     overtime_amounts?: Record<string, number>;
+    component_selections?: Record<string, { allowance_uuids: UUID[]; deduction_uuids: UUID[] }>;
   }) =>
     api
       .post<{

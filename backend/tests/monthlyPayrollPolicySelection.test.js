@@ -12,6 +12,7 @@ describe("monthly payroll policy selection", () => {
     pool.query.mockResolvedValueOnce([[
       {
         salary_calculation_method: "hours",
+        salary_calculation_policy: "number_of_days_and_hours",
         calculate_overtime: 1,
         shift_start_time: "08:00:00",
         shift_end_time: "16:00:00",
@@ -27,6 +28,7 @@ describe("monthly payroll policy selection", () => {
     );
     expect(settings).toMatchObject({
       salary_calculation_method: "hours",
+      salary_calculation_policy: "number_of_days_and_hours",
       calculate_overtime: 1,
       overtime_multiplier: "2.00",
       hours_per_workday: 8,
@@ -54,5 +56,32 @@ describe("monthly payroll policy selection", () => {
       [7],
     );
     expect(settings.salary_calculation_method).toBe("days");
+    expect(settings.salary_calculation_policy).toBe("working_days_only");
+  });
+
+  it("uses a monthly policy override without changing the saved organization default", async () => {
+    pool.query
+      .mockResolvedValueOnce([[{
+        salary_calculation_method: "days",
+        salary_calculation_policy: "number_of_days_only",
+        shift_start_time: "09:00:00",
+        shift_end_time: "17:00:00",
+      }]])
+      .mockResolvedValueOnce([[{
+        salary_calculation_method: "hours",
+        salary_calculation_policy: "working_days_and_hours",
+        shift_start_time: "08:00:00",
+        shift_end_time: "16:00:00",
+      }]]);
+
+    const monthly = await getPayrollSettings(7, pool, 11, 2026);
+    const organizationDefault = await getPayrollSettings(7, pool);
+
+    expect(monthly.salary_calculation_policy).toBe("number_of_days_only");
+    expect(organizationDefault.salary_calculation_policy).toBe("working_days_and_hours");
+    expect(pool.query).toHaveBeenLastCalledWith(
+      "SELECT * FROM organization_payroll_settings WHERE organization_id=?",
+      [7],
+    );
   });
 });
