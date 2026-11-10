@@ -36,10 +36,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TableSkeleton } from "@/routes/_app.requests";
-import { formatDateTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { apiErrorMessage } from "@/lib/utils";
 import { DecisionResultDialog } from "@/components/common/DecisionResultDialog";
+
+function formatAttendanceDateTime(value: string | null): string {
+  if (!value) return "—";
+  const parsed = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    ? new Date(value)
+    : new Date(`${value.replace(" ", "T")}+05:00`);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: "Asia/Karachi",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
 
 function AttendancePage() {
   const { t } = useTranslation();
@@ -159,9 +171,9 @@ function AttendancePage() {
           </div>
           {record && (
             <div className="mt-3 flex gap-6 text-sm text-muted-foreground">
-              <span>{t("orgAttendance.in")}: {formatDateTime(record.check_in_at)}</span>
+              <span>{t("orgAttendance.in")}: {formatAttendanceDateTime(record.check_in_at)}</span>
               {record.check_out_at && (
-                <span>{t("orgAttendance.out")}: {formatDateTime(record.check_out_at)}</span>
+                <span>{t("orgAttendance.out")}: {formatAttendanceDateTime(record.check_out_at)}</span>
               )}
             </div>
           )}
@@ -224,10 +236,10 @@ function AttendancePage() {
                       </TableCell>
                       <TableCell data-label="Date" className="font-medium">{r.date}</TableCell>
                       <TableCell data-label="Check In" className="text-muted-foreground">
-                        {formatDateTime(r.check_in_at)}
+                        {formatAttendanceDateTime(r.check_in_at)}
                       </TableCell>
                       <TableCell data-label="Check Out" className="text-muted-foreground">
-                        {r.check_out_at ? formatDateTime(r.check_out_at) : "—"}
+                        {formatAttendanceDateTime(r.check_out_at)}
                       </TableCell>
                       <TableCell data-label="Status">
                         <Badge

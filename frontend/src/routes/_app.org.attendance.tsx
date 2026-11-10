@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Check,
   ChevronsUpDown,
+  Pencil,
   Info,
   Lock,
   Plus,
@@ -50,6 +51,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   Table,
@@ -59,8 +61,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { orgAttendanceService, orgService, isCurrentEmployee } from "@/services";
-import { apiErrorMessage, formatDate, formatDateTime, parseFeatureAccess } from "@/lib/utils";
+import { orgAttendanceService, orgService, isCurrentEmployee, type AttendanceRecord } from "@/services";
+import { apiErrorMessage, parseFeatureAccess } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/attendance")({
   beforeLoad: () => {
@@ -78,10 +80,35 @@ export const Route = createFileRoute("/_app/org/attendance")({
 
 const PAGE_SIZE = 10;
 
-/** Local YYYY-MM-DD. toISOString() would shift the day in any timezone behind UTC. */
+/** The attendance calendar always follows the organization's Asia/Karachi day. */
 function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Karachi" }).format(new Date());
+}
+
+function formatAttendanceDateTime(value: string): string {
+  const parsed = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    ? new Date(value)
+    : new Date(`${value.replace(" ", "T")}+05:00`);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: "Asia/Karachi",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
+function attendanceTimeValue(value: string | null): string {
+  if (!value) return "";
+  const parsed = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    ? new Date(value)
+    : new Date(`${value.replace(" ", "T")}+05:00`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Karachi",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(parsed);
 }
 
 function parseLocalDate(value: string): Date {
@@ -135,6 +162,8 @@ function OrgAttendanceContent() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
+  const [attendanceTab, setAttendanceTab] = useState("records");
+  const [correctionRecord, setCorrectionRecord] = useState<AttendanceRecord | null>(null);
 
   const employeesQ = useQuery({
     queryKey: ["orgAttendanceEmployees"],
@@ -197,17 +226,19 @@ function OrgAttendanceContent() {
     <div>
       <PageHeader title={t("nav.attendance")} description={t("attendance.description")} />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          onClick={() => setManualOpen(true)}
-          disabled={isLocked}
-          title="Record attendance for an employee manually"
-        >
-          {isLocked ? <Lock className="mr-1 h-3 w-3" /> : <UserCheck className="mr-1 h-3 w-3" />}
-          {isLocked ? "Subscription Required" : "Mark attendance"}
-        </Button>
-      </div>
+      {attendanceTab === "records" ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setManualOpen(true)}
+            disabled={isLocked}
+            title="Record attendance for an employee manually"
+          >
+            {isLocked ? <Lock className="mr-1 h-3 w-3" /> : <UserCheck className="mr-1 h-3 w-3" />}
+            {isLocked ? "Subscription Required" : "Mark attendance"}
+          </Button>
+        </div>
+      ) : null}
 
       <ManualAttendanceDialog
         open={manualOpen}
@@ -217,6 +248,17 @@ function OrgAttendanceContent() {
           setManualOpen(false);
           setPage(1);
           qc.invalidateQueries({ queryKey: ["orgAttendance"] });
+          qc.invalidateQueries({ queryKey: ["orgMissingAttendance"] });
+        }}
+      />
+      <AttendanceCorrectionDialog
+        key={correctionRecord?.uuid ?? "no-correction"}
+        record={correctionRecord}
+        onClose={() => setCorrectionRecord(null)}
+        onDone={() => {
+          setCorrectionRecord(null);
+          qc.invalidateQueries({ queryKey: ["orgAttendance"] });
+          qc.invalidateQueries({ queryKey: ["orgMissingAttendance"] });
         }}
       />
 
@@ -292,6 +334,15 @@ function OrgAttendanceContent() {
 
       <Card className="mt-4 border-border/70 shadow-none">
         <CardContent className="p-0">
+          <Tabs value={attendanceTab} onValueChange={(value) => {
+            setAttendanceTab(value);
+            setPage(1);
+          }}>
+          <TabsList className="m-4 mb-0">
+            <TabsTrigger value="records">Attendance records</TabsTrigger>
+            <TabsTrigger value="missing">Missing Attendance</TabsTrigger>
+          </TabsList>
+          <TabsContent value="records" className="mt-0">
           <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-12">
             <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-12">
               Showing today's attendance by default. Select a date range to view older records.
@@ -471,6 +522,9 @@ function OrgAttendanceContent() {
                         {t("attendance.checkOut")}
                       </TableHead>
                       <TableHead className="whitespace-nowrap">{t("attendance.status")}</TableHead>
+                      <TableHead className="whitespace-nowrap">Duration</TableHead>
+                      <TableHead className="whitespace-nowrap">Checkout source</TableHead>
+                      <TableHead className="whitespace-nowrap">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -488,22 +542,43 @@ function OrgAttendanceContent() {
                           </div>
                         </TableCell>
                         <TableCell data-label="Date" className="whitespace-nowrap text-sm text-muted-foreground">
-                          {formatDate(r.date)}
+                          {formatAttendanceDate(r.date)}
                         </TableCell>
                         <TableCell data-label="Check In" className="whitespace-nowrap text-sm text-muted-foreground">
-                          {r.check_in_at ? formatDateTime(r.check_in_at) : "—"}
+                          {r.check_in_at ? formatAttendanceDateTime(r.check_in_at) : "—"}
                           {r.check_in_ip && (
                             <div className="text-xs text-muted-foreground/70">{r.check_in_ip}</div>
                           )}
                         </TableCell>
                         <TableCell data-label="Check Out" className="whitespace-nowrap text-sm text-muted-foreground">
-                          {r.check_out_at ? formatDateTime(r.check_out_at) : "—"}
+                          {r.check_out_at ? formatAttendanceDateTime(r.check_out_at) : "—"}
                           {r.check_out_ip && (
                             <div className="text-xs text-muted-foreground/70">{r.check_out_ip}</div>
                           )}
                         </TableCell>
                         <TableCell data-label="Status" className="whitespace-nowrap">
                           <StatusBadge status={r.status} />
+                        </TableCell>
+                        <TableCell data-label="Duration" className="whitespace-nowrap text-sm text-muted-foreground">
+                          {r.worked_minutes === null || r.worked_minutes === undefined
+                            ? "Pending checkout"
+                            : `${Math.floor(r.worked_minutes / 60)}h ${r.worked_minutes % 60}m`}
+                          {r.overtime_minutes ? ` (+${r.overtime_minutes}m overtime)` : ""}
+                        </TableCell>
+                        <TableCell data-label="Checkout source" className="whitespace-nowrap text-sm text-muted-foreground">
+                          {r.checkout_source ?? "—"}
+                        </TableCell>
+                        <TableCell data-label="Actions">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setCorrectionRecord(r)}
+                            disabled={isLocked}
+                          >
+                            <Pencil className="mr-1 h-3.5 w-3.5" />
+                            Correct
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -518,9 +593,192 @@ function OrgAttendanceContent() {
               />
             </>
           )}
+          </TabsContent>
+          <TabsContent value="missing" className="mt-0 p-4">
+            <MissingAttendancePanel />
+          </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function MissingAttendancePanel() {
+  const [month, setMonth] = useState(localToday().slice(0, 7));
+  const [page, setPage] = useState(1);
+  const missing = useQuery({
+    queryKey: ["orgMissingAttendance", month, page],
+    queryFn: () => orgAttendanceService.missing({ month, page, limit: 20 }),
+    enabled: /^\d{4}-(0[1-9]|1[0-2])$/.test(month),
+  });
+  const items = missing.data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold">Missing Attendance</h2>
+          <p className="text-xs text-muted-foreground">
+            Employees without a record on configured working days. Existing records are excluded.
+          </p>
+        </div>
+        <Input
+          type="month"
+          aria-label="Missing attendance month"
+          value={month}
+          onChange={(event) => {
+            setMonth(event.target.value);
+            setPage(1);
+          }}
+          className="w-auto"
+        />
+      </div>
+      {missing.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {apiErrorMessage(missing.error, "Could not load missing attendance. Verify the monthly work schedule.")}
+        </p>
+      ) : missing.isLoading ? (
+        <TableSkeleton />
+      ) : items.length === 0 ? (
+        <p className="rounded-md border border-border p-6 text-center text-sm text-muted-foreground">
+          No missing attendance for this month.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={`${item.employee_uuid}-${item.date}`}>
+                    <TableCell>
+                      <div className="font-medium">{item.employee_name}</div>
+                      <div className="text-xs text-muted-foreground">{item.employee_email ?? ""}</div>
+                    </TableCell>
+                    <TableCell>{formatAttendanceDate(item.date)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <Pagination
+            page={page}
+            total={missing.data?.total ?? 0}
+            totalPages={missing.data?.totalPages ?? 1}
+            onChange={setPage}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function AttendanceCorrectionDialog({
+  record,
+  onClose,
+  onDone,
+}: {
+  record: AttendanceRecord | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [checkIn, setCheckIn] = useState(() => attendanceTimeValue(record?.check_in_at ?? null));
+  const [checkOut, setCheckOut] = useState(() => attendanceTimeValue(record?.check_out_at ?? null));
+  const [breakMinutes, setBreakMinutes] = useState(
+    () => record?.break_duration_minutes === null || record?.break_duration_minutes === undefined
+      ? ""
+      : String(record.break_duration_minutes),
+  );
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const correction = useMutation({
+    mutationFn: () => orgAttendanceService.correct(record!.uuid, {
+      check_in_time: checkIn,
+      check_out_time: checkOut || null,
+      break_duration_minutes: breakMinutes === "" ? null : Number(breakMinutes),
+      reason: reason.trim(),
+    }),
+    onSuccess: () => {
+      toast.success("Attendance corrected");
+      onDone();
+    },
+    onError: (cause) => toast.error(apiErrorMessage(cause, "Could not correct attendance")),
+  });
+
+  const submit = () => {
+    if (!/^\d{2}:\d{2}$/.test(checkIn)) {
+      setError("Enter check-in time in HH:MM format.");
+      return;
+    }
+    if (checkOut && !/^\d{2}:\d{2}$/.test(checkOut)) {
+      setError("Enter checkout in HH:MM format or leave it empty to clear checkout.");
+      return;
+    }
+    if (breakMinutes !== "" && (!/^\d+$/.test(breakMinutes) || Number(breakMinutes) > 1440)) {
+      setError("Break must be a whole number between 0 and 1440 minutes.");
+      return;
+    }
+    if (!reason.trim()) {
+      setError("A correction reason is required.");
+      return;
+    }
+    setError("");
+    correction.mutate();
+  };
+
+  return (
+    <Dialog open={record !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Correct attendance</DialogTitle>
+        </DialogHeader>
+        {record ? (
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              {record.employee_name} · {formatAttendanceDate(record.date)}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Check-in *</Label>
+                <Input type="time" value={checkIn} onChange={(event) => setCheckIn(event.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Check-out</Label>
+                <Input type="time" value={checkOut} onChange={(event) => setCheckOut(event.target.value)} />
+                <p className="text-xs text-muted-foreground">Leave empty to clear checkout. Earlier time means next day.</p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Break duration (minutes)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1440"
+                step="1"
+                value={breakMinutes}
+                onChange={(event) => setBreakMinutes(event.target.value)}
+                placeholder="Not recorded"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Correction reason *</Label>
+              <Textarea value={reason} rows={2} onChange={(event) => setReason(event.target.value)} />
+            </div>
+            {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={correction.isPending}>Cancel</Button>
+          <Button onClick={submit} loading={correction.isPending}>Save correction</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -530,8 +788,9 @@ function OrgAttendanceContent() {
  * The self-service check-in is gated by the IP allowlist, which silently
  * strands anyone whose device sits behind a dynamic IP or who is working
  * off-site. This dialog is the escape hatch. It mirrors the backend's rules
- * rather than discovering them on submit: a reason is mandatory, the checkout
- * must be after the check-in, and the date cannot be in the future.
+ * rather than discovering them on submit: a reason is mandatory, checkout
+ * cannot equal check-in, earlier clock times mean next-day checkout, and the
+ * date cannot be in the future.
  */
 function ManualAttendanceDialog({
   open,
@@ -593,8 +852,8 @@ function ManualAttendanceDialog({
     else if (date > localToday()) next.date = "Cannot be a future date";
     if (!/^\d{2}:\d{2}$/.test(checkIn)) next.checkIn = "Check-in time is required";
     if (checkOut && !/^\d{2}:\d{2}$/.test(checkOut)) next.checkOut = "Use HH:MM";
-    else if (checkOut && checkIn && checkOut <= checkIn)
-      next.checkOut = "Must be after the check-in time";
+    else if (checkOut && checkIn && checkOut === checkIn)
+      next.checkOut = "Checkout must be after check-in and within 24 hours";
     if (!reason.trim()) next.reason = "A reason is required for a manual entry";
     setErrors(next);
     if (Object.keys(next).length === 0) submit.mutate();
@@ -650,6 +909,7 @@ function ManualAttendanceDialog({
             <div className="space-y-1.5">
               <Label>Check out</Label>
               <Input type="time" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} />
+              <p className="text-xs text-muted-foreground">An earlier time is treated as next-day checkout.</p>
               {errors.checkOut ? (
                 <p className="text-xs text-destructive">{errors.checkOut}</p>
               ) : null}

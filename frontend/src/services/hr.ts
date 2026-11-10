@@ -19,6 +19,7 @@ import type {
   EmployeeLeaveAllocation,
   EmployeeLeaveAllocationHistory,
   AttendanceRecord,
+  MissingAttendanceRecord,
   IpRule,
   SalaryRecord,
   SalaryComponent,
@@ -140,6 +141,8 @@ export const orgAttendanceService = {
       month?: string;
     } = {},
   ) => api.get<Paginated<AttendanceRecord>>("/org/attendance", { params }).then((r) => r.data),
+  missing: (params: { month: string; page?: number; limit?: number }) =>
+    api.get<Paginated<MissingAttendanceRecord>>("/org/attendance/missing", { params }).then((r) => r.data),
   ips: () =>
     api.get<{ allowedIps: string[]; rules: IpRule[] }>("/org/attendance/ips").then((r) => r.data),
   addIp: (ip: string) =>
@@ -165,11 +168,21 @@ removeIp: (id: number) =>
       date: string;
       check_in_time: string;
       check_out_time?: string;
+      break_duration_minutes?: number | null;
       reason: string;
     }) =>
       api
         .post<{ record: AttendanceRecord }>("/org/attendance/manual-entry", data)
         .then((r) => r.data),
+    correct: (uuid: UUID, data: {
+      check_in_time: string;
+      check_out_time?: string | null;
+      break_duration_minutes?: number | null;
+      reason: string;
+    }) =>
+      api
+        .patch<{ record: AttendanceRecord }>(`/org/attendance/${uuid}/correction`, data)
+        .then((r) => r.data.record),
   };
 
 /**

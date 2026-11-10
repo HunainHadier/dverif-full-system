@@ -1001,6 +1001,12 @@ export type AttendanceRecord = {
   check_out_at: string | null;
   check_in_ip: string | null;
   check_out_ip: string | null;
+  checkout_source?: "self" | "admin" | "auto" | null;
+  break_duration_minutes?: number | null;
+  elapsed_minutes?: number | null;
+  worked_minutes?: number | null;
+  regular_minutes?: number | null;
+  overtime_minutes?: number | null;
   date: string;
   status: "checked_in" | "checked_out";
   created_at: string;
@@ -1009,6 +1015,13 @@ export type AttendanceRecord = {
   designation?: string | null;
   organization_uuid?: UUID | null;
   organization_name?: string | null;
+};
+
+export type MissingAttendanceRecord = {
+  employee_uuid: UUID;
+  employee_name: string;
+  employee_email: string | null;
+  date: string;
 };
 
 export type IpRule = {

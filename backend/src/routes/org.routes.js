@@ -116,7 +116,9 @@ import {
 } from "../controllers/org/monthlySalaryVariables.controller.js";
 import {
   addAllowedIp,
+  correctAttendance,
   getAllowedIps,
+  listMissingAttendance,
   listOrgAttendance,
   manualEntry,
   removeAllowedIp,
@@ -283,10 +285,12 @@ router.get("/employees/:uuid/leave-allocations", leaveMgmt, asyncHandler(getEmpl
 
 // ---- Attendance (staff: view, add/edit IPs, manual entries; delete IP = org_admin) ----
 router.get("/attendance", attendanceMgmt, asyncHandler(listOrgAttendance));
+router.get("/attendance/missing", attendanceMgmt, asyncHandler(listMissingAttendance));
 router.get("/attendance/ips", attendanceMgmt, asyncHandler(getAllowedIps));
 router.post("/attendance/ips", attendanceMgmt, asyncHandler(addAllowedIp));
 router.delete("/attendance/ips/:id", attendanceMgmtOwner, asyncHandler(removeAllowedIp));
 router.post("/attendance/manual-entry", attendanceMgmt, asyncHandler(manualEntry));
+router.patch("/attendance/:uuid/correction", attendanceMgmt, asyncHandler(correctAttendance));
 
 // ---- Payroll settings and monthly work calendar ----
 router.get("/payroll-employees", payrollMgmt, asyncHandler(listPayrollEmployees));
