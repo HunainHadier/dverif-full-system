@@ -503,6 +503,8 @@ export async function uploadResume(req, res) {
 }
 
 export async function removeResume(req, res) {
+  const resolved = await recruitment.downloadResume({ orgId: req.scopeOrgId, attachmentUuid: req.params.attachmentUuid });
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", resolved.entity_uuid);
   const result = await recruitment.removeResume({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -516,6 +518,7 @@ export async function downloadResume(req, res) {
     orgId: req.scopeOrgId,
     attachmentUuid: req.params.attachmentUuid,
   });
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", resolved.entity_uuid);
   res.setHeader("Content-Type", resolved.mime_type || "application/octet-stream");
   // file_name is original-upload text and attacker-influenced, so anything that could
   // break out of the header is replaced before it goes in.
