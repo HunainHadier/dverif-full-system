@@ -57,7 +57,7 @@ export function creatorScopeCondition(req, moduleKey, recordAlias = "r") {
 
 /** Scope-check a creator-owned recruitment record before UUID-based operations. */
 export async function assertCreatedRecordInDataScope(req, moduleKey, tableName, recordUuid) {
-  const allowedTables = new Set(["candidates", "job_openings"]);
+  const allowedTables = new Set(["candidates", "job_openings", "assets"]);
   if (!allowedTables.has(tableName)) throw new ApiError(500, "Invalid scoped record type");
   const scope = getDataScope(req.user, moduleKey);
   if (scope === "entire_organization") return;
