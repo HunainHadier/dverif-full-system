@@ -237,6 +237,12 @@ const requireOrganizationWideReportsScope = (req, res, next) => {
   }
   return next();
 };
+const requireOrganizationSettingsScope = (req, res, next) => {
+  if (getDataScope(req.user, "organization_settings") !== "entire_organization") {
+    return next(new ApiError(403, "Organization settings require Entire Organization data scope."));
+  }
+  return next();
+};
 const userMgmtFeature = requireModuleFeature("user_management");
 const userMgmtPermission = requirePermission("user_management");
 const portalAccessIfRequested = (req, res, next) => {
@@ -370,8 +376,8 @@ router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payroll
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
 // ---- Approval policy (org_admin) ----
-router.get("/approval-policy", [...staff, requirePermission("organization_settings.view")], asyncHandler(getApprovalPolicyHandler));
-router.put("/approval-policy", [...staff, requirePermission("organization_settings.edit")], asyncHandler(updateApprovalPolicyHandler));
+router.get("/approval-policy", [...staff, requirePermission("organization_settings.view"), requireOrganizationSettingsScope], asyncHandler(getApprovalPolicyHandler));
+router.put("/approval-policy", [...staff, requirePermission("organization_settings.edit"), requireOrganizationSettingsScope], asyncHandler(updateApprovalPolicyHandler));
 
 // ---- Payroll auto-generation (staff) ----
 // Preview is registered before generate and, more importantly, is POST because it
