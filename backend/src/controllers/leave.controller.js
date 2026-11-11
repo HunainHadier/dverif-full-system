@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../utils/dataScopes.js";
 import { ok, created } from "../utils/response.js";
 import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
@@ -554,6 +555,11 @@ export async function listOrgLeaves(req, res) {
 
   let whereClause = "WHERE e.organization_id = ?";
   const params = [orgId];
+  const scopeFilter = employeeScopeCondition(req, "leave_management", "e");
+  if (scopeFilter) {
+    whereClause += ` AND ${scopeFilter.sql}`;
+    params.push(...scopeFilter.params);
+  }
   // Review queues must include future requests as well as requests active today.
   if (dateFrom || dateTo) {
     const from = dateFrom || dateTo;
@@ -684,6 +690,7 @@ export async function decideLeave(req, res) {
     if (!req.admin && lr.organization_id !== req.user.organization) {
       throw new ApiError(403, "This leave request is not part of your organization.");
     }
+    await assertEmployeeInDataScope(req, "leave_management", lr.employee_uuid);
 
     if (status === "approved") {
       const startDate = isoDate(lr.start_date);
@@ -828,7 +835,8 @@ export async function cancelLeave(req, res) {
     if (!rows.length) throw new ApiError(404, "Leave request not found");
     leave = rows[0];
     const isOwner = leave.linked_user_uuid === req.user?.uuid;
-    if (!req.admin && !isOwner) throw new ApiError(403, "You may only cancel your own leave request.");
+    const isOrgStaff = ["org_admin", "sub_admin"].includes(req.user?.org_role);
+    if (!req.admin && !isOwner && !isOrgStaff) throw new ApiError(403, "You may only cancel your own leave request or a request within your authorized organization scope.");
     if (!req.admin && leave.organization_id !== req.user?.organization) {
       throw new ApiError(403, "This leave request is not part of your organization.");
     }
