@@ -1411,6 +1411,7 @@ export async function downloadPayslip(req, res) {
   const isAdmin = Boolean(req.admin);
   const orgId = isAdmin ? null : req.scopeOrgId;
   const record = await getSalaryRecordForPayslip(req.params.uuid, orgId, isAdmin);
+  if (!isAdmin) await assertEmployeeInDataScope(req, "payroll", record.employee_uuid);
 
   const pdf = await generatePayslipPdf({
     record,
