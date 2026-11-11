@@ -33,11 +33,14 @@ export function employeeScopeCondition(req, moduleKey, employeeAlias = "e") {
   const scope = getDataScope(req.user, moduleKey);
   if (scope === "entire_organization") return null;
   if (scope === "own_records") {
-    return { sql: `${employeeAlias}.linked_user_uuid = ?`, params: [req.user.uuid] };
+    return {
+      sql: `(${employeeAlias}.linked_user_uuid = ? OR ${employeeAlias}.added_by_uuid = ?)`,
+      params: [req.user.uuid, req.user.uuid],
+    };
   }
   return {
-    sql: `(${employeeAlias}.linked_user_uuid = ? OR ${employeeAlias}.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))`,
-    params: [req.user.uuid, req.scopeOrgId ?? req.user.organization, req.user.uuid],
+    sql: `(${employeeAlias}.linked_user_uuid = ? OR ${employeeAlias}.added_by_uuid = ? OR ${employeeAlias}.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))`,
+    params: [req.user.uuid, req.user.uuid, req.scopeOrgId ?? req.user.organization, req.user.uuid],
   };
 }
 
