@@ -204,6 +204,22 @@ const leaveMgmt = [...staff, requireModuleFeature("leave_management")];
 const leaveMgmtOwner = [...orgAdminsOnly, requireModuleFeature("leave_management")];
 const payrollMgmt = [...staff, requireModuleFeature("payroll_management")];
 const payrollMgmtOwner = [...orgAdminsOnly, requireModuleFeature("payroll_management")];
+const employeeView = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.view")];
+const employeeCreate = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.create")];
+const employeeEdit = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.edit")];
+const employeeArchive = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.archive")];
+const departmentManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_departments")];
+const designationManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_designations")];
+const attendanceView = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")];
+const attendanceManual = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manual_entry")];
+const attendanceCorrect = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.correct_check_in_out")];
+const attendanceIps = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manage_ips")];
+const leaveView = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.view")];
+const leaveAllocate = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.allocate_balance")];
+const leaveTypesManage = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.manage_leave_types")];
+const payrollView = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.view")];
+const payrollGenerateAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.generate")];
+const payrollSettingsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_settings")];
 const userMgmtFeature = requireModuleFeature("user_management");
 const userMgmtPermission = requirePermission("user_management");
 const portalAccessIfRequested = (req, res, next) => {
@@ -219,29 +235,29 @@ const hrLettersOwner = [...orgAdminsOnly, requireModuleFeature("hr_letters_manag
 // ---- Employees ----
 // Staff can create/edit/list/view employees and upload documents. Only the
 // org_admin can DELETE.
-router.get("/employees", empMgmt, asyncHandler(listEmployees));
-router.post("/employees", empMgmt, portalAccessIfRequested, createEmployeeLimiter, asyncHandler(createEmployee));
-router.get("/employees/:uuid", empMgmt, asyncHandler(getEmployee));
-router.put("/employees/:uuid", empMgmt, asyncHandler(updateEmployee));
-router.delete("/employees/:uuid", empMgmtOwner, asyncHandler(deleteEmployee));
+router.get("/employees", employeeView, asyncHandler(listEmployees));
+router.post("/employees", employeeCreate, portalAccessIfRequested, createEmployeeLimiter, asyncHandler(createEmployee));
+router.get("/employees/:uuid", employeeView, asyncHandler(getEmployee));
+router.put("/employees/:uuid", employeeEdit, asyncHandler(updateEmployee));
+router.delete("/employees/:uuid", employeeArchive, asyncHandler(deleteEmployee));
 router.post("/employees/:uuid/resend-invite", userMgmtStaff, asyncHandler(resendEmployeeInvite));
 
 // Reference records (ex-employees / learned_reference): create a standalone
 // record directly, or archive an existing roster row into the reference list.
 // /employees/reference (literal) is registered before the /employees/:uuid
 // patterns as a defensive measure against "reference" being captured as a UUID.
-router.post("/employees/reference", empMgmt, asyncHandler(createReference));
-router.post("/employees/:uuid/archive-reference", empMgmt, asyncHandler(archiveReference));
+router.post("/employees/reference", employeeCreate, asyncHandler(createReference));
+router.post("/employees/:uuid/archive-reference", employeeArchive, asyncHandler(archiveReference));
 
 // Employee documents
-router.get("/employees/:uuid/documents", empMgmt, asyncHandler(listEmployeeDocuments));
+router.get("/employees/:uuid/documents", employeeView, asyncHandler(listEmployeeDocuments));
 router.post(
   "/employees/:uuid/documents",
-  empMgmt,
+  employeeEdit,
   uploadDocs.array("documents", 10),
   asyncHandler(uploadEmployeeDocuments)
 );
-router.delete("/employees/documents/:docUuid", empMgmtOwner, asyncHandler(deleteEmployeeDocument));
+router.delete("/employees/documents/:docUuid", employeeArchive, asyncHandler(deleteEmployeeDocument));
 
 router.get("/users", userMgmtStaff, asyncHandler(listOrgUsers));
 
@@ -261,73 +277,73 @@ router.delete(
 router.delete("/admin-users/:uuid", userMgmt, asyncHandler(removeAdminUserPermanently));
 
 // ---- Managed departments & designations (staff; delete = org_admin) ----
-router.get("/departments", staff, asyncHandler(listDepartments));
-router.post("/departments", staff, asyncHandler(createDepartment));
+router.get("/departments", employeeView, asyncHandler(listDepartments));
+router.post("/departments", departmentManage, asyncHandler(createDepartment));
 router.delete("/departments/:uuid", orgAdminsOnly, asyncHandler(deleteDepartment));
 
-router.get("/designations", staff, asyncHandler(listDesignations));
-router.post("/designations", staff, asyncHandler(createDesignation));
+router.get("/designations", employeeView, asyncHandler(listDesignations));
+router.post("/designations", designationManage, asyncHandler(createDesignation));
 router.delete("/designations/:uuid", orgAdminsOnly, asyncHandler(deleteDesignation));
 
 // ---- Leave types + leave review (staff; delete type = org_admin) ----
-router.get("/leave-types", leaveMgmt, asyncHandler(listLeaveTypes));
-router.post("/leave-types", leaveMgmt, asyncHandler(createLeaveType));
-router.put("/leave-types/:id", leaveMgmt, asyncHandler(updateLeaveType));
+router.get("/leave-types", leaveView, asyncHandler(listLeaveTypes));
+router.post("/leave-types", leaveTypesManage, asyncHandler(createLeaveType));
+router.put("/leave-types/:id", leaveTypesManage, asyncHandler(updateLeaveType));
 router.delete("/leave-types/:id", leaveMgmtOwner, asyncHandler(deleteLeaveType));
 
-router.get("/leaves", leaveMgmt, asyncHandler(listOrgLeaves));
+router.get("/leaves", leaveView, asyncHandler(listOrgLeaves));
 
 // ---- Leave allocations (staff: allocate/edit balances; history = staff) ----
-router.get("/leave-allocations", leaveMgmt, asyncHandler(listLeaveAllocations));
-router.put("/leave-allocations", leaveMgmt, asyncHandler(setLeaveAllocation));
-router.put("/leave-allocations/designation", leaveMgmt, asyncHandler(setDesignationLeaveAllocation));
-router.get("/employees/:uuid/leave-allocations", leaveMgmt, asyncHandler(getEmployeeLeaveHistory));
+router.get("/leave-allocations", leaveView, asyncHandler(listLeaveAllocations));
+router.put("/leave-allocations", leaveAllocate, asyncHandler(setLeaveAllocation));
+router.put("/leave-allocations/designation", leaveAllocate, asyncHandler(setDesignationLeaveAllocation));
+router.get("/employees/:uuid/leave-allocations", leaveView, asyncHandler(getEmployeeLeaveHistory));
 
 // ---- Attendance (staff: view, add/edit IPs, manual entries; delete IP = org_admin) ----
-router.get("/attendance", attendanceMgmt, asyncHandler(listOrgAttendance));
-router.get("/attendance/missing", attendanceMgmt, asyncHandler(listMissingAttendance));
-router.get("/attendance/ips", attendanceMgmt, asyncHandler(getAllowedIps));
-router.post("/attendance/ips", attendanceMgmt, asyncHandler(addAllowedIp));
-router.delete("/attendance/ips/:id", attendanceMgmtOwner, asyncHandler(removeAllowedIp));
-router.post("/attendance/manual-entry", attendanceMgmt, asyncHandler(manualEntry));
-router.patch("/attendance/:uuid/correction", attendanceMgmt, asyncHandler(correctAttendance));
+router.get("/attendance", attendanceView, asyncHandler(listOrgAttendance));
+router.get("/attendance/missing", attendanceView, asyncHandler(listMissingAttendance));
+router.get("/attendance/ips", attendanceIps, asyncHandler(getAllowedIps));
+router.post("/attendance/ips", attendanceIps, asyncHandler(addAllowedIp));
+router.delete("/attendance/ips/:id", attendanceIps, asyncHandler(removeAllowedIp));
+router.post("/attendance/manual-entry", attendanceManual, asyncHandler(manualEntry));
+router.patch("/attendance/:uuid/correction", attendanceCorrect, asyncHandler(correctAttendance));
 
 // ---- Payroll settings and monthly work calendar ----
-router.get("/payroll-employees", payrollMgmt, asyncHandler(listPayrollEmployees));
-router.get("/payroll-settings", payrollMgmt, asyncHandler(getPayrollSettings));
-router.put("/payroll-settings", payrollMgmtOwner, asyncHandler(updatePayrollSettings));
-router.get("/payroll-schedule", payrollMgmt, asyncHandler(getMonthlyWorkSchedule));
-router.put("/payroll-schedule", payrollMgmtOwner, asyncHandler(saveMonthlyWorkSchedule));
+router.get("/payroll-employees", payrollView, asyncHandler(listPayrollEmployees));
+router.get("/payroll-settings", payrollView, asyncHandler(getPayrollSettings));
+router.put("/payroll-settings", payrollSettingsAccess, asyncHandler(updatePayrollSettings));
+router.get("/payroll-schedule", payrollView, asyncHandler(getMonthlyWorkSchedule));
+router.put("/payroll-schedule", payrollSettingsAccess, asyncHandler(saveMonthlyWorkSchedule));
 
 // ---- Salary records / payroll ledger (staff view+export+build; delete period = org_admin) ----
-router.get("/salary-records", payrollMgmt, asyncHandler(listOrgSalaryRecords));
-router.get("/salary-records/export", payrollMgmt, asyncHandler(exportOrgSalaryRecords));
-router.get("/salary-records/:uuid/payslip", payrollMgmt, asyncHandler(downloadPayslip));
-router.delete("/salary-records/:uuid", payrollMgmtOwner, asyncHandler(deleteSalaryRecord));
-router.delete("/salary-records/period/:year/:month", payrollMgmtOwner, asyncHandler(deleteSalaryPeriod));
+router.get("/salary-records", payrollView, asyncHandler(listOrgSalaryRecords));
+router.get("/salary-records/export", payrollView, asyncHandler(exportOrgSalaryRecords));
+router.get("/salary-records/:uuid/payslip", payrollView, asyncHandler(downloadPayslip));
+router.delete("/salary-records/:uuid", payrollSettingsAccess, asyncHandler(deleteSalaryRecord));
+router.delete("/salary-records/period/:year/:month", payrollSettingsAccess, asyncHandler(deleteSalaryPeriod));
 
 // ---- Salary components —” unified allowances/deductions (staff; delete + status toggle = org_admin) ----
-router.get("/salary-components", payrollMgmt, asyncHandler(listSalaryComponents));
-router.post("/salary-components", payrollMgmt, asyncHandler(createSalaryComponent));
-router.put("/salary-components/:uuid", payrollMgmt, asyncHandler(updateSalaryComponent));
-router.delete("/salary-components/:uuid", payrollMgmtOwner, asyncHandler(deleteSalaryComponent));
-router.patch("/salary-components/:uuid/status", payrollMgmtOwner, asyncHandler(toggleSalaryComponentStatus));
+router.get("/salary-components", payrollView, asyncHandler(listSalaryComponents));
+router.post("/salary-components", payrollSettingsAccess, asyncHandler(createSalaryComponent));
+router.put("/salary-components/:uuid", payrollSettingsAccess, asyncHandler(updateSalaryComponent));
+router.delete("/salary-components/:uuid", payrollSettingsAccess, asyncHandler(deleteSalaryComponent));
+router.patch("/salary-components/:uuid/status", payrollSettingsAccess, asyncHandler(toggleSalaryComponentStatus));
 
 // ---- Employee salary history + salary increment (staff) ----
-router.get("/employees/:uuid/salary-history", payrollMgmt, asyncHandler(listEmployeeSalaryHistory));
-router.post("/employees/:uuid/increment-salary", payrollMgmt, asyncHandler(incrementEmployeeSalary));
-router.put("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, asyncHandler(updateEmployeeSalaryHistory));
-router.delete("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, asyncHandler(deleteEmployeeSalaryHistory));
+router.get("/employees/:uuid/salary-history", payrollView, asyncHandler(listEmployeeSalaryHistory));
+router.post("/employees/:uuid/increment-salary", payrollSettingsAccess, asyncHandler(incrementEmployeeSalary));
+router.put("/employees/:uuid/salary-history/:historyUuid", payrollSettingsAccess, asyncHandler(updateEmployeeSalaryHistory));
+router.delete("/employees/:uuid/salary-history/:historyUuid", payrollSettingsAccess, asyncHandler(deleteEmployeeSalaryHistory));
 
 // ---- Per-employee salary component assignments (staff) ----
-router.get("/employees/:uuid/salary-components", payrollMgmt, asyncHandler(listEmployeeSalaryComponents));
-router.post("/employees/:uuid/salary-components", payrollMgmt, asyncHandler(assignEmployeeSalaryComponent));
-router.put("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(updateEmployeeSalaryComponent));
-router.delete("/employees/:uuid/salary-components/:assignUuid", payrollMgmt, asyncHandler(removeEmployeeSalaryComponent));
-router.get("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(listMonthlySalaryVariables));
-router.post("/employees/:uuid/monthly-salary-variables", payrollMgmt, asyncHandler(createMonthlySalaryVariable));
-router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(updateMonthlySalaryVariable));
-router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollMgmt, asyncHandler(deleteMonthlySalaryVariable));
+router.get("/employees/:uuid/salary-components", payrollView, asyncHandler(listEmployeeSalaryComponents));
+router.post("/employees/:uuid/salary-components", payrollSettingsAccess, asyncHandler(assignEmployeeSalaryComponent));
+router.put("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, asyncHandler(updateEmployeeSalaryComponent));
+router.delete("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, asyncHandler(removeEmployeeSalaryComponent));
+router.get("/employees/:uuid/monthly-salary-variables", payrollView, asyncHandler(listMonthlySalaryVariables));
+router.post("/employees/:uuid/monthly-salary-variables", payrollSettingsAccess, asyncHandler(createMonthlySalaryVariable));
+router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, asyncHandler(updateMonthlySalaryVariable));
+router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
@@ -341,17 +357,17 @@ router.put("/approval-policy", orgAdminsOnly, asyncHandler(updateApprovalPolicyH
 // line, no audit entry - so it is safe to call as often as anyone likes while
 // deciding. It runs the identical computation the generate path runs, so the
 // number previewed and the number committed cannot diverge.
-router.post("/payroll/preview", payrollMgmt, asyncHandler(previewPayroll));
-router.post("/payroll/generate", payrollMgmt, asyncHandler(generatePayroll));
+router.post("/payroll/preview", payrollGenerateAccess, asyncHandler(previewPayroll));
+router.post("/payroll/generate", payrollGenerateAccess, asyncHandler(generatePayroll));
 
 // ---- Overtime requests (staff) ----
 // The input payroll's overtime addition reads. Registered here rather than on
 // the attendance routes because overtime is a pay decision with an approval, not
 // a clock event: attendance records that someone was present, this records that
 // the extra hours were authorised.
-router.get("/overtime-requests", payrollMgmt, asyncHandler(listOvertimeRequests));
-router.post("/overtime-requests", payrollMgmt, asyncHandler(createOvertimeRequest));
-router.post("/overtime-requests/:uuid/decide", payrollMgmt, asyncHandler(decideOvertimeRequest));
+router.get("/overtime-requests", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")], asyncHandler(listOvertimeRequests));
+router.post("/overtime-requests", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")], asyncHandler(createOvertimeRequest));
+router.post("/overtime-requests/:uuid/decide", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.approve_overtime")], asyncHandler(decideOvertimeRequest));
 
 // ---- Offboarding / exit management (staff) ----
 // Gated on separation_management, which already exists as a module flag; no new
