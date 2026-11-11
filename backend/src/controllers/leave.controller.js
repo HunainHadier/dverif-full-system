@@ -840,6 +840,7 @@ export async function cancelLeave(req, res) {
     if (!req.admin && leave.organization_id !== req.user?.organization) {
       throw new ApiError(403, "This leave request is not part of your organization.");
     }
+    if (!isOwner && isOrgStaff) await assertEmployeeInDataScope(req, "leave_management", leave.employee_uuid);
     if (!["pending", "approved"].includes(leave.status)) {
       throw new ApiError(409, "Only pending or approved leave requests can be cancelled.");
     }
