@@ -204,10 +204,19 @@ export function hasPermission(user, perm) {
   if (!user) return false;
   if (user.org_role === "org_admin") return true;
   if (GRANULAR_KEYS.has(perm)) {
-    const granular = parseGranularPermissions(user.feature_access);
-    if (granular[perm]) return true;
+    let raw = user.feature_access;
+    if (typeof raw === "string") {
+      try { raw = JSON.parse(raw); } catch { raw = {}; }
+    }
+    const hasGranularConfig =
+      raw && typeof raw === "object" && !Array.isArray(raw) &&
+      raw.granular_permissions && typeof raw.granular_permissions === "object" &&
+      !Array.isArray(raw.granular_permissions);
+    // Once an admin has saved a granular matrix, it is authoritative: an
+    // unchecked action must override any legacy broad module grant.
+    if (hasGranularConfig) return parseGranularPermissions(raw)[perm] === true;
     const legacyKey = LEGACY_GRANT_MAP[perm];
-    return legacyKey ? !!parseFeatureAccess(user.feature_access)[legacyKey] : false;
+    return legacyKey ? !!parseFeatureAccess(raw)[legacyKey] : false;
   }
   return !!parseFeatureAccess(user.feature_access)[perm];
 }
