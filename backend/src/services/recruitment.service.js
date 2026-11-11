@@ -1299,10 +1299,15 @@ export async function listOffers({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["c.organization_id = ?", "c.offer_status IS NOT NULL"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
 
   if (openingUuid) {
     assertUuid(openingUuid, "Job opening UUID");
@@ -1811,10 +1816,15 @@ export async function listInterviews({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["i.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(`EXISTS (SELECT 1 FROM candidates scoped_candidate WHERE scoped_candidate.uuid=i.candidate_uuid AND scoped_candidate.organization_id=i.organization_id AND ${scopeFilter.sql.replace(/\bc\./g, "scoped_candidate.")})`);
+    params.push(...scopeFilter.params);
+  }
   if (candidateUuid) {
     assertUuid(candidateUuid, "Candidate UUID");
     clauses.push("i.candidate_uuid = ?");
@@ -2120,13 +2130,14 @@ export async function parseResumeFile({ filePath }) {
  * JavaScript: a busy opening has thousands of applications and the board only
  * needs the shape of it.
  */
-export async function getPipelineBoard({ orgId, openingUuid, conn = pool }) {
+export async function getPipelineBoard({ orgId, openingUuid, scopeFilter, conn = pool }) {
   const opening = await loadOpening({ orgId, openingUuid, conn });
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   const [counts] = await conn.query(
-    `SELECT stage, COUNT(*) AS n FROM candidates
-      WHERE organization_id=? AND job_opening_uuid=?
-      GROUP BY stage`,
-    [orgId, openingUuid]
+    `SELECT c.stage, COUNT(*) AS n FROM candidates c
+      WHERE c.organization_id=? AND c.job_opening_uuid=?${scopeSql}
+      GROUP BY c.stage`,
+    [orgId, openingUuid, ...(scopeFilter?.params ?? [])]
   );
 
   const byStage = new Map(counts.map((r) => [r.stage, Number(r.n)]));
