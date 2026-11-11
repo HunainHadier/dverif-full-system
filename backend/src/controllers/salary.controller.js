@@ -1447,6 +1447,11 @@ export async function exportOrgSalaryRecords(req, res) {
 
   let whereClause = "WHERE sr.organization_id = ?";
   const params = [orgId];
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  if (employeeScope) {
+    whereClause += ` AND ${employeeScope.sql}`;
+    params.push(...employeeScope.params);
+  }
 
   if (employeeUuid) {
     assertUuid(employeeUuid, "Employee UUID");
