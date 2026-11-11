@@ -50,8 +50,8 @@ export function creatorScopeCondition(req, moduleKey, recordAlias = "r") {
   }
   const orgId = req.scopeOrgId ?? req.user.organization;
   return {
-    sql: `${recordAlias}.created_by_uuid IN (SELECT team_member.linked_user_uuid FROM employees team_member WHERE team_member.organization_id = ? AND team_member.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))`,
-    params: [orgId, orgId, req.user.uuid],
+    sql: `(${recordAlias}.created_by_uuid = ? OR ${recordAlias}.created_by_uuid IN (SELECT team_member.linked_user_uuid FROM employees team_member WHERE team_member.organization_id = ? AND team_member.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1)))`,
+    params: [req.user.uuid, orgId, orgId, req.user.uuid],
   };
 }
 
