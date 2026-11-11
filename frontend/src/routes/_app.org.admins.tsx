@@ -171,13 +171,8 @@ function OrgAdminsPage() {
   });
 
   const updatePerfMut = useMutation({
-    mutationFn: ({
-      uuid,
-      feature_access,
-    }: {
-      uuid: UUID;
-      permissions: PermissionPayload;
-    }) => orgService.adminUsers.update(uuid, permissions),
+    mutationFn: ({ uuid, permissions }: { uuid: UUID; permissions: PermissionPayload }) =>
+      orgService.adminUsers.update(uuid, permissions),
     onSuccess: () => {
       toast.success("Sub-admin permissions updated");
       invalidate();
@@ -576,7 +571,7 @@ function EditSubAdminPermissionsDialog({
   onOpenChange: () => void;
   onSubmit: (vars: {
     uuid: UUID;
-    feature_access: PermissionPayload;
+    permissions: PermissionPayload;
   }) => Promise<unknown>;
   submitting: boolean;
   onDone: () => void;
@@ -670,7 +665,8 @@ function CreateSubAdminDialog({
         email: email.trim(),
         cnic: normalizeCNIC(cnic),
         phone: phone.trim() || undefined,
-        granular_permissions: access.granular_permissions,\n        data_scopes: access.data_scopes,
+        granular_permissions: access.granular_permissions,
+        data_scopes: access.data_scopes,
       });
       if (res._email_warning) toast.warning(res._email_warning);
       else toast.success("Sub-admin created. Set-password email sent.");
