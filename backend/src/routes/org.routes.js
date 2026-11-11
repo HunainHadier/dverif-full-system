@@ -6,7 +6,6 @@ import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import requirePermission from "../middleware/requirePermission.js";
 import ApiError from "../utils/ApiError.js";
 import { getDataScope, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
-import { getDataScope, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
 import { createEmployeeLimiter } from "../middleware/rateLimiter.js";
 import { uploadDocs } from "../middleware/uploadDocs.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
