@@ -1,7 +1,7 @@
 import ApiError from "../../utils/ApiError.js";
 import fs from "node:fs/promises";
 import { ok, created } from "../../utils/response.js";
-import { creatorScopeCondition, assertCreatedRecordInDataScope } from "../../utils/dataScopes.js";
+import { creatorScopeCondition, assertCreatedRecordInDataScope, employeeScopeCondition } from "../../utils/dataScopes.js";
 import { cnicError, isValidPhone, normalizeCnic } from "../../utils/contactFormat.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
@@ -332,7 +332,10 @@ export async function getPipeline(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function listInterviewers(req, res) {
-  const items = await recruitment.listInterviewers({ orgId: req.scopeOrgId });
+  const items = await recruitment.listInterviewers({
+    orgId: req.scopeOrgId,
+    scopeFilter: employeeScopeCondition(req, "recruitment", "e"),
+  });
   // The interviewer directory changes as org users are added/deactivated. A 304
   // response has no JSON body, which leaves Axios/React Query with no option data.
   // Always return the current directory instead of allowing conditional caching.
