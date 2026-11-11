@@ -1293,11 +1293,11 @@ export async function verifyRequest(req, res) {
   const { uuid } = req.params;
   const { status, verification_remarks } = req.body;
 
+  assertUuid(uuid, "Request UUID");
+  if (!["verified", "unverified"].includes(status)) throw new ApiError(400, "status must be verified or unverified");
   requirePermission(req.user, status === "verified"
     ? "document_verification.approve"
     : "document_verification.reject");
-  assertUuid(uuid, "Request UUID");
-  if (!["verified", "unverified"].includes(status)) throw new ApiError(400, "status must be verified or unverified");
 
   // A rejection is a statement ABOUT someone's document, and the requester is
   // entitled to know what was wrong with it. Without a reason the row is
