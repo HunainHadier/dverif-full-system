@@ -29,8 +29,8 @@ describe("employee-linked data scopes", () => {
       scopeOrgId: 7,
     };
     expect(employeeScopeCondition(req, "attendance", "e")).toEqual({
-      sql: "(e.linked_user_uuid = ? OR e.added_by_uuid = ? OR e.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))",
-      params: ["user-1", "user-1", 7, "user-1"],
+      sql: "(e.linked_user_uuid = ? OR e.added_by_uuid = ? OR e.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1) OR e.added_by_uuid IN (SELECT team_member.linked_user_uuid FROM employees team_member WHERE team_member.organization_id = ? AND team_member.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1)))",
+      params: ["user-1", "user-1", 7, "user-1", 7, 7, "user-1"],
     });
   });
 
