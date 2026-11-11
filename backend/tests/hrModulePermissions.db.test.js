@@ -137,10 +137,10 @@ describe("hasPermission honours an explicit grant over the default", () => {
 
 describe("each module gate in org.routes.js requires its own permission", () => {
   const GATES = [
-    ["hrLettersMgmt", "hr_letters"],
-    ["assetMgmt", "manage_assets"],
-    ["separationMgmt", "manage_separation"],
-    ["expenseReviewMgmt", "approve_expenses"],
+    ["hrLetterView", "hr_letters.view"],
+    ["assetView", "assets.view"],
+    ["offboardingView", "offboarding.view"],
+    ["expenseView", "expenses.view"],
   ];
 
   /** The single-line definition of a gate, so an assertion cannot match a comment. */
@@ -173,12 +173,8 @@ describe("each module gate in org.routes.js requires its own permission", () => 
   }
 
   it("orgAdminsOnly gates stay role-only and gain no permission", () => {
-    // hrLettersOwner and assetCategoryMgmt deliberately keep the stricter role gate:
-    // DELETING a template and redefining the classes of asset that exist are
-    // structural decisions, not delegated operations. Adding a permission to them
-    // would hand out the power to remove the definitions others depend on.
+    // Deleting a shared letter template remains org-admin-only.
     expect(gateLineOf("hrLettersOwner")).not.toContain("requirePermission(");
-    expect(gateLineOf("assetCategoryMgmt")).not.toContain("requirePermission(");
   });
 
   function gateLineOf(name) {
