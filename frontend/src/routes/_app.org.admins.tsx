@@ -176,8 +176,8 @@ function OrgAdminsPage() {
       feature_access,
     }: {
       uuid: UUID;
-      feature_access: Record<ElevatedKey, boolean>;
-    }) => orgService.adminUsers.update(uuid, feature_access),
+      permissions: PermissionPayload;
+    }) => orgService.adminUsers.update(uuid, permissions),
     onSuccess: () => {
       toast.success("Sub-admin permissions updated");
       invalidate();
@@ -268,8 +268,10 @@ function OrgAdminsPage() {
                 </TableHeader>
                 <TableBody>
                   {items.map((u, i) => {
-                    const perms = elevatedAccess(u.feature_access);
-                    const granted = ELEVATED_PERMISSIONS.filter((p) => perms[p.key]);
+                    const perms = permissionAccess(u.feature_access);
+                    const granted = PERMISSION_MODULES.flatMap((module) => module.actions
+                      .filter(([action]) => perms.granular_permissions[`${module.key}.${action}`])
+                      .map(([action, label]) => ({ key: `${module.key}.${action}`, label, description: module.label })));
                     return (
                       <TableRow key={u.uuid}>
                         <TableCell data-label="S.No" className="w-10 text-muted-foreground">
@@ -294,7 +296,7 @@ function OrgAdminsPage() {
                         <TableCell data-label="Permissions">
                           {granted.length === 0 ? (
                             <span className="text-xs text-muted-foreground">—</span>
-                          ) : granted.length === ELEVATED_PERMISSIONS.length ? (
+                          ) : granted.length === ALL_GRANULAR_KEYS.length ? (
                             <Popover>
                               <PopoverTrigger asChild>
                                 <button
@@ -470,7 +472,7 @@ function OrgAdminsPage() {
       <EditSubAdminPermissionsDialog
         subAdmin={editing}
         onOpenChange={() => setEditing(null)}
-        onSubmit={({ uuid, feature_access }) => updatePerfMut.mutateAsync({ uuid, feature_access })}
+        onSubmit={({ uuid, permissions }) => updatePerfMut.mutateAsync({ uuid, permissions })}
         submitting={updatePerfMut.isPending}
         onDone={() => setEditing(null)}
       />
@@ -514,46 +516,54 @@ function OrgAdminsPage() {
   );
 }
 
-function FeatureCheckboxes({
-  value,
-  onChange,
-}: {
-  value: Record<ElevatedKey, boolean>;
-  onChange: (v: Record<ElevatedKey, boolean>) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      {ELEVATED_PERMISSIONS.map((p) => (
-        <label key={p.key} className="flex items-start gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={value[p.key]}
-            onChange={(e) => onChange({ ...value, [p.key]: e.target.checked })}
-            className="mt-0.5 h-4 w-4 rounded border-border"
-          />
-          <span>
-            {p.label}
-            <span className="block text-xs text-muted-foreground/70">{p.description}</span>
-          </span>
-        </label>
-      ))}
-    </div>
-  );
+function FeatureCheckboxes({ value, onChange }: { value: PermissionPayload; onChange: (v: PermissionPayload) => void }) {
+  const toggleModule = (moduleKey: string, checked: boolean) => {
+    const module = PERMISSION_MODULES.find((item) => item.key === moduleKey);
+    if (!module) return;
+    const next = { ...value.granular_permissions };
+    module.actions.forEach(([action]) => { next[`${moduleKey}.${action}`] = checked; });
+    onChange({ ...value, granular_permissions: next });
+  };
+  return <Accordion type="multiple" className="w-full">
+    {PERMISSION_MODULES.map((module) => {
+      const keys = module.actions.map(([action]) => `${module.key}.${action}`);
+      const count = keys.filter((key) => value.granular_permissions[key]).length;
+      return <AccordionItem key={module.key} value={module.key}>
+        <div className="flex items-center gap-3 py-2">
+          <Checkbox checked={count === keys.length ? true : count ? "indeterminate" : false}
+            onCheckedChange={(checked) => toggleModule(module.key, checked === true)} />
+          <div className="min-w-0 flex-1">
+            <AccordionTrigger className="py-1 hover:no-underline">
+              <span className="flex items-center gap-2"><span>{module.label}</span>
+                <span className="text-xs text-muted-foreground">{count}/{keys.length}</span></span>
+            </AccordionTrigger>
+          </div>
+        </div>
+        <AccordionContent>
+          <div className="grid gap-3 border-l-2 border-border pl-5 sm:grid-cols-2">
+            {module.actions.map(([action,label]) => {
+              const key = `${module.key}.${action}`;
+              return <label key={key} className="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox checked={value.granular_permissions[key] === true}
+                  onCheckedChange={(checked) => onChange({ ...value, granular_permissions: { ...value.granular_permissions, [key]: checked === true }})} />
+                <span>{label}</span>
+              </label>;
+            })}
+          </div>
+          <div className="mt-4 flex flex-col gap-1.5 sm:max-w-xs">
+            <Label className="text-xs">Data visibility scope</Label>
+            <select value={value.data_scopes[module.key] ?? "own_records"}
+              onChange={(event) => onChange({ ...value, data_scopes: { ...value.data_scopes, [module.key]: event.target.value as DataScope }})}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm">
+              <option value="own_records">Own Records</option><option value="my_team">My Team / Assigned Team</option>
+              <option value="entire_organization">Entire Organization</option>
+            </select>
+          </div>
+        </AccordionContent>
+      </AccordionItem>;
+    })}
+  </Accordion>;
 }
-
-/**
- * Built from the key list rather than hand-written.
- *
- * This was a literal of three booleans typed `Record<ElevatedKey, boolean>`, so
- * widening ElevatedKey to the full FeatureKey made TypeScript demand the four new
- * keys — which is exactly the failure mode this whole audit is about: a permission
- * exists on the server, the grant form has no field for it, and an org admin cannot
- * delegate it no matter what they type. Deriving it means a new permission appears
- * here automatically, and the dialog's checkboxes are driven off the same array.
- */
-const EMPTY_ELEVATED: Record<ElevatedKey, boolean> = Object.fromEntries(
-  DELEGATED_FEATURE_KEYS.map((k) => [k, false]),
-) as Record<ElevatedKey, boolean>;
 
 function EditSubAdminPermissionsDialog({
   subAdmin,
@@ -566,25 +576,25 @@ function EditSubAdminPermissionsDialog({
   onOpenChange: () => void;
   onSubmit: (vars: {
     uuid: UUID;
-    feature_access: Record<ElevatedKey, boolean>;
+    feature_access: PermissionPayload;
   }) => Promise<unknown>;
   submitting: boolean;
   onDone: () => void;
 }) {
-  const [access, setAccess] = useState<Record<ElevatedKey, boolean>>(EMPTY_ELEVATED);
+  const [access, setAccess] = useState<PermissionPayload>(EMPTY_PERMISSION_PAYLOAD);
   const [seedKey, setSeedKey] = useState("");
 
   // Seed the checkboxes from the selected sub-admin whenever it changes.
   const key = subAdmin?.uuid ?? "";
   if (key !== seedKey) {
     setSeedKey(key);
-    setAccess(elevatedAccess(subAdmin?.feature_access));
+    setAccess(permissionAccess(subAdmin?.feature_access));
   }
 
   const submit = async () => {
     if (!subAdmin) return;
     try {
-      await onSubmit({ uuid: subAdmin.uuid, feature_access: access });
+      await onSubmit({ uuid: subAdmin.uuid, permissions: access });
       toast.success("Sub-admin permissions updated");
       onDone();
     } catch (err) {
@@ -639,7 +649,7 @@ function CreateSubAdminDialog({
   const [email, setEmail] = useState("");
   const [cnic, setCnic] = useState("");
   const [phone, setPhone] = useState("");
-  const [access, setAccess] = useState<Record<ElevatedKey, boolean>>(EMPTY_ELEVATED);
+  const [access, setAccess] = useState<PermissionPayload>(EMPTY_PERMISSION_PAYLOAD);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -660,7 +670,7 @@ function CreateSubAdminDialog({
         email: email.trim(),
         cnic: normalizeCNIC(cnic),
         phone: phone.trim() || undefined,
-        feature_access: access,
+        granular_permissions: access.granular_permissions,\n        data_scopes: access.data_scopes,
       });
       if (res._email_warning) toast.warning(res._email_warning);
       else toast.success("Sub-admin created. Set-password email sent.");
@@ -668,7 +678,7 @@ function CreateSubAdminDialog({
       setEmail("");
       setCnic("");
       setPhone("");
-      setAccess(EMPTY_ELEVATED);
+      setAccess(EMPTY_PERMISSION_PAYLOAD);
       onDone();
     } catch (err) {
       toast.error(apiErrorMessage(err, "Create failed"));
