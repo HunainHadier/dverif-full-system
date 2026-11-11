@@ -182,11 +182,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
   // System Admin, and sub-admins do the employee flow. The API enforces which
   // rows each role can actually see (own / org inbound / platform inbound).
   "/org/support": { roles: ALL_ORG_ROLES },
-  "/org/team": { roles: STAFF_ROLES, feature: "manage_employees", always: ["org_admin"] },
+  "/org/team": { roles: STAFF_ROLES, granular: "employees.view", always: ["org_admin"] },
   "/org/admins": { roles: ["org_admin"] },
-  "/org/leaves": { roles: STAFF_ROLES, feature: "leave", always: ["org_admin"] },
-  "/org/attendance": { roles: STAFF_ROLES, feature: "attendance", always: ["org_admin"] },
-  "/org/payroll": { roles: STAFF_ROLES, feature: "payroll", always: ["org_admin"] },
+  "/org/leaves": { roles: STAFF_ROLES, granular: "leave_management.view", always: ["org_admin"] },
+  "/org/attendance": { roles: STAFF_ROLES, granular: "attendance.view", always: ["org_admin"] },
+  "/org/payroll": { roles: STAFF_ROLES, granular: "payroll.view", always: ["org_admin"] },
 
   // --- HR letters ------------------------------------------------------------
   // STAFF_ROLES + the `hr_letters` permission.
@@ -379,6 +379,10 @@ export function canAccessRoute(user: AuthUser | null | undefined, path: string):
     // Existing accounts without a granular matrix keep the legacy route decision
     // until their Org Admin explicitly saves granular permissions.
     const legacyKey: FeatureKey | undefined = ({
+      "employees.view": "manage_employees",
+      "attendance.view": "attendance",
+      "leave_management.view": "leave",
+      "payroll.view": "payroll",
       "document_verification.generate_request": "generate_request",
       "document_verification.view_requests": "approve_request",
       "hr_letters.view": "hr_letters",
