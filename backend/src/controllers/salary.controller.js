@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../utils/dataScopes.js";
 import { ok } from "../utils/response.js";
 import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
@@ -875,10 +876,13 @@ export async function listPayrollEmployees(req, res) {
   const { m, y } = req.query.month === undefined && req.query.year === undefined
     ? { m: currentDate.getMonth() + 1, y: currentDate.getFullYear() }
     : payrollService.assertMonthYear(req.query.month, req.query.year);
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  const employeeWhere = `WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')${employeeScope ? ` AND ${employeeScope.sql}` : ""}`;
+  const employeeParams = [orgId, ...(employeeScope?.params ?? [])];
 
   const [[{ total }]] = await pool.query(
-    "SELECT COUNT(*) AS total FROM employees WHERE organization_id=? AND status IN ('current_employee', 'active')",
-    [orgId],
+    `SELECT COUNT(*) AS total FROM employees e ${employeeWhere}`,
+    employeeParams,
   );
   const [employees] = await pool.query(
     `SELECT e.uuid, e.full_name, e.email, dg.name AS designation, dp.name AS department,
@@ -891,9 +895,9 @@ export async function listPayrollEmployees(req, res) {
        FROM employees e
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
-      WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')
+      ${employeeWhere}
       ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
-    [m, y, orgId, limit, offset],
+    [m, y, ...employeeParams, limit, offset],
   );
 
   const compensation = new Map(
@@ -1185,6 +1189,11 @@ export async function listOrgSalaryRecords(req, res) {
 
   let whereClause = "WHERE sr.organization_id = ?";
   const params = [orgId];
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  if (employeeScope) {
+    whereClause += ` AND ${employeeScope.sql}`;
+    params.push(...employeeScope.params);
+  }
 
   if (employeeUuid) {
     assertUuid(employeeUuid, "Employee UUID");
