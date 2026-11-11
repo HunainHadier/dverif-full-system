@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   DATA_SCOPES,
   GRANULAR_PERMISSION_CATALOG,
@@ -7,7 +8,13 @@ import {
   parseGranularPermissions,
 } from "../src/utils/permissions.js";
 
+const ORG_ROUTES = readFileSync("src/routes/org.routes.js", "utf8");
+
 describe("granular permission catalog", () => {
+  it("never exposes the hard-delete employee controller through the org API", () => {
+    expect(ORG_ROUTES).toContain('router.delete("/employees/:uuid", employeeArchive, asyncHandler(archiveReference));');
+    expect(ORG_ROUTES).not.toMatch(/router\.delete\(["']\/employees\/:uuid["'][^\n]*deleteEmployee/);
+  });
   it("defines the complete requested module/action catalog without duplicate keys", () => {
     const keys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
       actions.map((action) => `${module}.${action}`),
