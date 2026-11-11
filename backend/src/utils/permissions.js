@@ -85,11 +85,116 @@ export function parseFeatureAccess(value) {
  * Build a normalized feature_access object from a request body. Only explicit
  * booleans are honoured; absent keys use the default.
  */
+/**
+ * Granular action permissions. These are deliberately separate from the legacy
+ * feature keys above: existing feature_access rows remain readable and unchanged,
+ * while new routes can require an exact module.action capability.
+ */
+export const GRANULAR_PERMISSION_CATALOG = Object.freeze({
+  employees: ["view", "create", "edit", "archive", "export", "manage_departments", "manage_designations"],
+  document_verification: ["view_requests", "generate_request", "edit_draft", "approve", "reject", "download_documents"],
+  attendance: ["view", "manual_entry", "correct_check_in_out", "manage_ips", "approve_overtime"],
+  leave_management: ["view", "submit_on_behalf", "approve", "reject", "cancel", "allocate_balance", "manage_leave_types"],
+  payroll: ["view", "generate", "manage_settings"],
+  expenses: ["view", "create_own", "approve_employee", "process_payment", "export"],
+  hr_letters: ["view", "create_draft", "edit_draft", "issue", "revoke", "manage_templates"],
+  assets: ["view", "create", "edit", "assign", "return", "retire", "manage_categories"],
+  offboarding: ["view", "initiate", "manage_checklist", "draft_settlement", "approve_settlement", "complete_exit"],
+  recruitment: ["view", "create_job", "edit_job", "manage_candidates", "schedule_interview", "record_feedback", "manage_offers", "hire"],
+  reports: ["view", "export", "view_org_analytics"],
+  organization_settings: ["view", "edit"],
+});
+
+export const DATA_SCOPES = Object.freeze(["own_records", "my_team", "entire_organization"]);
+
+const GRANULAR_KEYS = new Set(
+  Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
+    actions.map((action) => `${module}.${action}`),
+  ),
+);
+
+// A legacy module grant keeps its former broad access until an Org Admin replaces
+// it with explicit granular grants. New granular permissions always default deny.
+const LEGACY_GRANT_MAP = Object.freeze({
+  "employees.view": "manage_employees",
+  "employees.create": "manage_employees",
+  "employees.edit": "manage_employees",
+  "employees.archive": "manage_employees",
+  "employees.export": "manage_employees",
+  "employees.manage_departments": "manage_employees",
+  "employees.manage_designations": "manage_employees",
+  "document_verification.view_requests": "approve_request",
+  "document_verification.generate_request": "generate_request",
+  "document_verification.edit_draft": "generate_request",
+  "document_verification.approve": "approve_request",
+  "document_verification.reject": "approve_request",
+  "document_verification.download_documents": "approve_request",
+  "expenses.create_own": "create_expenses",
+  "expenses.approve_employee": "approve_expenses",
+  "hr_letters.view": "hr_letters",
+  "hr_letters.create_draft": "hr_letters",
+  "hr_letters.edit_draft": "hr_letters",
+  "hr_letters.issue": "hr_letters",
+  "hr_letters.revoke": "hr_letters",
+  "hr_letters.manage_templates": "hr_letters",
+  "assets.view": "manage_assets",
+  "assets.create": "manage_assets",
+  "assets.edit": "manage_assets",
+  "assets.assign": "manage_assets",
+  "assets.return": "manage_assets",
+  "assets.retire": "manage_assets",
+  "assets.manage_categories": "manage_assets",
+  "offboarding.view": "manage_separation",
+  "offboarding.initiate": "manage_separation",
+  "offboarding.manage_checklist": "manage_separation",
+  "offboarding.draft_settlement": "manage_separation",
+  "offboarding.approve_settlement": "manage_separation",
+  "offboarding.complete_exit": "manage_separation",
+  "recruitment.view": "manage_recruitment",
+  "recruitment.create_job": "manage_recruitment",
+  "recruitment.edit_job": "manage_recruitment",
+  "recruitment.manage_candidates": "manage_recruitment",
+  "recruitment.schedule_interview": "manage_recruitment",
+  "recruitment.record_feedback": "manage_recruitment",
+  "recruitment.manage_offers": "manage_recruitment",
+  "recruitment.hire": "manage_recruitment",
+});
+
+/** Read granular grants from the JSON feature_access column; absent/malformed = deny. */
+export function parseGranularPermissions(value) {
+  let obj = value;
+  if (typeof value === "string") {
+    try { obj = JSON.parse(value); } catch { obj = {}; }
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) obj = {};
+  const raw = obj.granular_permissions;
+  const grants = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const key of GRANULAR_KEYS) out[key] = grants[key] === true;
+  return out;
+}
+
+/**
+ * Build a normalized feature_access object while retaining old flat booleans.
+ * Scopes are stored separately from action grants and default to own records.
+ */
 export function normalizedFeatureAccess(body = {}) {
   const src = body.feature_access ?? {};
   const out = {};
   for (const key of PERMISSION_KEYS) {
     out[key] = typeof src[key] === "boolean" ? src[key] : TRUE_BY_DEFAULT.has(key);
+  }
+  const supplied = body.granular_permissions ?? src.granular_permissions;
+  if (supplied && typeof supplied === "object" && !Array.isArray(supplied)) {
+    out.granular_permissions = {};
+    for (const key of GRANULAR_KEYS) out.granular_permissions[key] = supplied[key] === true;
+  }
+  const scopes = body.data_scopes ?? src.data_scopes;
+  if (scopes && typeof scopes === "object" && !Array.isArray(scopes)) {
+    out.data_scopes = {};
+    for (const module of Object.keys(GRANULAR_PERMISSION_CATALOG)) {
+      out.data_scopes[module] = DATA_SCOPES.includes(scopes[module]) ? scopes[module] : "own_records";
+    }
   }
   return out;
 }
@@ -98,6 +203,12 @@ export function normalizedFeatureAccess(body = {}) {
 export function hasPermission(user, perm) {
   if (!user) return false;
   if (user.org_role === "org_admin") return true;
+  if (GRANULAR_KEYS.has(perm)) {
+    const granular = parseGranularPermissions(user.feature_access);
+    if (granular[perm]) return true;
+    const legacyKey = LEGACY_GRANT_MAP[perm];
+    return legacyKey ? !!parseFeatureAccess(user.feature_access)[legacyKey] : false;
+  }
   return !!parseFeatureAccess(user.feature_access)[perm];
 }
 
