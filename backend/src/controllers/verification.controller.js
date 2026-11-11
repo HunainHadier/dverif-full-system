@@ -599,10 +599,10 @@ export async function mySentRequests(req, res) {
   const dataScope = getDataScope(req.user, "document_verification");
   let whereClause;
   let params;
-  if (req.user.org_role === "org_admin" || dataScope === "entire_organization") {
+  if (req.user.org_role === "org_admin" || (req.user.org_role === "sub_admin" && dataScope === "entire_organization")) {
     whereClause = "WHERE requester.organization = ?";
     params = [req.user.organization];
-  } else if (dataScope === "my_team") {
+  } else if (req.user.org_role === "sub_admin" && dataScope === "my_team") {
     whereClause = `WHERE (requester.uuid = ? OR requester.uuid IN (
       SELECT team_member.linked_user_uuid FROM employees team_member
        WHERE team_member.organization_id = ?
