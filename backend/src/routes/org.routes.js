@@ -549,7 +549,7 @@ router.post("/offers/:uuid/preview", recruitmentView, asyncHandler(previewOffer)
 // offer-response path any more (see respondToOffer), so keeping it on that route
 // would gate a field nothing looks at — a permission check that appears to
 // protect something while actually only confusing whoever reads it.
-router.post("/offers/:uuid/hire", recruitmentHire, asyncHandler(hireOffer));
+router.post("/offers/:uuid/hire", recruitmentHire, recruitmentCandidateScope, asyncHandler(hireOffer));
 router.post("/offers/:uuid/send", recruitmentOffers, asyncHandler(sendOffer));
 
 // ---- Resumes ----
