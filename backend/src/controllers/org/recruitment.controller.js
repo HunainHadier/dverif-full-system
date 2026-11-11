@@ -276,6 +276,9 @@ export async function startOfferApplication(req, res) {
 }
 
 export async function respondToOffer(req, res) {
+  if (req.user?.org_role) {
+    await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
+  }
   /*
    * `portal_access` is read from the body and deliberately not forwarded.
    *
@@ -319,6 +322,7 @@ export async function getPipeline(req, res) {
   if (!openingUuid) {
     throw new ApiError(400, "opening_uuid is required");
   }
+  await assertCreatedRecordInDataScope(req, "recruitment", "job_openings", openingUuid);
   const board = await recruitment.getPipelineBoard({
     orgId: req.scopeOrgId,
     openingUuid,
