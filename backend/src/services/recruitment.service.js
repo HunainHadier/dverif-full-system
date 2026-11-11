@@ -318,10 +318,15 @@ export async function listOpenings({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["o.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
   if (status) {
     if (!JOB_STATUSES.includes(status)) {
       throw new ApiError(400, `status must be one of: ${JOB_STATUSES.join(", ")}`);
@@ -746,10 +751,15 @@ export async function listCandidates({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["c.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
 
   if (openingUuid) {
     assertUuid(openingUuid, "Job opening UUID");
