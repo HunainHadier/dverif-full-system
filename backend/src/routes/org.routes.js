@@ -400,7 +400,7 @@ router.get("/offboarding/exit-requests/:uuid", offboardingView, asyncHandler(get
 router.post("/offboarding/exit-requests/:uuid/review", offboardingChecklist, asyncHandler(reviewExitRequest));
 router.post(
   "/offboarding/exit-requests/:uuid/checklist/:checklistUuid",
-  separationMgmt,
+  offboardingChecklist,
   asyncHandler(clearExitChecklistItem),
 );
 router.get("/offboarding/exit-requests/:uuid/assets", offboardingView, asyncHandler(listExitAssets));
@@ -408,7 +408,7 @@ router.get("/offboarding/exit-requests/:uuid/settlement", offboardingView, async
 router.post("/offboarding/exit-requests/:uuid/settlement", offboardingDraftSettlement, asyncHandler(draftSettlement));
 router.post(
   "/offboarding/exit-requests/:uuid/settlement/advance",
-  separationMgmt,
+  offboardingChecklist,
   asyncHandler(advanceSettlement),
 );
 router.post("/offboarding/exit-requests/:uuid/complete", offboardingComplete, asyncHandler(completeExitRequest));
@@ -490,7 +490,7 @@ router.post("/applications/:uuid/move-stage", recruitmentCandidates, asyncHandle
 // create the employee record through the offer response endpoint.
 router.post(
   "/applications/:uuid/start-offer",
-  recruitmentMgmt,
+  recruitmentCandidates,
   asyncHandler(startOfferApplication),
 );
 
@@ -533,20 +533,20 @@ router.post("/offers/:uuid/send", recruitmentOffers, asyncHandler(sendOffer));
 // is not reachable here.
 router.post(
   "/candidates/:uuid/resume",
-  recruitmentMgmt,
+  recruitmentCandidates,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadResume),
 );
 router.post(
   "/resume/parse",
-  recruitmentMgmt,
+  recruitmentCandidates,
   uploadAttachments.single("file"),
   asyncHandler(parseResume),
 );
 router.delete("/candidate-attachments/:attachmentUuid", recruitmentCandidates, asyncHandler(removeResume));
 router.get(
   "/candidate-attachments/:attachmentUuid/download",
-  recruitmentMgmt,
+  recruitmentCandidates,
   asyncHandler(downloadResume),
 );
 const expenseView = [...staff, requireModuleFeature("expense_management"), requirePermission("expenses.view")];
@@ -570,7 +570,7 @@ router.post("/assets/:uuid/reinstate", assetRetire, asyncHandler(reinstateAsset)
 router.get("/assets/:uuid/receipts", assetView, asyncHandler(listReceipts));
 router.post(
   "/assets/:uuid/receipts",
-  assetMgmt,
+  assetEdit,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadReceipts),
 );
@@ -605,18 +605,18 @@ router.post("/expense-claims/:uuid/review", expenseApprove, asyncHandler(reviewE
 router.post("/expense-claims/:uuid/pay", expensePay, asyncHandler(payExpenseClaim));
 router.post(
   "/expense-claims/:uuid/receipts",
-  expenseReviewMgmt,
+  expenseApprove,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadExpenseReceipts),
 );
 router.delete(
   "/expense-attachments/:attachmentUuid",
-  expenseReviewMgmt,
+  expenseApprove,
   asyncHandler(removeExpenseReceipt),
 );
 router.get(
   "/expense-attachments/:attachmentUuid/download",
-  expenseReviewMgmt,
+  expenseApprove,
   asyncHandler(downloadExpenseReceipt),
 );
 
