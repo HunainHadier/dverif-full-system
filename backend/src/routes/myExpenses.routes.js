@@ -43,7 +43,7 @@ const selfService = [requireActiveSubscription, requireModuleFeature("expense_ma
 
 const mayCreateOwnClaim = (req, _res, next) => {
   if (req.user?.org_role === "employee" || req.user?.org_role === "org_admin") return next();
-  if (req.user?.org_role === "sub_admin" && hasPermission(req.user, "create_expenses")) {
+  if (req.user?.org_role === "sub_admin" && hasPermission(req.user, "expenses.create_own")) {
     return next();
   }
   return next(new ApiError(403, "You do not have permission to create an expense claim"));
