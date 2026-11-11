@@ -1,6 +1,7 @@
 import ApiError from "../../utils/ApiError.js";
 import fs from "node:fs/promises";
 import { ok, created } from "../../utils/response.js";
+import { creatorScopeCondition, assertCreatedRecordInDataScope } from "../../utils/dataScopes.js";
 import { cnicError, isValidPhone, normalizeCnic } from "../../utils/contactFormat.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
@@ -38,6 +39,7 @@ export async function listJobOpenings(req, res) {
     page,
     limit,
     offset,
+    scopeFilter: creatorScopeCondition(req, "recruitment", "o"),
   });
   // Identical envelope to candidates and offers. The per-row vacancy counts this used
   // to be unpaged for travel with each opening anyway, so nothing is lost.
@@ -45,6 +47,7 @@ export async function listJobOpenings(req, res) {
 }
 
 export async function getJobOpening(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "job_openings", req.params.uuid);
   const opening = await recruitment.getOpening({
     orgId: req.scopeOrgId,
     openingUuid: req.params.uuid,
@@ -81,6 +84,7 @@ export async function createJobOpening(req, res) {
 }
 
 export async function updateJobOpening(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "job_openings", req.params.uuid);
   const opening = await recruitment.updateOpening({
     orgId: req.scopeOrgId,
     openingUuid: req.params.uuid,
@@ -121,11 +125,13 @@ export async function listCandidates(req, res) {
     page,
     limit,
     offset,
+    scopeFilter: creatorScopeCondition(req, "recruitment", "c"),
   });
   return ok(res, paginatedResponse(result.items, result.total, result.page, result.limit), "Candidates");
 }
 
 export async function getCandidate(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const candidate = await recruitment.getCandidate({
     orgId: req.scopeOrgId,
     candidateUuid: req.params.uuid,
@@ -193,6 +199,7 @@ export async function createApplication(req, res) {
 }
 
 export async function updateCandidate(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const cnicGiven = String(req.body?.cnic ?? "").trim();
   const cnicDigits = normalizeCnic(cnicGiven);
   if (cnicError(cnicGiven)) {
@@ -232,6 +239,7 @@ export async function updateCandidate(req, res) {
  * the two agree rather than one silently accepting what the other rejects.
  */
 export async function moveApplicationStage(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const candidate = await recruitment.updateCandidateStage({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
