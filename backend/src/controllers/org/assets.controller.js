@@ -1,7 +1,7 @@
 import * as assets from "../../services/assets.service.js";
 import { ok } from "../../utils/response.js";
 import ApiError from "../../utils/ApiError.js";
-import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
+import { employeeScopeCondition, creatorScopeCondition, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../../utils/dataScopes.js";
 import { parsePagination } from "../../utils/pagination.js";
 
 /**
@@ -19,10 +19,15 @@ import { parsePagination } from "../../utils/pagination.js";
 async function scopedAsset(req, assetUuid) {
   const asset = await assets.getAsset({ orgId: req.scopeOrgId, assetUuid });
   const scope = employeeScopeCondition(req, "assets", "e");
-  if (!asset.holder?.employee_uuid) {
-    if (scope) throw new ApiError(404, "Asset not found");
-  } else {
-    await assertEmployeeInDataScope(req, "assets", asset.holder.employee_uuid);
+  if (asset.holder?.employee_uuid) {
+    try {
+      await assertEmployeeInDataScope(req, "assets", asset.holder.employee_uuid);
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      await assertCreatedRecordInDataScope(req, "assets", "assets", assetUuid);
+    }
+  } else if (scope) {
+    await assertCreatedRecordInDataScope(req, "assets", "assets", assetUuid);
   }
   return asset;
 }
@@ -42,6 +47,7 @@ export async function listAssets(req, res) {
     status: typeof req.query.status === "string" ? req.query.status : undefined,
     employeeUuid: typeof req.query.employee_uuid === "string" ? req.query.employee_uuid : undefined,
     scopeFilter: employeeScopeCondition(req, "assets", "e"),
+    creatorScopeFilter: creatorScopeCondition(req, "assets", "a"),
   });
   return ok(res, result, "Assets");
 }
@@ -75,6 +81,7 @@ export async function summary(req, res) {
   return ok(res, await assets.assetSummary({
     orgId: req.scopeOrgId,
     scopeFilter: employeeScopeCondition(req, "assets", "e"),
+    creatorScopeFilter: creatorScopeCondition(req, "assets", "a"),
   }), "Summary");
 }
 
@@ -83,6 +90,7 @@ export async function summary(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function assignAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
   await assertEmployeeInDataScope(req, "assets", req.body?.employee_uuid);
   const result = await assets.assignAsset({
     orgId: req.scopeOrgId,
