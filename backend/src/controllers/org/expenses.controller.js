@@ -165,6 +165,8 @@ export async function bulkPayExpenseClaims(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function uploadExpenseReceipts(req, res) {
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   const rows = await attachReceipts({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -176,6 +178,9 @@ export async function uploadExpenseReceipts(req, res) {
 }
 
 export async function removeExpenseReceipt(req, res) {
+  const resolved = await resolveReceipt({ orgId: req.scopeOrgId, attachmentUuid: req.params.attachmentUuid });
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: resolved.entity_uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   const result = await removeReceipt({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -189,6 +194,8 @@ export async function downloadExpenseReceipt(req, res) {
     orgId: req.scopeOrgId,
     attachmentUuid: req.params.attachmentUuid,
   });
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: resolved.entity_uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   res.setHeader("Content-Type", resolved.mime_type || "application/octet-stream");
   // file_name is attacker-influenced original-upload text, so anything that could
   // break out of the header is replaced before it goes in.
