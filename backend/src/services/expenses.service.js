@@ -300,7 +300,7 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
 
 /** Paginated claims for the org, optionally filtered. */
 export async function listClaims(
-  { orgId, status, employeeUuid, month, fromDate, toDate, page, limit, offset, conn = pool },
+  { orgId, status, employeeUuid, month, fromDate, toDate, page, limit, offset, scopeFilter, conn = pool },
 ) {
   const clauses = ["c.organization_id = ?"];
   const params = [orgId];
@@ -316,6 +316,10 @@ export async function listClaims(
     assertUuid(employeeUuid, "Employee UUID");
     clauses.push("c.employee_uuid = ?");
     params.push(employeeUuid);
+  }
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
   }
   if (month) {
     if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) throw new ApiError(400, "month must use YYYY-MM format");
@@ -335,13 +339,14 @@ export async function listClaims(
   if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
 
   const where = clauses.join(" AND ");
-  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c WHERE ${where}`, params);
+  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c JOIN employees e ON e.uuid=c.employee_uuid WHERE ${where}`, params);
   const [rows] = await conn.query(
     `SELECT c.*,
             (SELECT COUNT(*) FROM attachments a
               WHERE a.entity_type='expense_claim' AND a.entity_uuid=c.uuid AND a.deleted_at IS NULL
             ) AS receipt_count
        FROM expense_claims c
+       JOIN employees e ON e.uuid=c.employee_uuid
       WHERE ${where}
       ORDER BY c.expense_date DESC, c.id DESC
       LIMIT ? OFFSET ?`,
