@@ -112,11 +112,19 @@ describe("canAccessRoute — honours its own table exactly", () => {
   it.each(combos)("$name matches the table row for every route", ({ u }) => {
     for (const [path, rule] of Object.entries(ROUTE_ACCESS)) {
       const roleOk = rule.roles.includes(u.org_role as OrgRole);
+      const legacyForGranular: Record<string, FeatureKey> = {
+        "employees.view": "manage_employees",
+        "attendance.view": "attendance",
+        "leave_management.view": "leave",
+        "payroll.view": "payroll",
+        "document_verification.generate_request": "generate_request",
+        "document_verification.view_requests": "approve_request",
+      };
       const expected =
         roleOk &&
-        (!rule.feature ||
-          !!rule.always?.includes(u.org_role as OrgRole) ||
-          !!u.feature_access?.[rule.feature]);
+        (!!rule.always?.includes(u.org_role as OrgRole) ||
+          (rule.feature ? !!u.feature_access?.[rule.feature] :
+            rule.granular ? !!u.feature_access?.[legacyForGranular[rule.granular]] : true));
       expect(canAccessRoute(u, path), `path=${path} rule=${JSON.stringify(rule)}`).toBe(expected);
     }
   });
