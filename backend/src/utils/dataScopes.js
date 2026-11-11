@@ -36,8 +36,8 @@ export function employeeScopeCondition(req, moduleKey, employeeAlias = "e") {
     return { sql: `${employeeAlias}.linked_user_uuid = ?`, params: [req.user.uuid] };
   }
   return {
-    sql: `${employeeAlias}.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1)`,
-    params: [req.scopeOrgId ?? req.user.organization, req.user.uuid],
+    sql: `(${employeeAlias}.linked_user_uuid = ? OR ${employeeAlias}.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))`,
+    params: [req.user.uuid, req.scopeOrgId ?? req.user.organization, req.user.uuid],
   };
 }
 
