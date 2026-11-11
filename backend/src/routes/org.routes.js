@@ -381,32 +381,37 @@ router.post("/overtime-requests/:uuid/decide", [...staff, requireModuleFeature("
 // Ordering note: the literal "/offboarding/clearances" path is registered before
 // the "/offboarding/:uuid" pattern so "clearances" cannot be read as a uuid.
 // Same defensive pattern used for "/employees/reference" and "/hr-letters".
-const separationMgmt = [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation")];
+const offboardingView = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.view")];
+const offboardingInitiate = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.initiate")];
+const offboardingChecklist = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.manage_checklist")];
+const offboardingDraftSettlement = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.draft_settlement")];
+const offboardingApproveSettlement = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.approve_settlement")];
+const offboardingComplete = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.complete_exit")];
 
-router.get("/offboarding/clearance-templates", separationMgmt, asyncHandler(listExitClearanceTemplates));
+router.get("/offboarding/clearance-templates", offboardingView, asyncHandler(listExitClearanceTemplates));
 router.post("/offboarding/clearance-templates", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(createExitClearanceTemplate));
 router.put("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(updateExitClearanceTemplate));
 router.delete("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(deleteExitClearanceTemplate));
 
-router.get("/offboarding/clearances", separationMgmt, asyncHandler(listExitChecklistPending));
-router.get("/offboarding/exit-requests", separationMgmt, asyncHandler(listExitRequests));
-router.post("/offboarding/exit-requests", separationMgmt, asyncHandler(submitExitRequest));
-router.get("/offboarding/exit-requests/:uuid", separationMgmt, asyncHandler(getExitRequestDetail));
-router.post("/offboarding/exit-requests/:uuid/review", separationMgmt, asyncHandler(reviewExitRequest));
+router.get("/offboarding/clearances", offboardingView, asyncHandler(listExitChecklistPending));
+router.get("/offboarding/exit-requests", offboardingView, asyncHandler(listExitRequests));
+router.post("/offboarding/exit-requests", offboardingInitiate, asyncHandler(submitExitRequest));
+router.get("/offboarding/exit-requests/:uuid", offboardingView, asyncHandler(getExitRequestDetail));
+router.post("/offboarding/exit-requests/:uuid/review", offboardingChecklist, asyncHandler(reviewExitRequest));
 router.post(
   "/offboarding/exit-requests/:uuid/checklist/:checklistUuid",
   separationMgmt,
   asyncHandler(clearExitChecklistItem),
 );
-router.get("/offboarding/exit-requests/:uuid/assets", separationMgmt, asyncHandler(listExitAssets));
-router.get("/offboarding/exit-requests/:uuid/settlement", separationMgmt, asyncHandler(previewSettlement));
-router.post("/offboarding/exit-requests/:uuid/settlement", separationMgmt, asyncHandler(draftSettlement));
+router.get("/offboarding/exit-requests/:uuid/assets", offboardingView, asyncHandler(listExitAssets));
+router.get("/offboarding/exit-requests/:uuid/settlement", offboardingView, asyncHandler(previewSettlement));
+router.post("/offboarding/exit-requests/:uuid/settlement", offboardingDraftSettlement, asyncHandler(draftSettlement));
 router.post(
   "/offboarding/exit-requests/:uuid/settlement/advance",
   separationMgmt,
   asyncHandler(advanceSettlement),
 );
-router.post("/offboarding/exit-requests/:uuid/complete", separationMgmt, asyncHandler(completeExitRequest));
+router.post("/offboarding/exit-requests/:uuid/complete", offboardingComplete, asyncHandler(completeExitRequest));
 
 // ---- HR Letters ----
 // Ordering note: the literal "/letter-templates" and "/hr-letters/preview" paths
