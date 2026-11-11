@@ -13,7 +13,7 @@ import {
   listEmployees,
   getEmployee,
   updateEmployee,
-  deleteEmployee,
+  // deleteEmployee intentionally not routed: employee records are archived, never hard-deleted.
   resendEmployeeInvite,
   archiveReference,
   createReference,
@@ -244,7 +244,7 @@ router.get("/employees", employeeView, asyncHandler(listEmployees));
 router.post("/employees", employeeCreate, portalAccessIfRequested, createEmployeeLimiter, asyncHandler(createEmployee));
 router.get("/employees/:uuid", employeeView, asyncHandler(getEmployee));
 router.put("/employees/:uuid", employeeEdit, asyncHandler(updateEmployee));
-router.delete("/employees/:uuid", employeeArchive, asyncHandler(deleteEmployee));
+router.delete("/employees/:uuid", employeeArchive, asyncHandler(archiveReference));
 router.post("/employees/:uuid/resend-invite", userMgmtStaff, asyncHandler(resendEmployeeInvite));
 
 // Reference records (ex-employees / learned_reference): create a standalone
@@ -262,7 +262,7 @@ router.post(
   uploadDocs.array("documents", 10),
   asyncHandler(uploadEmployeeDocuments)
 );
-router.delete("/employees/documents/:docUuid", employeeArchive, asyncHandler(deleteEmployeeDocument));
+router.delete("/employees/documents/:docUuid", employeeEdit, asyncHandler(deleteEmployeeDocument));
 
 router.get("/users", userMgmtStaff, asyncHandler(listOrgUsers));
 
