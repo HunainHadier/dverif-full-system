@@ -172,10 +172,12 @@ export async function createApplication(req, res) {
     throw new ApiError(400, "phone must be 7-15 digits and may contain spaces and + ( ) -");
   }
 
+  const openingUuid = str(req.body?.opening_uuid) ?? str(req.body?.job_opening_uuid);
+  if (openingUuid) await assertCreatedRecordInDataScope(req, "recruitment", "job_openings", openingUuid);
   const candidate = await recruitment.createCandidate({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
-    openingUuid: str(req.body?.opening_uuid) ?? str(req.body?.job_opening_uuid),
+    openingUuid,
     fullName: str(req.body?.full_name),
     email: str(req.body?.email),
     phone: str(req.body?.phone),
