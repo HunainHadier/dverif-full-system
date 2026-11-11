@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Archive, Contact, Download, Eye, FileUp, Lock, Mail, Plus, RefreshCw, Send, Trash2, Users } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
+import { hasGranularPermission } from "@/lib/permissions";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
 import { Pagination } from "@/components/common/Pagination";
@@ -199,10 +200,10 @@ export function EmployeeManager({
   const del = useMutation({
     mutationFn: (uuid: UUID) => api.remove(uuid),
     onSuccess: () => {
-      toast.success("Employee deleted");
+      toast.success("Employee archived");
       invalidate();
     },
-    onError: (e) => toast.error(apiErrorMessage(e, "Delete failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, "Archive failed")),
   });
 
   const resendInviteMut = useMutation({
@@ -488,8 +489,8 @@ export function EmployeeManager({
       <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
-        title="Delete this employee?"
-        description="This will permanently remove the HR record. Employees linked to a platform user cannot be deleted."
+        title="Archive this employee?"
+        description="This moves the employee to archived ex-employee records. Their HR history and audit trail are preserved."
         onConfirm={() => {
           if (toDelete) del.mutate(toDelete);
           setToDelete(null);
@@ -519,7 +520,7 @@ function EmployeeFormDialog({
 }) {
   const isEdit = !!editing;
   const { user } = useAuth();
-  const canDelete = user?.org_role === "org_admin";
+  const canEdit = hasGranularPermission(user, "employees.edit", "manage_employees");
 
   const [form, setForm] = useState({
     full_name: editing?.full_name ?? "",
@@ -1034,7 +1035,7 @@ function EmployeeFormDialog({
                           <Download className="h-4 w-4" />
                         </ProtectedDocumentLink>
                       </Button>
-                      {canDelete ? (
+                      {canEdit ? (
                         <Button
                           type="button"
                           size="icon"
