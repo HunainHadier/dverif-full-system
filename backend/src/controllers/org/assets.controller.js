@@ -72,7 +72,10 @@ export async function updateAsset(req, res) {
 }
 
 export async function summary(req, res) {
-  return ok(res, await assets.assetSummary({ orgId: req.scopeOrgId }), "Summary");
+  return ok(res, await assets.assetSummary({
+    orgId: req.scopeOrgId,
+    scopeFilter: employeeScopeCondition(req, "assets", "e"),
+  }), "Summary");
 }
 
 // ---------------------------------------------------------------------------
