@@ -217,6 +217,7 @@ const attendanceOrgWideScope = requireEntireModuleScope("attendance");
 const leaveOrgWideScope = requireEntireModuleScope("leave_management");
 const payrollOrgWideScope = requireEntireModuleScope("payroll");
 const hrLettersOrgWideScope = requireEntireModuleScope("hr_letters");
+const offboardingOrgWideScope = requireEntireModuleScope("offboarding");
 
 const employeeView = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.view")];
 const employeeCreate = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.create")];
@@ -423,7 +424,7 @@ const offboardingDraftSettlement = [...staff, requireModuleFeature("separation_m
 const offboardingApproveSettlement = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.approve_settlement")];
 const offboardingComplete = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.complete_exit")];
 
-router.get("/offboarding/clearance-templates", offboardingView, asyncHandler(listExitClearanceTemplates));
+router.get("/offboarding/clearance-templates", [...offboardingView, offboardingOrgWideScope], asyncHandler(listExitClearanceTemplates));
 router.post("/offboarding/clearance-templates", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(createExitClearanceTemplate));
 router.put("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(updateExitClearanceTemplate));
 router.delete("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(deleteExitClearanceTemplate));
