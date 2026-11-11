@@ -642,11 +642,14 @@ export async function reinstateAsset({ orgId, actorUuid, assetUuid }) {
 }
 
 /** Summary counts for the inventory dashboard tiles. */
-export async function assetSummary({ orgId }) {
+export async function assetSummary({ orgId, scopeFilter }) {
+  const scopeSql = scopeFilter
+    ? ` AND EXISTS (SELECT 1 FROM asset_assignments sf JOIN employees e ON e.uuid=sf.employee_uuid WHERE sf.asset_uuid=assets.uuid AND sf.organization_id=assets.organization_id AND sf.returned_at IS NULL AND ${scopeFilter.sql})`
+    : "";
   const [rows] = await pool.query(
     `SELECT status, COUNT(*) AS n, COALESCE(SUM(purchase_cost),0) AS value
-       FROM assets WHERE organization_id=? GROUP BY status`,
-    [orgId],
+       FROM assets WHERE organization_id=?${scopeSql} GROUP BY status`,
+    [orgId, ...(scopeFilter?.params ?? [])],
   );
   const byStatus = Object.fromEntries(ASSET_STATUSES.map((s) => [s, 0]));
   let totalValue = 0;
