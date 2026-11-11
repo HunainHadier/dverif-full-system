@@ -4,7 +4,9 @@ import requireRole from "../middleware/requireRole.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import requirePermission from "../middleware/requirePermission.js";
-import { assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
+import ApiError from "../utils/ApiError.js";
+import { getDataScope, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
+import { getDataScope, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
 import { createEmployeeLimiter } from "../middleware/rateLimiter.js";
 import { uploadDocs } from "../middleware/uploadDocs.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
@@ -230,6 +232,12 @@ const employeeDataScope = (moduleKey) => async (req, res, next) => {
   }
 };
 const payrollEmployeeScope = employeeDataScope("payroll");
+const requireOrganizationWideReportsScope = (req, res, next) => {
+  if (getDataScope(req.user, "reports") !== "entire_organization") {
+    return next(new ApiError(403, "Organization-wide analytics require Entire Organization data scope."));
+  }
+  return next();
+};
 const userMgmtFeature = requireModuleFeature("user_management");
 const userMgmtPermission = requirePermission("user_management");
 const portalAccessIfRequested = (req, res, next) => {
@@ -641,7 +649,7 @@ router.get(
 );
 
 // ---- Org dashboard analytics (staff) ----
-router.get("/dashboard/analytics", [...staff, requirePermission("reports.view_org_analytics")], asyncHandler(orgDashboardAnalytics));
+router.get("/dashboard/analytics", [...staff, requirePermission("reports.view_org_analytics"), requireOrganizationWideReportsScope], asyncHandler(orgDashboardAnalytics));
 
 import {
   uploadReceipts,
