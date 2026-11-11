@@ -69,7 +69,8 @@ function InboxPage() {
   const [active, setActive] = useState<VerificationRequest | null>(null);
   const [viewing, setViewing] = useState<VerificationRequest | null>(null);
   const perms = usePermissions();
-  const canApprove = perms.approve_request;
+  const canApprove = perms.hasGranular("document_verification.approve", "approve_request")
+    || perms.hasGranular("document_verification.reject", "approve_request");
 
   const list = useQuery({
     queryKey: ["inbox", page, search, dateFrom, dateTo],
