@@ -116,6 +116,21 @@ const GRANULAR_KEYS = new Set(
 // A legacy module grant keeps its former broad access until an Org Admin replaces
 // it with explicit granular grants. New granular permissions always default deny.
 const LEGACY_GRANT_MAP = Object.freeze({
+  "attendance.view": "attendance",
+  "attendance.manual_entry": "attendance",
+  "attendance.correct_check_in_out": "attendance",
+  "attendance.manage_ips": "attendance",
+  "attendance.approve_overtime": "attendance",
+  "leave_management.view": "leave",
+  "leave_management.submit_on_behalf": "leave",
+  "leave_management.approve": "leave",
+  "leave_management.reject": "leave",
+  "leave_management.cancel": "leave",
+  "leave_management.allocate_balance": "leave",
+  "leave_management.manage_leave_types": "leave",
+  "payroll.view": "payroll",
+  "payroll.generate": "payroll",
+  "payroll.manage_settings": "payroll",
   "employees.view": "manage_employees",
   "employees.create": "manage_employees",
   "employees.edit": "manage_employees",
