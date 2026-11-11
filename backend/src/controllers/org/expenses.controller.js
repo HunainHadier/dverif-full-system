@@ -5,6 +5,7 @@ import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination } from "../../utils/pagination.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { hasPermission } from "../../utils/permissions.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
 import {
   listClaims,
   getClaim,
@@ -66,12 +67,14 @@ export async function listExpenseClaims(req, res) {
     page,
     limit,
     offset,
+    scopeFilter: employeeScopeCondition(req, "expenses", "e"),
   });
   return ok(res, result, "Expense claims");
 }
 
 export async function getExpenseClaim(req, res) {
   const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   return ok(res, { claim }, "Expense claim");
 }
 
@@ -83,6 +86,7 @@ export async function reviewExpenseClaim(req, res) {
   if (isSubAdmin) {
     const employee = await callerEmployee(req.scopeOrgId, req);
     const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+    await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
     if (employee && employee.uuid === claim.employee_uuid) {
       throw new ApiError(403, "A sub-admin cannot approve or reject their own expense claim");
     }
@@ -111,6 +115,8 @@ export async function reviewExpenseClaim(req, res) {
 }
 
 export async function payExpenseClaim(req, res) {
+  const existingClaim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+  await assertEmployeeInDataScope(req, "expenses", existingClaim.employee_uuid);
   const claim = await markClaimPaid({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -129,10 +135,15 @@ export async function payExpenseClaim(req, res) {
 }
 
 export async function bulkPayExpenseClaims(req, res) {
+  const claimUuids = Array.isArray(req.body?.claim_uuids) ? req.body.claim_uuids : [];
+  for (const claimUuid of claimUuids) {
+    const existingClaim = await getClaim({ orgId: req.scopeOrgId, claimUuid });
+    await assertEmployeeInDataScope(req, "expenses", existingClaim.employee_uuid);
+  }
   const result = await bulkMarkClaimsPaid({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
-    claimUuids: req.body?.claim_uuids,
+    claimUuids,
     paymentReference: req.body?.payment_reference,
   });
   logAudit({
@@ -154,6 +165,8 @@ export async function bulkPayExpenseClaims(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function uploadExpenseReceipts(req, res) {
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   const rows = await attachReceipts({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -165,6 +178,9 @@ export async function uploadExpenseReceipts(req, res) {
 }
 
 export async function removeExpenseReceipt(req, res) {
+  const resolved = await resolveReceipt({ orgId: req.scopeOrgId, attachmentUuid: req.params.attachmentUuid });
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: resolved.entity_uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   const result = await removeReceipt({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -178,6 +194,8 @@ export async function downloadExpenseReceipt(req, res) {
     orgId: req.scopeOrgId,
     attachmentUuid: req.params.attachmentUuid,
   });
+  const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: resolved.entity_uuid });
+  await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
   res.setHeader("Content-Type", resolved.mime_type || "application/octet-stream");
   // file_name is attacker-influenced original-upload text, so anything that could
   // break out of the header is replaced before it goes in.

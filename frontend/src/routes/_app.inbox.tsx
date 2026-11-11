@@ -69,7 +69,9 @@ function InboxPage() {
   const [active, setActive] = useState<VerificationRequest | null>(null);
   const [viewing, setViewing] = useState<VerificationRequest | null>(null);
   const perms = usePermissions();
-  const canApprove = perms.approve_request;
+  const canApprove = perms.hasGranular("document_verification.approve", "approve_request");
+  const canReject = perms.hasGranular("document_verification.reject", "approve_request");
+  const canReview = canApprove || canReject;
 
   const list = useQuery({
     queryKey: ["inbox", page, search, dateFrom, dateTo],
@@ -259,7 +261,7 @@ function InboxPage() {
                             <Button size="sm" variant="outline" disabled>
                               <Lock className="mr-1 h-3 w-3" /> {t("common.locked")}
                             </Button>
-                          ) : r.status === "under_review" && canApprove ? (
+                          ) : r.status === "under_review" && canReview ? (
                             <Button size="sm" variant="outline" onClick={() => openReview(r)}>
                               {t("inbox.review")}
                             </Button>
@@ -291,6 +293,8 @@ function InboxPage() {
 
       <VerifyDialog
         request={active}
+        canApprove={canApprove}
+        canReject={canReject}
         onClose={() => setActive(null)}
         onDone={() => {
           qc.invalidateQueries({ queryKey: ["inbox"] });
@@ -306,10 +310,14 @@ function InboxPage() {
 
 function VerifyDialog({
   request,
+  canApprove,
+  canReject,
   onClose,
   onDone,
 }: {
   request: VerificationRequest | null;
+  canApprove: boolean;
+  canReject: boolean;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -531,9 +539,9 @@ function VerifyDialog({
           >
             {isFinalized ? t("common.close") : t("common.cancel")}
           </Button>
-          {!isFinalized && (
+          {!isFinalized && (canApprove || canReject) && (
             <>
-              <Button
+              {canReject && <Button
                 variant="outline"
                 className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto"
                 onClick={() => {
@@ -555,8 +563,8 @@ function VerifyDialog({
               >
                 <XCircle className="mr-2 h-4 w-4" />
                 {t("common.reject")}
-              </Button>
-              <Button
+              </Button>}
+              {canApprove && <Button
                 className="w-full sm:w-auto"
                 onClick={() => {
                   setPendingAction("verified");
@@ -567,7 +575,7 @@ function VerifyDialog({
               >
                 <CheckCircle2 className="mr-2 h-4 w-4" />
                 {t("common.approve")}
-              </Button>
+              </Button>}
             </>
           )}
         </DialogFooter>

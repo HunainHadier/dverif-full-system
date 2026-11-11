@@ -112,11 +112,19 @@ describe("canAccessRoute — honours its own table exactly", () => {
   it.each(combos)("$name matches the table row for every route", ({ u }) => {
     for (const [path, rule] of Object.entries(ROUTE_ACCESS)) {
       const roleOk = rule.roles.includes(u.org_role as OrgRole);
+      const legacyForGranular: Record<string, FeatureKey> = {
+        "employees.view": "manage_employees",
+        "attendance.view": "attendance",
+        "leave_management.view": "leave",
+        "payroll.view": "payroll",
+        "document_verification.generate_request": "generate_request",
+        "document_verification.view_requests": "approve_request",
+      };
       const expected =
         roleOk &&
-        (!rule.feature ||
-          !!rule.always?.includes(u.org_role as OrgRole) ||
-          !!u.feature_access?.[rule.feature]);
+        (!!rule.always?.includes(u.org_role as OrgRole) ||
+          (rule.feature ? !!u.feature_access?.[rule.feature] :
+            rule.granular ? !!u.feature_access?.[legacyForGranular[rule.granular]] : true));
       expect(canAccessRoute(u, path), `path=${path} rule=${JSON.stringify(rule)}`).toBe(expected);
     }
   });
@@ -212,6 +220,29 @@ describe("canAccessRoute — sub_admin", () => {
     ]) {
       expect(canAccessRoute(s, p), p).toBe(false);
     }
+  });
+
+  it("uses an explicitly saved granular matrix instead of legacy broad flags", () => {
+    const granted = user({
+      org_role: "sub_admin",
+      feature_access: {
+        manage_employees: true,
+        granular_permissions: { "employees.view": true, "document_verification.generate_request": true },
+      } as unknown as AuthUser["feature_access"],
+    });
+    expect(canAccessRoute(granted, "/org/team")).toBe(true);
+    expect(canAccessRoute(granted, "/requests")).toBe(true);
+
+    const denied = user({
+      org_role: "sub_admin",
+      feature_access: {
+        manage_employees: true,
+        generate_request: true,
+        granular_permissions: { "employees.view": false, "document_verification.generate_request": false },
+      } as unknown as AuthUser["feature_access"],
+    });
+    expect(canAccessRoute(denied, "/org/team")).toBe(false);
+    expect(canAccessRoute(denied, "/requests")).toBe(false);
   });
 
   it("is always denied org_admin-only pages", () => {

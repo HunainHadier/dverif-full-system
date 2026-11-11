@@ -3,6 +3,7 @@ import ApiError from "../../utils/ApiError.js";
 import { assertEmploymentIdentityAvailable, rethrowIdentityDuplicate } from "../../utils/identityUniqueness.js";
 import { createEmployeePortalInvite, deliverEmployeePortalInvite } from "../../services/employeeAccess.service.js";
 import { pool } from "../../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
 import { ok, created } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
@@ -526,6 +527,12 @@ export async function listEmployees(req, res) {
     }
   }
 
+  const employeeDataScope = employeeScopeCondition(req, "employees", "e");
+  if (employeeDataScope) {
+    conditions.push(employeeDataScope.sql);
+    params.push(...employeeDataScope.params);
+  }
+
   if (search) {
     conditions.push("(e.full_name LIKE ? OR e.email LIKE ? OR e.phone LIKE ? OR e.cnic LIKE ? OR dg.name LIKE ? OR dp.name LIKE ? OR o.name LIKE ?)");
     const like = `%${search}%`;
@@ -565,6 +572,7 @@ export async function getEmployee(req, res) {
   const { uuid } = req.params;
   const scope = await resolveScopeOrganization(req);
   assertUuid(uuid, "Employee UUID");
+  await assertEmployeeInDataScope(req, "employees", uuid);
 
   const [rows] = await pool.query(`${EMPLOYEE_SELECT} WHERE e.uuid=?`, [uuid]);
   if (!rows.length) throw new ApiError(404, "Employee not found");
@@ -589,6 +597,7 @@ export async function updateEmployee(req, res) {
   if (scope.scoped && emp.organization_id !== scope.orgId) {
     throw new ApiError(403, "You can only manage employees within your organization");
   }
+  await assertEmployeeInDataScope(req, "employees", uuid);
 
   const { full_name, email, phone, cnic, designation, department, status, joining_date, emergency_contact, employment_type, work_location, reporting_manager_uuid, organization_uuid } = req.body;
 
@@ -783,6 +792,7 @@ export async function archiveReference(req, res) {
   if (scope.scoped && emp.organization_id !== scope.orgId) {
     throw new ApiError(403, "You can only manage employees within your organization");
   }
+  await assertEmployeeInDataScope(req, "employees", uuid);
 
   // One column, one value. This used to write both `record_type='learned_reference'`
   // and `status='resigned'`, which is the dual-write that made the two columns

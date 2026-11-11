@@ -1,5 +1,6 @@
 import ApiError from "../../utils/ApiError.js";
 import { pool } from "../../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
 import { ok, created } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
@@ -59,8 +60,16 @@ async function callerEmployee(orgId, req) {
  * checklists are useful for the exit in front of you; this answers the other
  * question, which is how many exits are in flight and who is holding each one up.
  */
+async function scopedExit(req, exitUuid) {
+  const detail = await getExitRequest({ orgId: req.scopeOrgId, exitUuid });
+  await assertEmployeeInDataScope(req, "offboarding", detail.employee_uuid);
+  return detail;
+}
+
 export async function listExitChecklistPending(req, res) {
   const orgId = req.scopeOrgId;
+  const scopeFilter = employeeScopeCondition(req, "offboarding", "e");
+  const scopeSql = scopeFilter ? ` AND EXISTS (SELECT 1 FROM employees e WHERE e.uuid=er.employee_uuid AND e.organization_id=er.organization_id AND ${scopeFilter.sql})` : "";
   const [rows] = await pool.query(
     `SELECT er.uuid AS exit_request_uuid, er.employee_uuid, er.employee_name, er.designation,
             er.status, er.request_type, er.last_working_day,
@@ -76,11 +85,11 @@ export async function listExitChecklistPending(req, res) {
        JOIN exit_requests er ON er.uuid = c.exit_request_uuid
       WHERE er.organization_id = ?
         AND er.status IN ('pending','approved')
-        AND c.status = 'pending'
+        AND c.status = 'pending'${scopeSql}
       GROUP BY er.uuid, er.employee_uuid, er.employee_name, er.designation,
                er.status, er.request_type, er.last_working_day
       ORDER BY er.last_working_day ASC, er.employee_name`,
-    [orgId],
+    [orgId, ...(scopeFilter?.params ?? [])],
   );
 
   // last_working_day comes back as a Date at local midnight, so it is normalised
@@ -106,6 +115,11 @@ export async function listExitRequests(req, res) {
 
   const clauses = ["er.organization_id = ?"];
   const params = [orgId];
+  const scopeFilter = employeeScopeCondition(req, "offboarding", "e");
+  if (scopeFilter) {
+    clauses.push(`EXISTS (SELECT 1 FROM employees e WHERE e.uuid=er.employee_uuid AND e.organization_id=er.organization_id AND ${scopeFilter.sql})`);
+    params.push(...scopeFilter.params);
+  }
 
   const status = req.query.status ? String(req.query.status) : "";
   if (status) {
@@ -178,7 +192,7 @@ export async function listExitRequests(req, res) {
 }
 
 export async function getExitRequestDetail(req, res) {
-  const detail = await getExitRequest({ orgId: req.scopeOrgId, exitUuid: req.params.uuid });
+  const detail = await scopedExit(req, req.params.uuid);
   return ok(res, { exit_request: detail }, "Exit request");
 }
 
@@ -187,6 +201,7 @@ export async function submitExitRequest(req, res) {
   const { employee_uuid, request_type, last_working_day, reason, hr_notes } =
     req.body || {};
 
+  await assertEmployeeInDataScope(req, "offboarding", employee_uuid);
   if (request_type !== "termination") {
     throw new ApiError(403, "Org Admins can submit termination requests only. Employees must submit their own resignation.");
   }
@@ -236,6 +251,7 @@ export async function submitExitRequest(req, res) {
 
 export async function reviewExitRequest(req, res) {
   const orgId = req.scopeOrgId;
+  await scopedExit(req, req.params.uuid);
   const { decision, last_working_day, decision_notes } = req.body || {};
 
   const detail = await decideExitRequest({
@@ -288,6 +304,7 @@ export async function reviewExitRequest(req, res) {
 }
 
 export async function clearExitChecklistItem(req, res) {
+  await scopedExit(req, req.params.uuid);
   const detail = await clearChecklistItem({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -300,7 +317,7 @@ export async function clearExitChecklistItem(req, res) {
 
 export async function listExitAssets(req, res) {
   const orgId = req.scopeOrgId;
-  const detail = await getExitRequest({ orgId, exitUuid: req.params.uuid });
+  const detail = await scopedExit(req, req.params.uuid);
   const assets = await getOutstandingAssets({ orgId, employeeUuid: detail.employee_uuid });
   return ok(res, assets, "Assets outstanding");
 }
@@ -318,11 +335,13 @@ export async function listExitAssets(req, res) {
  * see them again.
  */
 export async function previewSettlement(req, res) {
+  await scopedExit(req, req.params.uuid);
   const calc = await calculateSettlement({ orgId: req.scopeOrgId, exitUuid: req.params.uuid });
   return ok(res, calc, "Settlement preview");
 }
 
 export async function draftSettlement(req, res) {
+  await scopedExit(req, req.params.uuid);
   const orgId = req.scopeOrgId;
   const settlement = await saveSettlement({
     orgId,
@@ -348,6 +367,7 @@ export async function draftSettlement(req, res) {
 }
 
 export async function advanceSettlement(req, res) {
+  await scopedExit(req, req.params.uuid);
   const orgId = req.scopeOrgId;
   const target = req.body?.target === "paid" ? "paid" : "processed";
 
@@ -372,6 +392,7 @@ export async function advanceSettlement(req, res) {
 }
 
 export async function completeExitRequest(req, res) {
+  await scopedExit(req, req.params.uuid);
   const orgId = req.scopeOrgId;
   const detail = await completeExit({
     orgId,

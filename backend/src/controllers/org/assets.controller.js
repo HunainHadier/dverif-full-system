@@ -1,5 +1,7 @@
 import * as assets from "../../services/assets.service.js";
 import { ok } from "../../utils/response.js";
+import ApiError from "../../utils/ApiError.js";
+import { employeeScopeCondition, creatorScopeCondition, assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../../utils/dataScopes.js";
 import { parsePagination } from "../../utils/pagination.js";
 
 /**
@@ -13,6 +15,22 @@ import { parsePagination } from "../../utils/pagination.js";
  * The actor comes from `req.user?.uuid` and is written to the audit log by the
  * service, so "who gave away the laptop" is always answerable.
  */
+
+async function scopedAsset(req, assetUuid) {
+  const asset = await assets.getAsset({ orgId: req.scopeOrgId, assetUuid });
+  const scope = employeeScopeCondition(req, "assets", "e");
+  if (asset.holder?.employee_uuid) {
+    try {
+      await assertEmployeeInDataScope(req, "assets", asset.holder.employee_uuid);
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+      await assertCreatedRecordInDataScope(req, "assets", "assets", assetUuid);
+    }
+  } else if (scope) {
+    await assertCreatedRecordInDataScope(req, "assets", "assets", assetUuid);
+  }
+  return asset;
+}
 
 // ---------------------------------------------------------------------------
 // Inventory
@@ -28,12 +46,14 @@ export async function listAssets(req, res) {
     search: typeof req.query.search === "string" ? req.query.search : undefined,
     status: typeof req.query.status === "string" ? req.query.status : undefined,
     employeeUuid: typeof req.query.employee_uuid === "string" ? req.query.employee_uuid : undefined,
+    scopeFilter: employeeScopeCondition(req, "assets", "e"),
+    creatorScopeFilter: creatorScopeCondition(req, "assets", "a"),
   });
   return ok(res, result, "Assets");
 }
 
 export async function getAsset(req, res) {
-  const asset = await assets.getAsset({ orgId: req.scopeOrgId, assetUuid: req.params.uuid });
+  const asset = await scopedAsset(req, req.params.uuid);
   return ok(res, { asset }, "Asset");
 }
 
@@ -47,6 +67,7 @@ export async function createAsset(req, res) {
 }
 
 export async function updateAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const asset = await assets.updateAsset({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -57,7 +78,11 @@ export async function updateAsset(req, res) {
 }
 
 export async function summary(req, res) {
-  return ok(res, await assets.assetSummary({ orgId: req.scopeOrgId }), "Summary");
+  return ok(res, await assets.assetSummary({
+    orgId: req.scopeOrgId,
+    scopeFilter: employeeScopeCondition(req, "assets", "e"),
+    creatorScopeFilter: creatorScopeCondition(req, "assets", "a"),
+  }), "Summary");
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +90,8 @@ export async function summary(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function assignAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
+  await assertEmployeeInDataScope(req, "assets", req.body?.employee_uuid);
   const result = await assets.assignAsset({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -75,6 +102,7 @@ export async function assignAsset(req, res) {
 }
 
 export async function returnAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const result = await assets.returnAsset({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -111,6 +139,7 @@ export async function listMyAssets(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function uploadReceipts(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const rows = await assets.attachReceipt({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -123,11 +152,14 @@ export async function uploadReceipts(req, res) {
 }
 
 export async function listReceipts(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const rows = await assets.listReceipts({ orgId: req.scopeOrgId, assetUuid: req.params.uuid });
   return ok(res, { items: rows }, "Receipts");
 }
 
 export async function removeAttachment(req, res) {
+  const attachment = await assets.resolveAssetAttachment({ orgId: req.scopeOrgId, attachmentUuid: req.params.attachmentUuid });
+  await scopedAsset(req, attachment.entity_uuid);
   const result = await assets.removeAssetAttachment({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -142,6 +174,7 @@ export async function downloadAttachment(req, res) {
     attachmentUuid: req.params.attachmentUuid,
   });
 
+  await scopedAsset(req, resolved.entity_uuid);
   res.setHeader("Content-Type", resolved.mime_type || "application/octet-stream");
   // Quoted and stripped of anything that could break out of the header, because
   // file_name is attacker-influenced original-upload text.
@@ -155,6 +188,7 @@ export async function downloadAttachment(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function retireAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const result = await assets.retireAsset({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,
@@ -165,6 +199,7 @@ export async function retireAsset(req, res) {
 }
 
 export async function reinstateAsset(req, res) {
+  await scopedAsset(req, req.params.uuid);
   const result = await assets.reinstateAsset({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid,

@@ -1,5 +1,6 @@
 import ApiError from "../../utils/ApiError.js";
 import { pool } from "../../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
 import { ok } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
@@ -47,20 +48,22 @@ export async function listLeaveAllocations(req, res) {
   // Deactivated ('inactive') employees ARE included: they remain on the roster
   // and are still accruing/entitling leave, so excluding them would let an
   // admin assign nothing to a colleague they merely switched off.
+  const scopeFilter = employeeScopeCondition(req, "leave_management", "e");
+  const employeeScopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   const [employees] = await pool.query(
     `SELECT e.uuid AS employee_uuid, e.full_name, e.email, dg.uuid AS designation_uuid,
             dg.name AS designation, dp.name AS department, e.status
      FROM employees e
      LEFT JOIN designations dg ON dg.id = e.designation_id
      LEFT JOIN departments dp ON dp.id = e.department_id
-     WHERE e.organization_id = ? AND e.status IN ('active','current_employee')
+     WHERE e.organization_id = ? AND e.status IN ('active','current_employee')${employeeScopeSql}
      ORDER BY e.full_name`,
-    [orgId]
+    [orgId, ...(scopeFilter?.params ?? [])]
   );
 
   const [rows] = await pool.query(
-    "SELECT employee_uuid, leave_type_id, allocated_days, used_days, remaining_days FROM employee_leave_allocations WHERE year=? AND employee_uuid IN (SELECT uuid FROM employees WHERE organization_id=?)",
-    [year, orgId]
+    `SELECT employee_uuid, leave_type_id, allocated_days, used_days, remaining_days FROM employee_leave_allocations WHERE year=? AND employee_uuid IN (SELECT e.uuid FROM employees e WHERE e.organization_id=?${employeeScopeSql})`,
+    [year, orgId, ...(scopeFilter?.params ?? [])]
   );
 
   const map = new Map();
@@ -131,10 +134,13 @@ export async function setDesignationLeaveAllocation(req, res) {
   let employeeCount = 0;
   try {
     await conn.beginTransaction();
+    const designationScope = employeeScopeCondition(req, "leave_management", "e");
+    const designationScopeSql = designationScope ? ` AND ${designationScope.sql}` : "";
+    const designationParams = [orgId, designation.id, ...(designationScope?.params ?? [])];
     const [[count]] = await conn.query(
-      `SELECT COUNT(*) AS employee_count FROM employees
-       WHERE organization_id=? AND designation_id=? AND status IN ('active','current_employee')`,
-      [orgId, designation.id]
+      `SELECT COUNT(*) AS employee_count FROM employees e
+       WHERE e.organization_id=? AND e.designation_id=? AND e.status IN ('active','current_employee')${designationScopeSql}`,
+      designationParams
     );
     employeeCount = Number(count.employee_count);
 
@@ -148,10 +154,10 @@ export async function setDesignationLeaveAllocation(req, res) {
 
     if (employeeCount) {
       const [employees] = await conn.query(
-        `SELECT uuid FROM employees
-         WHERE organization_id=? AND designation_id=? AND status IN ('active','current_employee')
+        `SELECT e.uuid FROM employees e
+         WHERE e.organization_id=? AND e.designation_id=? AND e.status IN ('active','current_employee')${designationScopeSql}
          FOR UPDATE`,
-        [orgId, designation.id],
+        designationParams,
       );
       for (const employee of employees) {
         const [[current]] = await conn.query(
@@ -232,6 +238,7 @@ export async function setLeaveAllocation(req, res) {
   const orgId = req.scopeOrgId;
   const { employee_uuid, leave_type_id, year, allocated_days } = req.body || {};
   assertUuid(employee_uuid, "Employee UUID");
+  await assertEmployeeInDataScope(req, "leave_management", employee_uuid);
   const typeId = parseInt(leave_type_id, 10);
   const yr = parseYear(year);
   if (isNaN(typeId)) throw new ApiError(400, "leave_type_id is required");
@@ -337,6 +344,7 @@ export async function getEmployeeLeaveHistory(req, res) {
   const orgId = req.scopeOrgId;
   const { uuid } = req.params;
   assertUuid(uuid, "Employee UUID");
+  await assertEmployeeInDataScope(req, "leave_management", uuid);
 
   const [[emp]] = await pool.query(
     "SELECT uuid, full_name, email FROM employees WHERE uuid=? AND organization_id=?",

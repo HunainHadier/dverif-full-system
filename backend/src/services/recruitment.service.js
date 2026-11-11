@@ -318,10 +318,15 @@ export async function listOpenings({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["o.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
   if (status) {
     if (!JOB_STATUSES.includes(status)) {
       throw new ApiError(400, `status must be one of: ${JOB_STATUSES.join(", ")}`);
@@ -746,10 +751,15 @@ export async function listCandidates({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["c.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
 
   if (openingUuid) {
     assertUuid(openingUuid, "Job opening UUID");
@@ -1289,10 +1299,15 @@ export async function listOffers({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["c.organization_id = ?", "c.offer_status IS NOT NULL"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
+  }
 
   if (openingUuid) {
     assertUuid(openingUuid, "Job opening UUID");
@@ -1778,7 +1793,8 @@ export async function getInterview({ orgId, interviewUuid, conn = pool }) {
  * The `total` count reuses the SAME WHERE clause as the page query, so the page
  * count cannot disagree with what a page actually contains.
  */
-export async function listInterviewers({ orgId, conn = pool }) {
+export async function listInterviewers({ orgId, scopeFilter, conn = pool }) {
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   const [rows] = await conn.query(
     `SELECT DISTINCT u.uuid, u.full_name, u.email, u.org_role,
             dg.name AS designation, dp.name AS department
@@ -1787,9 +1803,9 @@ export async function listInterviewers({ orgId, conn = pool }) {
          ON e.linked_user_uuid=u.uuid AND e.organization_id=u.organization AND e.status IN ('current_employee','active')
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
-      WHERE u.organization=? AND u.status='active' AND (u.org_role IN ('org_admin','sub_admin') OR e.uuid IS NOT NULL)
+      WHERE u.organization=? AND u.status='active' AND (u.org_role IN ('org_admin','sub_admin') OR e.uuid IS NOT NULL)${scopeSql}
       ORDER BY u.full_name ASC`,
-    [orgId],
+    [orgId, ...(scopeFilter?.params ?? [])],
   );
   return rows;
 }
@@ -1801,10 +1817,15 @@ export async function listInterviews({
   page = 1,
   limit = 20,
   offset = 0,
+  scopeFilter,
   conn = pool,
 }) {
   const clauses = ["i.organization_id = ?"];
   const params = [orgId];
+  if (scopeFilter) {
+    clauses.push(`EXISTS (SELECT 1 FROM candidates scoped_candidate WHERE scoped_candidate.uuid=i.candidate_uuid AND scoped_candidate.organization_id=i.organization_id AND ${scopeFilter.sql.replace(/\bc\./g, "scoped_candidate.")})`);
+    params.push(...scopeFilter.params);
+  }
   if (candidateUuid) {
     assertUuid(candidateUuid, "Candidate UUID");
     clauses.push("i.candidate_uuid = ?");
@@ -2110,13 +2131,14 @@ export async function parseResumeFile({ filePath }) {
  * JavaScript: a busy opening has thousands of applications and the board only
  * needs the shape of it.
  */
-export async function getPipelineBoard({ orgId, openingUuid, conn = pool }) {
+export async function getPipelineBoard({ orgId, openingUuid, scopeFilter, conn = pool }) {
   const opening = await loadOpening({ orgId, openingUuid, conn });
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   const [counts] = await conn.query(
-    `SELECT stage, COUNT(*) AS n FROM candidates
-      WHERE organization_id=? AND job_opening_uuid=?
-      GROUP BY stage`,
-    [orgId, openingUuid]
+    `SELECT c.stage, COUNT(*) AS n FROM candidates c
+      WHERE c.organization_id=? AND c.job_opening_uuid=?${scopeSql}
+      GROUP BY c.stage`,
+    [orgId, openingUuid, ...(scopeFilter?.params ?? [])]
   );
 
   const byStage = new Map(counts.map((r) => [r.stage, Number(r.n)]));

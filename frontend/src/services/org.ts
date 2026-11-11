@@ -113,10 +113,8 @@ export const orgService = {
       email: string;
       cnic: string;
       phone?: string;
-      feature_access: Pick<
-        FeatureAccess,
-        "manage_employees" | "generate_request" | "approve_request"
-      >;
+      granular_permissions: Record<string, boolean>;
+      data_scopes: Record<string, "own_records" | "my_team" | "entire_organization">;
     }) =>
       api
         .post<{ user: OrgAdminUserRecord; _email_warning?: string }>("/org/admin-users", data)
@@ -129,13 +127,13 @@ export const orgService = {
         .then((r) => r.data.user),
     update: (
       uuid: UUID,
-      feature_access: Pick<
-        FeatureAccess,
-        "manage_employees" | "generate_request" | "approve_request"
-      >,
+      permissions: {
+        granular_permissions: Record<string, boolean>;
+        data_scopes: Record<string, "own_records" | "my_team" | "entire_organization">;
+      },
     ) =>
       api
-        .patch<{ user: OrgAdminUserRecord }>(`/org/admin-users/${uuid}`, { feature_access })
+        .patch<{ user: OrgAdminUserRecord }>(`/org/admin-users/${uuid}`, permissions)
         .then((r) => r.data.user),
     /**
      * Cancel a pending invitation. Only valid while is_verified === 'no'; the

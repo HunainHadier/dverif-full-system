@@ -4,6 +4,7 @@ import authUser from "../middleware/authUser.js";
 import requireRole from "../middleware/requireRole.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
+import requirePermission from "../middleware/requirePermission.js";
 import { createLeaveLimiter } from "../middleware/rateLimiter.js";
 import {
   createLeave,
@@ -22,8 +23,17 @@ const router = Router();
 // Both are gated by requireActiveSubscription so leave only works with an
 // active org subscription, then by the plan's leave_management flag.
 const employeesOnly = [requireRole("employee"), requireActiveSubscription, requireModuleFeature("leave_management")];
-// Approve/reject is shared staff access.
+// Staff decisions are split by outcome; a sub-admin must hold the exact action.
 const staff = [requireRole("org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
+const mayDecideLeave = (req, res, next) => {
+  if (!["approved", "rejected"].includes(req.body?.status)) return next();
+  const permission = req.body.status === "approved" ? "leave_management.approve" : "leave_management.reject";
+  return requirePermission(permission)(req, res, next);
+};
+const mayCancelLeave = (req, res, next) => {
+  if (req.user?.org_role === "employee") return next();
+  return requirePermission("leave_management.cancel")(req, res, next);
+};
 const leaveParticipants = [requireRole("employee", "org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
 
 router.use(authUser);
@@ -35,7 +45,7 @@ router.get("/mine", employeesOnly, asyncHandler(myLeaves));
 router.post("/", employeesOnly, createLeaveLimiter, asyncHandler(createLeave));
 
 // Leave decision: org_admin or sub_admin may approve/reject.
-router.patch("/:uuid/decide", staff, asyncHandler(decideLeave));
-router.patch("/:uuid/cancel", leaveParticipants, asyncHandler(cancelLeave));
+router.patch("/:uuid/decide", staff, mayDecideLeave, asyncHandler(decideLeave));
+router.patch("/:uuid/cancel", leaveParticipants, mayCancelLeave, asyncHandler(cancelLeave));
 
 export default router;

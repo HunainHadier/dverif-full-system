@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Archive, Contact, Download, Eye, FileUp, Lock, Mail, Plus, RefreshCw, Send, Trash2, Users } from "lucide-react";
 
 import { useAuth } from "@/lib/auth";
+import { hasGranularPermission } from "@/lib/permissions";
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
 import { Pagination } from "@/components/common/Pagination";
@@ -172,6 +173,8 @@ export function EmployeeManager({
   userManagementLocked?: boolean;
 }) {
   const { user } = useAuth();
+  const canCreateEmployee = user?.role === "admin" || hasGranularPermission(user, "employees.create", "manage_employees");
+  const canArchiveEmployee = user?.role === "admin" || hasGranularPermission(user, "employees.archive", "manage_employees");
   const { t } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -199,10 +202,10 @@ export function EmployeeManager({
   const del = useMutation({
     mutationFn: (uuid: UUID) => api.remove(uuid),
     onSuccess: () => {
-      toast.success("Employee deleted");
+      toast.success("Employee archived");
       invalidate();
     },
-    onError: (e) => toast.error(apiErrorMessage(e, "Delete failed")),
+    onError: (e) => toast.error(apiErrorMessage(e, "Archive failed")),
   });
 
   const resendInviteMut = useMutation({
@@ -229,7 +232,7 @@ export function EmployeeManager({
           !isReferenceMode ? (
             <Button
               size="sm"
-              disabled={locked}
+              disabled={locked || !canCreateEmployee}
               onClick={() => {
                 setEditing(null);
                 setOpenForm(true);
@@ -435,11 +438,19 @@ export function EmployeeManager({
                             }
                             return null;
                           })()}
-                          {/* The Archive button was removed: turning someone into an
-                              ex-employee is now just setting their status to
-                              "Ex-Employee" in the edit form, which is where every
-                              other status change happens. A second control for the
-                              same field is how the two drifted apart before. */}
+                          {!isRef && canArchiveEmployee && (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => setToDelete(emp.uuid)}
+                              aria-label={`Archive ${emp.full_name}`}
+                              title="Archive employee"
+                            >
+                              <Archive className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             size="icon"
@@ -488,8 +499,9 @@ export function EmployeeManager({
       <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
-        title="Delete this employee?"
-        description="This will permanently remove the HR record. Employees linked to a platform user cannot be deleted."
+        title="Archive this employee?"
+        description="This moves the employee to archived ex-employee records. Their HR history and audit trail are preserved."
+        confirmLabel="Archive"
         onConfirm={() => {
           if (toDelete) del.mutate(toDelete);
           setToDelete(null);
@@ -519,7 +531,7 @@ function EmployeeFormDialog({
 }) {
   const isEdit = !!editing;
   const { user } = useAuth();
-  const canDelete = user?.org_role === "org_admin";
+  const canEdit = user?.role === "admin" || hasGranularPermission(user, "employees.edit", "manage_employees");
 
   const [form, setForm] = useState({
     full_name: editing?.full_name ?? "",
@@ -1034,7 +1046,7 @@ function EmployeeFormDialog({
                           <Download className="h-4 w-4" />
                         </ProtectedDocumentLink>
                       </Button>
-                      {canDelete ? (
+                      {canEdit ? (
                         <Button
                           type="button"
                           size="icon"

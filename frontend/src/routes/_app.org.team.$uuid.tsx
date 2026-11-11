@@ -13,7 +13,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccessDenied } from "@/components/common/RequireOrgFeature";
 import { useAuth } from "@/lib/auth";
 import { ProtectedDocumentLink } from "@/components/common/ProtectedDocumentLink";
-import { usePermissions } from "@/lib/permissions";
+import { usePermissions, hasGranularPermission } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { Button } from "@/components/ui/button";
@@ -778,7 +778,7 @@ function DocumentsCard({
   uploading: boolean;
 }) {
   const { user } = useAuth();
-  const canDelete = user?.org_role === "org_admin";
+  const canDelete = user?.role === "admin" || hasGranularPermission(user, "employees.edit", "manage_employees");
 
   const deleteMut = useMutation({
     mutationFn: (docUuid: UUID) => orgService.employeeDocuments.remove(docUuid),

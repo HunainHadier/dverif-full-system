@@ -512,7 +512,7 @@ function OrgPayrollPage() {
     overtimeAmounts: runOvertimeAmounts,
     componentSelections: runComponentSelections,
   });
-  const canEditPayrollSettings = perms.payroll;
+  const canEditPayrollSettings = perms.hasGranular("payroll.manage_settings", "payroll");
   const setGenerateScheduleEveryDay = (dayType: "working" | "off") =>
     setGenerateDayTypes(Object.fromEntries(
       selectedMonthScheduleDates.map((date) => [date, dayType]),
@@ -1107,7 +1107,7 @@ function OrgPayrollPage() {
                                       <span className="flex items-center gap-2 text-muted-foreground">
                                         <Checkbox
                                           checked={selectedComponents.allowance_uuids.includes(item.uuid)}
-                                          disabled={!perms.payroll || isLocked}
+                                          disabled={!canEditPayrollSettings || isLocked}
                                           onCheckedChange={(checked) => togglePayrollComponent(
                                             emp.uuid, "allowance", item.uuid, checked === true,
                                           )}
@@ -1135,7 +1135,7 @@ function OrgPayrollPage() {
                                       <span className="flex items-center gap-2 text-muted-foreground">
                                         <Checkbox
                                           checked={selectedComponents.deduction_uuids.includes(item.uuid)}
-                                          disabled={!perms.payroll || isLocked}
+                                          disabled={!canEditPayrollSettings || isLocked}
                                           onCheckedChange={(checked) => togglePayrollComponent(
                                             emp.uuid, "deduction", item.uuid, checked === true,
                                           )}

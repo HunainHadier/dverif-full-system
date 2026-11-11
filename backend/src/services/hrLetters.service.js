@@ -459,7 +459,7 @@ export async function updateDraftLetter({
   return getLetter({ orgId, letterUuid });
 }
 
-export async function listLetters({ orgId, page, limit, offset, employeeUuid, letterType, status, search }) {
+export async function listLetters({ orgId, page, limit, offset, employeeUuid, letterType, status, search, scopeFilter }) {
   const clauses = ["l.organization_id = ?"];
   const params = [orgId];
 
@@ -467,6 +467,10 @@ export async function listLetters({ orgId, page, limit, offset, employeeUuid, le
     assertUuid(employeeUuid, "Employee UUID");
     clauses.push("l.employee_uuid = ?");
     params.push(employeeUuid);
+  }
+  if (scopeFilter) {
+    clauses.push(scopeFilter.sql);
+    params.push(...scopeFilter.params);
   }
   if (letterType) {
     clauses.push("l.letter_type = ?");

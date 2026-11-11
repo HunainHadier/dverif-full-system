@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../utils/dataScopes.js";
 import { ok } from "../utils/response.js";
 import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
@@ -434,24 +435,26 @@ export async function generatePayroll(req, res) {
     // generated for. Otherwise ALL employees of the org are processed.
     // Sub_admins and the org_admin are users without employee records and
     // therefore are not part of payroll.
-    const selected = Array.isArray(employee_uuids) ? employee_uuids.filter(Boolean) : [];
+    const selected = Array.isArray(employee_uuids) ? [...new Set(employee_uuids.filter(Boolean))] : [];
+    const scopeFilter = employeeScopeCondition(req, "payroll", "e");
+    const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
     let employees = [];
 
     if (selected.length) {
       const placeholders = selected.map(() => "?").join(",");
       [employees] = await conn.query(
-        `SELECT uuid, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})`,
-        [orgId, ...selected]
+        `SELECT e.uuid, e.joining_date FROM employees e WHERE e.organization_id=? AND e.uuid IN (${placeholders})${scopeSql}`,
+        [orgId, ...selected, ...(scopeFilter?.params ?? [])]
       );
-      if (!employees.length) {
-        throw new ApiError(404, "None of the selected employees exist in this organization");
+      if (employees.length !== selected.length) {
+        throw new ApiError(404, "One or more selected employees are unavailable in your permitted data scope");
       }
     } else {
       [employees] = await conn.query(
-        "SELECT uuid, joining_date FROM employees WHERE organization_id=?",
-        [orgId]
+        `SELECT e.uuid, e.joining_date FROM employees e WHERE e.organization_id=?${scopeSql}`,
+        [orgId, ...(scopeFilter?.params ?? [])]
       );
-      if (!employees.length) throw new ApiError(404, "No employees in this organization to process");
+      if (!employees.length) throw new ApiError(404, "No employees in your permitted data scope to process");
     }
     assertPayrollOvertimeEmployees(overtimeAmounts, employees);
     assertPayrollComponentSelectionEmployees(componentSelections, employees);
@@ -751,22 +754,24 @@ export async function previewPayroll(req, res) {
     conn: pool,
   });
 
-  const selected = Array.isArray(employee_uuids) ? employee_uuids.filter(Boolean) : [];
+  const selected = Array.isArray(employee_uuids) ? [...new Set(employee_uuids.filter(Boolean))] : [];
+  const scopeFilter = employeeScopeCondition(req, "payroll", "e");
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   let employees;
   if (selected.length) {
     const placeholders = selected.map(() => "?").join(",");
     [employees] = await pool.query(
-      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})
-        ORDER BY full_name`,
-      [orgId, ...selected]
+      `SELECT e.uuid, e.full_name, e.joining_date FROM employees e WHERE e.organization_id=? AND e.uuid IN (${placeholders})${scopeSql}
+        ORDER BY e.full_name`,
+      [orgId, ...selected, ...(scopeFilter?.params ?? [])]
     );
-    if (!employees.length) {
-      throw new ApiError(404, "None of the selected employees exist in this organization");
+    if (employees.length !== selected.length) {
+      throw new ApiError(404, "One or more selected employees are unavailable in your permitted data scope");
     }
   } else {
     [employees] = await pool.query(
-      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? ORDER BY full_name`,
-      [orgId]
+      `SELECT e.uuid, e.full_name, e.joining_date FROM employees e WHERE e.organization_id=?${scopeSql} ORDER BY e.full_name`,
+      [orgId, ...(scopeFilter?.params ?? [])]
     );
   }
   assertPayrollOvertimeEmployees(overtimeAmounts, employees);
@@ -875,10 +880,13 @@ export async function listPayrollEmployees(req, res) {
   const { m, y } = req.query.month === undefined && req.query.year === undefined
     ? { m: currentDate.getMonth() + 1, y: currentDate.getFullYear() }
     : payrollService.assertMonthYear(req.query.month, req.query.year);
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  const employeeWhere = `WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')${employeeScope ? ` AND ${employeeScope.sql}` : ""}`;
+  const employeeParams = [orgId, ...(employeeScope?.params ?? [])];
 
   const [[{ total }]] = await pool.query(
-    "SELECT COUNT(*) AS total FROM employees WHERE organization_id=? AND status IN ('current_employee', 'active')",
-    [orgId],
+    `SELECT COUNT(*) AS total FROM employees e ${employeeWhere}`,
+    employeeParams,
   );
   const [employees] = await pool.query(
     `SELECT e.uuid, e.full_name, e.email, dg.name AS designation, dp.name AS department,
@@ -891,9 +899,9 @@ export async function listPayrollEmployees(req, res) {
        FROM employees e
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
-      WHERE e.organization_id=? AND e.status IN ('current_employee', 'active')
+      ${employeeWhere}
       ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
-    [m, y, orgId, limit, offset],
+    [m, y, ...employeeParams, limit, offset],
   );
 
   const compensation = new Map(
@@ -1185,6 +1193,11 @@ export async function listOrgSalaryRecords(req, res) {
 
   let whereClause = "WHERE sr.organization_id = ?";
   const params = [orgId];
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  if (employeeScope) {
+    whereClause += ` AND ${employeeScope.sql}`;
+    params.push(...employeeScope.params);
+  }
 
   if (employeeUuid) {
     assertUuid(employeeUuid, "Employee UUID");
@@ -1398,6 +1411,7 @@ export async function downloadPayslip(req, res) {
   const isAdmin = Boolean(req.admin);
   const orgId = isAdmin ? null : req.scopeOrgId;
   const record = await getSalaryRecordForPayslip(req.params.uuid, orgId, isAdmin);
+  if (!isAdmin) await assertEmployeeInDataScope(req, "payroll", record.employee_uuid);
 
   const pdf = await generatePayslipPdf({
     record,
@@ -1434,6 +1448,11 @@ export async function exportOrgSalaryRecords(req, res) {
 
   let whereClause = "WHERE sr.organization_id = ?";
   const params = [orgId];
+  const employeeScope = employeeScopeCondition(req, "payroll", "e");
+  if (employeeScope) {
+    whereClause += ` AND ${employeeScope.sql}`;
+    params.push(...employeeScope.params);
+  }
 
   if (employeeUuid) {
     assertUuid(employeeUuid, "Employee UUID");
