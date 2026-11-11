@@ -550,7 +550,7 @@ function FeatureCheckboxes({ value, onChange }: { value: PermissionPayload; onCh
             <select value={value.data_scopes[module.key] ?? "own_records"}
               onChange={(event) => onChange({ ...value, data_scopes: { ...value.data_scopes, [module.key]: event.target.value as DataScope }})}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="own_records">Own Records</option><option value="my_team">My Team / Assigned Team</option>
+              <option value="own_records">Own Records</option><option value="my_team">My Team (You + Direct Reports)</option>
               <option value="entire_organization">Entire Organization</option>
             </select>
           </div>
@@ -615,7 +615,7 @@ function EditSubAdminPermissionsDialog({
             <p className="text-xs text-muted-foreground">
               Sub-admins gain exactly the action permissions you grant here. Changes take effect immediately.
             </p>
-            <p className="text-xs text-amber-600">Data-scope selections are saved separately. Server-side query filtering for these scopes is not yet complete, so do not rely on these selections as an access-control boundary yet.</p>
+            <p className="text-xs text-amber-600">Data visibility is enforced by the API for employee-linked records. My Team includes your own records and direct reports. Shared settings, templates, network policy, organization inbox and organization-wide analytics require Entire Organization scope.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
         </div>
@@ -730,7 +730,7 @@ function CreateSubAdminDialog({
             <p className="text-xs text-muted-foreground">
               Sub-admins never get full Org Admin power — they gain exactly the action permissions you grant here.
             </p>
-            <p className="text-xs text-amber-600">Data-scope selections are saved separately. Server-side query filtering for these scopes is not yet complete, so do not rely on these selections as an access-control boundary yet.</p>
+            <p className="text-xs text-amber-600">Data visibility is enforced by the API for employee-linked records. My Team includes your own records and direct reports. Shared settings, templates, network policy, organization inbox and organization-wide analytics require Entire Organization scope.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
 
