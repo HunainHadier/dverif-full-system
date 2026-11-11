@@ -280,7 +280,7 @@ router.post("/employees", employeeCreate, portalAccessIfRequested, createEmploye
 router.get("/employees/:uuid", employeeView, asyncHandler(getEmployee));
 router.put("/employees/:uuid", employeeEdit, asyncHandler(updateEmployee));
 router.delete("/employees/:uuid", employeeArchive, asyncHandler(archiveReference));
-router.post("/employees/:uuid/resend-invite", userMgmtStaff, asyncHandler(resendEmployeeInvite));
+router.post("/employees/:uuid/resend-invite", userMgmtStaff, employeeEdit, employeeDataScope("employees"), asyncHandler(resendEmployeeInvite));
 
 // Reference records (ex-employees / learned_reference): create a standalone
 // record directly, or archive an existing roster row into the reference list.
