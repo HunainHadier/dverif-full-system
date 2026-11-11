@@ -264,6 +264,7 @@ export async function moveApplicationStage(req, res) {
 
 /** Prepare an offer for direct dispatch to the candidate. */
 export async function startOfferApplication(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const result = await recruitment.startCandidateOffer({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -321,6 +322,7 @@ export async function getPipeline(req, res) {
   const board = await recruitment.getPipelineBoard({
     orgId: req.scopeOrgId,
     openingUuid,
+    scopeFilter: creatorScopeCondition(req, "recruitment", "c"),
   });
   return ok(res, board, "Pipeline");
 }
@@ -360,6 +362,7 @@ export async function listInterviews(req, res) {
     page,
     limit,
     offset,
+    scopeFilter: creatorScopeCondition(req, "recruitment", "c"),
   });
   // Identical envelope to candidates and offers. The agenda page asks for a limit
   // large enough to cover a working week; without one this silently defaulted to 20
@@ -368,6 +371,7 @@ export async function listInterviews(req, res) {
 }
 
 export async function scheduleInterview(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", str(req.body?.candidate_uuid));
   const interview = await recruitment.scheduleInterview({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -391,6 +395,8 @@ export async function scheduleInterview(req, res) {
 }
 
 export async function recordInterviewFeedback(req, res) {
+  const existingInterview = await recruitment.getInterview({ orgId: req.scopeOrgId, interviewUuid: req.params.uuid });
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", existingInterview.candidate_uuid);
   const interview = await recruitment.recordInterviewFeedback({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -425,16 +431,19 @@ export async function listOffers(req, res) {
     page,
     limit,
     offset,
+    scopeFilter: creatorScopeCondition(req, "recruitment", "c"),
   });
   return ok(res, paginatedResponse(result.items, result.total, result.page, result.limit), "Offers");
 }
 
 export async function getOfferPreparation(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const data = await recruitment.getOfferPreparation({ orgId: req.scopeOrgId, candidateUuid: req.params.uuid });
   return ok(res, data, "Offer preparation");
 }
 
 export async function previewOffer(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const preview = await recruitment.previewOffer({
     orgId: req.scopeOrgId,
     candidateUuid: req.params.uuid,
@@ -445,6 +454,7 @@ export async function previewOffer(req, res) {
 }
 
 export async function sendOffer(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const letter = await recruitment.sendOffer({
     orgId: req.scopeOrgId,
     actorUuid: req.user?.uuid ?? null,
@@ -465,6 +475,7 @@ export async function sendOffer(req, res) {
 }
 
 export async function downloadOfferPdf(req, res) {
+  await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid);
   const pdf = await recruitment.downloadOfferPdf({
     orgId: req.scopeOrgId,
     candidateUuid: req.params.uuid,
