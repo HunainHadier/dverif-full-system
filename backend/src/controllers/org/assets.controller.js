@@ -23,7 +23,7 @@ async function scopedAsset(req, assetUuid) {
     try {
       await assertEmployeeInDataScope(req, "assets", asset.holder.employee_uuid);
     } catch (error) {
-      if (error?.status !== 404) throw error;
+      if (error?.statusCode !== 404) throw error;
       await assertCreatedRecordInDataScope(req, "assets", "assets", assetUuid);
     }
   } else if (scope) {
