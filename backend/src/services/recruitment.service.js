@@ -1793,7 +1793,8 @@ export async function getInterview({ orgId, interviewUuid, conn = pool }) {
  * The `total` count reuses the SAME WHERE clause as the page query, so the page
  * count cannot disagree with what a page actually contains.
  */
-export async function listInterviewers({ orgId, conn = pool }) {
+export async function listInterviewers({ orgId, scopeFilter, conn = pool }) {
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   const [rows] = await conn.query(
     `SELECT DISTINCT u.uuid, u.full_name, u.email, u.org_role,
             dg.name AS designation, dp.name AS department
@@ -1802,9 +1803,9 @@ export async function listInterviewers({ orgId, conn = pool }) {
          ON e.linked_user_uuid=u.uuid AND e.organization_id=u.organization AND e.status IN ('current_employee','active')
        LEFT JOIN designations dg ON dg.id=e.designation_id
        LEFT JOIN departments dp ON dp.id=e.department_id
-      WHERE u.organization=? AND u.status='active' AND (u.org_role IN ('org_admin','sub_admin') OR e.uuid IS NOT NULL)
+      WHERE u.organization=? AND u.status='active' AND (u.org_role IN ('org_admin','sub_admin') OR e.uuid IS NOT NULL)${scopeSql}
       ORDER BY u.full_name ASC`,
-    [orgId],
+    [orgId, ...(scopeFilter?.params ?? [])],
   );
   return rows;
 }
