@@ -26,7 +26,8 @@ const employeesOnly = [requireRole("employee"), requireActiveSubscription, requi
 // Staff decisions are split by outcome; a sub-admin must hold the exact action.
 const staff = [requireRole("org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
 const mayDecideLeave = (req, res, next) => {
-  const permission = req.body?.status === "approved" ? "leave_management.approve" : "leave_management.reject";
+  if (!["approved", "rejected"].includes(req.body?.status)) return next();
+  const permission = req.body.status === "approved" ? "leave_management.approve" : "leave_management.reject";
   return requirePermission(permission)(req, res, next);
 };
 const mayCancelLeave = (req, res, next) => {
