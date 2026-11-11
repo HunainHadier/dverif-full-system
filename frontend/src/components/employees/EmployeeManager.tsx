@@ -174,6 +174,7 @@ export function EmployeeManager({
 }) {
   const { user } = useAuth();
   const canCreateEmployee = user?.role === "admin" || hasGranularPermission(user, "employees.create", "manage_employees");
+  const canArchiveEmployee = user?.role === "admin" || hasGranularPermission(user, "employees.archive", "manage_employees");
   const { t } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -437,11 +438,19 @@ export function EmployeeManager({
                             }
                             return null;
                           })()}
-                          {/* The Archive button was removed: turning someone into an
-                              ex-employee is now just setting their status to
-                              "Ex-Employee" in the edit form, which is where every
-                              other status change happens. A second control for the
-                              same field is how the two drifted apart before. */}
+                          {!isRef && canArchiveEmployee && (
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => setToDelete(emp.uuid)}
+                              aria-label={`Archive ${emp.full_name}`}
+                              title="Archive employee"
+                            >
+                              <Archive className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             size="icon"
@@ -492,6 +501,7 @@ export function EmployeeManager({
         onOpenChange={(o) => !o && setToDelete(null)}
         title="Archive this employee?"
         description="This moves the employee to archived ex-employee records. Their HR history and audit trail are preserved."
+        confirmLabel="Archive"
         onConfirm={() => {
           if (toDelete) del.mutate(toDelete);
           setToDelete(null);
