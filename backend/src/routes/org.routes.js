@@ -408,7 +408,7 @@ router.get("/offboarding/exit-requests/:uuid/settlement", offboardingView, async
 router.post("/offboarding/exit-requests/:uuid/settlement", offboardingDraftSettlement, asyncHandler(draftSettlement));
 router.post(
   "/offboarding/exit-requests/:uuid/settlement/advance",
-  offboardingChecklist,
+  offboardingApproveSettlement,
   asyncHandler(advanceSettlement),
 );
 router.post("/offboarding/exit-requests/:uuid/complete", offboardingComplete, asyncHandler(completeExitRequest));
@@ -546,7 +546,7 @@ router.post(
 router.delete("/candidate-attachments/:attachmentUuid", recruitmentCandidates, asyncHandler(removeResume));
 router.get(
   "/candidate-attachments/:attachmentUuid/download",
-  recruitmentCandidates,
+  recruitmentView,
   asyncHandler(downloadResume),
 );
 const expenseView = [...staff, requireModuleFeature("expense_management"), requirePermission("expenses.view")];
@@ -616,7 +616,7 @@ router.delete(
 );
 router.get(
   "/expense-attachments/:attachmentUuid/download",
-  expenseApprove,
+  expenseView,
   asyncHandler(downloadExpenseReceipt),
 );
 
