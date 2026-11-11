@@ -167,7 +167,7 @@ async function resolveOrganizationUuid(uuid, required = false) {
 }
 
 export async function createRequest(req, res) {
-  requirePermission(req.user, "generate_request");
+  requirePermission(req.user, "document_verification.generate_request");
   const { document_type, issuing_organization_uuid,
           other_organization_name, submission_remarks,
           other_organization_email, other_organization_phone, other_organization_website,
@@ -586,6 +586,7 @@ export async function createRequest(req, res) {
 }
 
 export async function mySentRequests(req, res) {
+  requirePermission(req.user, "document_verification.generate_request");
   const { page, limit, offset } = parsePagination(req.query);
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
   const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
@@ -665,6 +666,7 @@ export async function mySentRequests(req, res) {
 }
 
 export async function deleteMySentRequest(req, res) {
+  requirePermission(req.user, "document_verification.edit_draft");
   const { uuid } = req.params;
   assertUuid(uuid, "Request UUID");
 
@@ -708,6 +710,7 @@ export async function deleteMySentRequest(req, res) {
 }
 
 export async function updateMySentRequest(req, res) {
+  requirePermission(req.user, "document_verification.edit_draft");
   const { uuid } = req.params;
   assertUuid(uuid, "Request UUID");
 
@@ -885,7 +888,7 @@ export async function updateMySentRequest(req, res) {
 }
 
 export async function myInboxRequests(req, res) {
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, "document_verification.view_requests");
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
 
   // Lazy SLA check on read (reminder + flag overdue requests)
@@ -994,7 +997,7 @@ export async function myInboxRequests(req, res) {
 }
 
 export async function getMyInboxRequestDetail(req, res) {
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, "document_verification.view_requests");
   assertUuid(req.params.uuid, "Request UUID");
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
 
@@ -1094,7 +1097,7 @@ export async function getMyInboxRequestDetail(req, res) {
 }
 
 export async function myInboxCount(req, res) {
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, "document_verification.view_requests");
   if (!req.user.organization) return ok(res, { count: 0 }, "Inbox count");
 
   // Lazy SLA check on read
@@ -1131,7 +1134,7 @@ export async function myInboxCount(req, res) {
  * times occupies a single row showing "10", rather than ten near-identical rows.
  */
 export async function myAutoVerifiedRequests(req, res) {
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, "document_verification.view_requests");
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
 
   const { page, limit, offset } = parsePagination(req.query);
@@ -1233,7 +1236,7 @@ export async function myAutoVerifiedRequests(req, res) {
  * auto-only ledger must not claim an outcome it cannot prove.
  */
 export async function getAutoVerifiedRequestHistory(req, res) {
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, "document_verification.view_requests");
   const { uuid } = req.params;
   assertUuid(uuid, "Request UUID");
   if (!req.user.organization) throw new ApiError(400, "User has no organization");
@@ -1290,7 +1293,9 @@ export async function verifyRequest(req, res) {
   const { uuid } = req.params;
   const { status, verification_remarks } = req.body;
 
-  requirePermission(req.user, "approve_request");
+  requirePermission(req.user, status === "verified"
+    ? "document_verification.approve"
+    : "document_verification.reject");
   assertUuid(uuid, "Request UUID");
   if (!["verified", "unverified"].includes(status)) throw new ApiError(400, "status must be verified or unverified");
 
