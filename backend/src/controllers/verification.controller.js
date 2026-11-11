@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
+import { getDataScope } from "../utils/dataScopes.js";
 import { encryptCnic, decryptCnic, hashCnic } from "../utils/personCrypto.js";
 import { cnicError, normalizeCnic } from "../utils/contactFormat.js";
 import { recordPersonDocument } from "../utils/personDocuments.js";
@@ -592,25 +593,25 @@ export async function mySentRequests(req, res) {
   const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
   const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : "";
 
-  // An org_admin is accountable for everything their organization submitted, not
-  // just their own uploads. Scoping to user_id made a sub-admin's submissions
-  // invisible to them with no way to discover they existed — the request would
-  // simply be missing from the org's own history.
-  //
-  // The requester is identified via the joined `users` row (requester.organization),
-  // NOT via the issuing organization: "who sent it" and "who it was sent to" are
-  // different questions, and only the former decides what the sender may see.
-  //
-  // Sub-admins keep seeing only their own submissions. That is the narrower,
-  // already-shipped behaviour, and widening it is a permission-model decision
-  // rather than a bug fix, so it is deliberately not changed here.
-  const seesWholeOrg = req.user.org_role === "org_admin" && Boolean(req.user.organization);
-
+  // Scope the sender's history by the separately saved document-verification
+  // data scope. The sender is resolved through users.uuid; issuing_organization_id
+  // answers who received the request and must not be used as the ownership axis.
+  const dataScope = getDataScope(req.user, "document_verification");
   let whereClause;
   let params;
-  if (seesWholeOrg) {
+  if (req.user.org_role === "org_admin" || dataScope === "entire_organization") {
     whereClause = "WHERE requester.organization = ?";
     params = [req.user.organization];
+  } else if (dataScope === "my_team") {
+    whereClause = `WHERE (requester.uuid = ? OR requester.uuid IN (
+      SELECT team_member.linked_user_uuid FROM employees team_member
+       WHERE team_member.organization_id = ?
+         AND team_member.reporting_manager_uuid = (
+           SELECT manager.uuid FROM employees manager
+            WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1
+         )
+    ))`;
+    params = [req.user.uuid, req.user.organization, req.user.organization, req.user.uuid];
   } else {
     whereClause = "WHERE vr.user_id = ?";
     params = [req.user.id];
