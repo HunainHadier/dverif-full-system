@@ -1,5 +1,6 @@
 import ApiError from "../utils/ApiError.js";
 import { pool } from "../config/db.js";
+import { employeeScopeCondition, assertEmployeeInDataScope } from "../utils/dataScopes.js";
 import { ok, created } from "../utils/response.js";
 import { assertUuid } from "../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../utils/pagination.js";
@@ -393,6 +394,7 @@ export async function manualEntry(req, res) {
   const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
 
   assertUuid(employee_uuid, "Employee UUID");
+  await assertEmployeeInDataScope(req, "attendance", employee_uuid);
   if (!validAttendanceDate(date)) throw new ApiError(400, "date must be a valid YYYY-MM-DD value");
   if (!validAttendanceTime(check_in_time)) throw new ApiError(400, "check_in_time must be HH:MM (24h)");
   const normalizedCheckOut = check_out_time === undefined || check_out_time === null || check_out_time === ""
@@ -541,6 +543,7 @@ export async function correctAttendance(req, res) {
     );
     if (!rows.length) throw new ApiError(404, "Attendance record not found in this organization");
     const previous = rows[0];
+    await assertEmployeeInDataScope(req, "attendance", previous.employee_uuid);
     const breakMinutes = req.body.break_duration_minutes === undefined
       ? previous.break_duration_minutes
       : parseBreakDuration(req.body.break_duration_minutes);
@@ -762,6 +765,11 @@ export async function listOrgAttendance(req, res) {
   const orgId = req.scopeOrgId;
   const { page, limit, offset } = parsePagination(req.query);
   const f = buildRecordFilters(req.query);
+  const scopeFilter = employeeScopeCondition(req, "attendance", "e");
+  if (scopeFilter) {
+    f.clauses.push(scopeFilter.sql);
+    f.params.push(...scopeFilter.params);
+  }
 
   const whereClause = `WHERE ar.organization_id = ?${f.clauses.length ? " AND " + f.clauses.join(" AND ") : ""}`;
   const params = [orgId, ...f.params];
@@ -813,6 +821,7 @@ export async function listMissingAttendance(req, res) {
   const scheduleDates = scheduleRows.map((row) => row.work_date);
   const calendarQuery = `SELECT ? AS work_date${scheduleDates.slice(1).map(() => " UNION ALL SELECT ?").join("")}`;
   const calendarParams = [scheduleDates[0], ...scheduleDates.slice(1)];
+  const missingScopeFilter = employeeScopeCondition(req, "attendance", "e");
   const baseQuery = `
     FROM (${calendarQuery}) calendar
     JOIN employees e
@@ -825,8 +834,8 @@ export async function listMissingAttendance(req, res) {
       AND NOT EXISTS (
         SELECT 1 FROM holidays h
          WHERE h.organization_id=e.organization_id AND h.date=calendar.work_date
-      )`;
-  const commonParams = [...calendarParams, req.scopeOrgId];
+      )${missingScopeFilter ? ` AND ${missingScopeFilter.sql}` : ""}`;
+  const commonParams = [...calendarParams, req.scopeOrgId, ...(missingScopeFilter?.params ?? [])];
   const [[{ total }]] = await pool.query(
     `SELECT COUNT(*) AS total ${baseQuery}`,
     commonParams,
