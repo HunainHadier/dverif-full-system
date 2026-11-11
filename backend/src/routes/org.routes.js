@@ -4,6 +4,7 @@ import requireRole from "../middleware/requireRole.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import requirePermission from "../middleware/requirePermission.js";
+import { assertEmployeeInDataScope } from "../utils/dataScopes.js";
 import { createEmployeeLimiter } from "../middleware/rateLimiter.js";
 import { uploadDocs } from "../middleware/uploadDocs.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
@@ -220,6 +221,15 @@ const leaveTypesManage = [...staff, requireModuleFeature("leave_management"), re
 const payrollView = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.view")];
 const payrollGenerateAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.generate")];
 const payrollSettingsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_settings")];
+const employeeDataScope = (moduleKey) => async (req, res, next) => {
+  try {
+    await assertEmployeeInDataScope(req, moduleKey, req.params.uuid);
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+const payrollEmployeeScope = employeeDataScope("payroll");
 const userMgmtFeature = requireModuleFeature("user_management");
 const userMgmtPermission = requirePermission("user_management");
 const portalAccessIfRequested = (req, res, next) => {
@@ -335,20 +345,20 @@ router.delete("/salary-components/:uuid", payrollMgmtOwner, asyncHandler(deleteS
 router.patch("/salary-components/:uuid/status", payrollSettingsAccess, asyncHandler(toggleSalaryComponentStatus));
 
 // ---- Employee salary history + salary increment (staff) ----
-router.get("/employees/:uuid/salary-history", payrollView, asyncHandler(listEmployeeSalaryHistory));
-router.post("/employees/:uuid/increment-salary", payrollSettingsAccess, asyncHandler(incrementEmployeeSalary));
-router.put("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, asyncHandler(updateEmployeeSalaryHistory));
-router.delete("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, asyncHandler(deleteEmployeeSalaryHistory));
+router.get("/employees/:uuid/salary-history", payrollView, payrollEmployeeScope, asyncHandler(listEmployeeSalaryHistory));
+router.post("/employees/:uuid/increment-salary", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(incrementEmployeeSalary));
+router.put("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryHistory));
+router.delete("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, payrollEmployeeScope, asyncHandler(deleteEmployeeSalaryHistory));
 
 // ---- Per-employee salary component assignments (staff) ----
-router.get("/employees/:uuid/salary-components", payrollView, asyncHandler(listEmployeeSalaryComponents));
-router.post("/employees/:uuid/salary-components", payrollSettingsAccess, asyncHandler(assignEmployeeSalaryComponent));
-router.put("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, asyncHandler(updateEmployeeSalaryComponent));
-router.delete("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, asyncHandler(removeEmployeeSalaryComponent));
-router.get("/employees/:uuid/monthly-salary-variables", payrollView, asyncHandler(listMonthlySalaryVariables));
-router.post("/employees/:uuid/monthly-salary-variables", payrollSettingsAccess, asyncHandler(createMonthlySalaryVariable));
-router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, asyncHandler(updateMonthlySalaryVariable));
-router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, asyncHandler(deleteMonthlySalaryVariable));
+router.get("/employees/:uuid/salary-components", payrollView, payrollEmployeeScope, asyncHandler(listEmployeeSalaryComponents));
+router.post("/employees/:uuid/salary-components", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(assignEmployeeSalaryComponent));
+router.put("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryComponent));
+router.delete("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(removeEmployeeSalaryComponent));
+router.get("/employees/:uuid/monthly-salary-variables", payrollView, payrollEmployeeScope, asyncHandler(listMonthlySalaryVariables));
+router.post("/employees/:uuid/monthly-salary-variables", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(createMonthlySalaryVariable));
+router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(updateMonthlySalaryVariable));
+router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
