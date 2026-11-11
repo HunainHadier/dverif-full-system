@@ -173,6 +173,7 @@ export function EmployeeManager({
   userManagementLocked?: boolean;
 }) {
   const { user } = useAuth();
+  const canCreateEmployee = user?.role === "admin" || hasGranularPermission(user, "employees.create", "manage_employees");
   const { t } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -230,7 +231,7 @@ export function EmployeeManager({
           !isReferenceMode ? (
             <Button
               size="sm"
-              disabled={locked}
+              disabled={locked || !canCreateEmployee}
               onClick={() => {
                 setEditing(null);
                 setOpenForm(true);
@@ -520,7 +521,7 @@ function EmployeeFormDialog({
 }) {
   const isEdit = !!editing;
   const { user } = useAuth();
-  const canEdit = hasGranularPermission(user, "employees.edit", "manage_employees");
+  const canEdit = user?.role === "admin" || hasGranularPermission(user, "employees.edit", "manage_employees");
 
   const [form, setForm] = useState({
     full_name: editing?.full_name ?? "",
