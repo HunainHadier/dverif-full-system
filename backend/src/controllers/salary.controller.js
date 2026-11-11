@@ -435,24 +435,26 @@ export async function generatePayroll(req, res) {
     // generated for. Otherwise ALL employees of the org are processed.
     // Sub_admins and the org_admin are users without employee records and
     // therefore are not part of payroll.
-    const selected = Array.isArray(employee_uuids) ? employee_uuids.filter(Boolean) : [];
+    const selected = Array.isArray(employee_uuids) ? [...new Set(employee_uuids.filter(Boolean))] : [];
+    const scopeFilter = employeeScopeCondition(req, "payroll", "e");
+    const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
     let employees = [];
 
     if (selected.length) {
       const placeholders = selected.map(() => "?").join(",");
       [employees] = await conn.query(
-        `SELECT uuid, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})`,
-        [orgId, ...selected]
+        `SELECT e.uuid, e.joining_date FROM employees e WHERE e.organization_id=? AND e.uuid IN (${placeholders})${scopeSql}`,
+        [orgId, ...selected, ...(scopeFilter?.params ?? [])]
       );
-      if (!employees.length) {
-        throw new ApiError(404, "None of the selected employees exist in this organization");
+      if (employees.length !== selected.length) {
+        throw new ApiError(404, "One or more selected employees are unavailable in your permitted data scope");
       }
     } else {
       [employees] = await conn.query(
-        "SELECT uuid, joining_date FROM employees WHERE organization_id=?",
-        [orgId]
+        `SELECT e.uuid, e.joining_date FROM employees e WHERE e.organization_id=?${scopeSql}`,
+        [orgId, ...(scopeFilter?.params ?? [])]
       );
-      if (!employees.length) throw new ApiError(404, "No employees in this organization to process");
+      if (!employees.length) throw new ApiError(404, "No employees in your permitted data scope to process");
     }
     assertPayrollOvertimeEmployees(overtimeAmounts, employees);
     assertPayrollComponentSelectionEmployees(componentSelections, employees);
@@ -752,22 +754,24 @@ export async function previewPayroll(req, res) {
     conn: pool,
   });
 
-  const selected = Array.isArray(employee_uuids) ? employee_uuids.filter(Boolean) : [];
+  const selected = Array.isArray(employee_uuids) ? [...new Set(employee_uuids.filter(Boolean))] : [];
+  const scopeFilter = employeeScopeCondition(req, "payroll", "e");
+  const scopeSql = scopeFilter ? ` AND ${scopeFilter.sql}` : "";
   let employees;
   if (selected.length) {
     const placeholders = selected.map(() => "?").join(",");
     [employees] = await pool.query(
-      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? AND uuid IN (${placeholders})
-        ORDER BY full_name`,
-      [orgId, ...selected]
+      `SELECT e.uuid, e.full_name, e.joining_date FROM employees e WHERE e.organization_id=? AND e.uuid IN (${placeholders})${scopeSql}
+        ORDER BY e.full_name`,
+      [orgId, ...selected, ...(scopeFilter?.params ?? [])]
     );
-    if (!employees.length) {
-      throw new ApiError(404, "None of the selected employees exist in this organization");
+    if (employees.length !== selected.length) {
+      throw new ApiError(404, "One or more selected employees are unavailable in your permitted data scope");
     }
   } else {
     [employees] = await pool.query(
-      `SELECT uuid, full_name, joining_date FROM employees WHERE organization_id=? ORDER BY full_name`,
-      [orgId]
+      `SELECT e.uuid, e.full_name, e.joining_date FROM employees e WHERE e.organization_id=?${scopeSql} ORDER BY e.full_name`,
+      [orgId, ...(scopeFilter?.params ?? [])]
     );
   }
   assertPayrollOvertimeEmployees(overtimeAmounts, employees);
