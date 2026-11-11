@@ -13,6 +13,8 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -45,7 +47,7 @@ import {
 } from "@/components/ui/table";
 import { TableSkeleton } from "./_app.requests";
 import { authStore } from "@/lib/auth";
-import { canAccessRoute, DELEGATED_FEATURE_KEYS, type FeatureKey } from "@/lib/routeAccess";
+import { canAccessRoute } from "@/lib/routeAccess";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { orgService, type OrgAdminUserRecord, type UUID } from "@/services";
@@ -78,70 +80,61 @@ export const Route = createFileRoute("/_app/org/admins")({
  * could issue letters, spend money on expenses, or terminate an employment, because
  * there was no dial for it.
  */
-type ElevatedKey = FeatureKey;
+type PermissionPayload = {
+  granular_permissions: Record<string, boolean>;
+  data_scopes: Record<string, DataScope>;
+};
+type DataScope = "own_records" | "my_team" | "entire_organization";
 
-const ELEVATED_PERMISSIONS: { key: ElevatedKey; label: string; description: string }[] = [
-  {
-    key: "manage_employees",
-    label: "Manage Employees",
-    description: "Create, edit and view employees in My Team",
-  },
-  {
-    key: "generate_request",
-    label: "Generate Request",
-    description: "Create new document verification requests",
-  },
-  {
-    key: "approve_request",
-    label: "Approve Request",
-    description: "Review, verify and reject inbox verification requests",
-  },
-  {
-    key: "hr_letters",
-    label: "HR Letters",
-    description:
-      "Issue employment, increment and confirmation letters. These attest to someone's employment to a third party.",
-  },
-  {
-    key: "manage_assets",
-    label: "Assets",
-    description: "Hand equipment out, take it back, and run repairs",
-  },
-  {
-    key: "manage_separation",
-    label: "Offboarding",
-    description:
-      "Run exit checklists, asset clearance and final-settlement. The highest-consequence module in the product.",
-  },
-  {
-    key: "approve_expenses",
-    label: "Approve Employee Expenses",
-    description: "Review and settle expense claims filed by employees or other sub-admins",
-  },
-  {
-    key: "create_expenses",
-    label: "Create Expense",
-    description: "File your own expense claims; your claims are approved automatically",
-  },
-  {
-    key: "manage_recruitment",
-    label: "Recruitment",
-    description:
-      "Job openings, the candidate pipeline, interviews, and one-click hire. Hiring creates a real employee record.",
-  },
-];
+const PERMISSION_MODULES = [
+  { key: "employees", label: "Employees", actions: [["view","View"],["create","Create"],["edit","Edit"],["archive","Archive"],["export","Export"],["manage_departments","Manage Departments"],["manage_designations","Manage Designations"]] },
+  { key: "document_verification", label: "Document Verification", actions: [["view_requests","View Requests"],["generate_request","Generate Request"],["edit_draft","Edit Draft"],["approve","Approve"],["reject","Reject"],["download_documents","Download Documents"]] },
+  { key: "attendance", label: "Attendance", actions: [["view","View"],["manual_entry","Manual Entry"],["correct_check_in_out","Correct Check-in/out"],["manage_ips","Manage IPs"],["approve_overtime","Approve Overtime"]] },
+  { key: "leave_management", label: "Leave Management", actions: [["view","View"],["submit_on_behalf","Submit on Behalf"],["approve","Approve"],["reject","Reject"],["cancel","Cancel"],["allocate_balance","Allocate Balance"],["manage_leave_types","Manage Leave Types"]] },
+  { key: "payroll", label: "Payroll", actions: [["view","View"],["generate","Generate"],["manage_settings","Manage Payroll Settings"]] },
+  { key: "expenses", label: "Expenses", actions: [["view","View"],["create_own","Create Own Expense"],["approve_employee","Approve Employee Expenses"],["process_payment","Process Payment"],["export","Export"]] },
+  { key: "hr_letters", label: "HR Letters", actions: [["view","View"],["create_draft","Create Draft"],["edit_draft","Edit Draft"],["issue","Issue"],["revoke","Revoke"],["manage_templates","Manage Templates"]] },
+  { key: "assets", label: "Assets", actions: [["view","View"],["create","Create"],["edit","Edit"],["assign","Assign"],["return","Return"],["retire","Retire"],["manage_categories","Manage Categories"]] },
+  { key: "offboarding", label: "Offboarding", actions: [["view","View"],["initiate","Initiate"],["manage_checklist","Manage Checklist"],["draft_settlement","Draft Settlement"],["approve_settlement","Approve Settlement"],["complete_exit","Complete Exit"]] },
+  { key: "recruitment", label: "Recruitment", actions: [["view","View"],["create_job","Create Job"],["edit_job","Edit Job"],["manage_candidates","Manage Candidates"],["schedule_interview","Schedule Interview"],["record_feedback","Record Feedback"],["manage_offers","Manage Offers"],["hire","Hire"]] },
+  { key: "reports", label: "Reports", actions: [["view","View Reports"],["export","Export Reports"],["view_org_analytics","View Organization-wide Analytics"]] },
+  { key: "organization_settings", label: "Organization Settings", actions: [["view","View Settings"],["edit","Edit Settings"]] },
+] as const;
 
-/**
- * The permissions a sub-admin currently holds.
- *
- * Returns the WHOLE parsed map rather than picking out the three keys this page used
- * to name. It was returning a literal of three booleans, which is why widening
- * ElevatedKey to FeatureKey failed to compile here — and that failure is the useful
- * part: it showed the page's shape was pinned to the old permission set, so adding a
- * permission would have produced a checkbox with no state to read from.
- */
-function elevatedAccess(u?: OrgAdminUserRecord["feature_access"]) {
-  return parseFeatureAccess(u);
+const ALL_GRANULAR_KEYS = PERMISSION_MODULES.flatMap((module) => module.actions.map(([action]) => `${module.key}.${action}`));
+const EMPTY_PERMISSION_PAYLOAD: PermissionPayload = {
+  granular_permissions: Object.fromEntries(ALL_GRANULAR_KEYS.map((key) => [key, false])),
+  data_scopes: Object.fromEntries(PERMISSION_MODULES.map((module) => [module.key, "own_records" as DataScope])),
+};
+
+function permissionAccess(raw?: OrgAdminUserRecord["feature_access"]): PermissionPayload {
+  let parsed: Record<string, unknown> = {};
+  if (typeof raw === "string") { try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { parsed = {}; } }
+  else if (raw && typeof raw === "object") parsed = raw as unknown as Record<string, unknown>;
+  const grants = parsed.granular_permissions && typeof parsed.granular_permissions === "object"
+    ? parsed.granular_permissions as Record<string, unknown> : {};
+  const scopes = parsed.data_scopes && typeof parsed.data_scopes === "object"
+    ? parsed.data_scopes as Record<string, unknown> : {};
+  const legacy: Record<string, string> = {
+    "employees.view":"manage_employees","employees.create":"manage_employees","employees.edit":"manage_employees","employees.archive":"manage_employees","employees.export":"manage_employees","employees.manage_departments":"manage_employees","employees.manage_designations":"manage_employees",
+    "document_verification.view_requests":"approve_request","document_verification.generate_request":"generate_request","document_verification.edit_draft":"generate_request","document_verification.approve":"approve_request","document_verification.reject":"approve_request","document_verification.download_documents":"approve_request",
+    "attendance.view":"attendance","attendance.manual_entry":"attendance","attendance.correct_check_in_out":"attendance","attendance.manage_ips":"attendance","attendance.approve_overtime":"attendance",
+    "leave_management.view":"leave","leave_management.submit_on_behalf":"leave","leave_management.approve":"leave","leave_management.reject":"leave","leave_management.cancel":"leave","leave_management.allocate_balance":"leave","leave_management.manage_leave_types":"leave",
+    "payroll.view":"payroll","payroll.generate":"payroll","payroll.manage_settings":"payroll",
+    "expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses",
+    "hr_letters.view":"hr_letters","hr_letters.create_draft":"hr_letters","hr_letters.edit_draft":"hr_letters","hr_letters.issue":"hr_letters","hr_letters.revoke":"hr_letters","hr_letters.manage_templates":"hr_letters",
+    "assets.view":"manage_assets","assets.create":"manage_assets","assets.edit":"manage_assets","assets.assign":"manage_assets","assets.return":"manage_assets","assets.retire":"manage_assets","assets.manage_categories":"manage_assets",
+    "offboarding.view":"manage_separation","offboarding.initiate":"manage_separation","offboarding.manage_checklist":"manage_separation","offboarding.draft_settlement":"manage_separation","offboarding.approve_settlement":"manage_separation","offboarding.complete_exit":"manage_separation",
+    "recruitment.view":"manage_recruitment","recruitment.create_job":"manage_recruitment","recruitment.edit_job":"manage_recruitment","recruitment.manage_candidates":"manage_recruitment","recruitment.schedule_interview":"manage_recruitment","recruitment.record_feedback":"manage_recruitment","recruitment.manage_offers":"manage_recruitment","recruitment.hire":"manage_recruitment",
+  };
+  const granular_permissions = Object.fromEntries(ALL_GRANULAR_KEYS.map((key) => [
+    key, parsed.granular_permissions ? grants[key] === true : Boolean(parsed[legacy[key]]),
+  ]));
+  const data_scopes = Object.fromEntries(PERMISSION_MODULES.map((module) => {
+    const scope = scopes[module.key];
+    return [module.key, scope === "my_team" || scope === "entire_organization" ? scope : "own_records"];
+  })) as Record<string, DataScope>;
+  return { granular_permissions, data_scopes };
 }
 
 function apiErrorMessage(e: unknown, fallback: string) {
