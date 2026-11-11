@@ -336,7 +336,7 @@ router.get("/leaves", leaveView, asyncHandler(listOrgLeaves));
 // ---- Leave allocations (staff: allocate/edit balances; history = staff) ----
 router.get("/leave-allocations", leaveView, asyncHandler(listLeaveAllocations));
 router.put("/leave-allocations", leaveAllocate, asyncHandler(setLeaveAllocation));
-router.put("/leave-allocations/designation", leaveAllocate, asyncHandler(setDesignationLeaveAllocation));
+router.put("/leave-allocations/designation", [...leaveAllocate, leaveOrgWideScope], asyncHandler(setDesignationLeaveAllocation));
 router.get("/employees/:uuid/leave-allocations", leaveView, asyncHandler(getEmployeeLeaveHistory));
 
 // ---- Attendance (staff: view, add/edit IPs, manual entries; delete IP = org_admin) ----
