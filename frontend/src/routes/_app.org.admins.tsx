@@ -730,6 +730,7 @@ function CreateSubAdminDialog({
             <p className="text-xs text-muted-foreground">
               Sub-admins never get full Org Admin power — they gain exactly the action permissions you grant here.
             </p>
+            <p className="text-xs text-amber-600">Data-scope selections are saved separately. Server-side query filtering for these scopes is not yet complete, so do not rely on these selections as an access-control boundary yet.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
 
