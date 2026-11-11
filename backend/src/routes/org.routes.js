@@ -4,7 +4,7 @@ import requireRole from "../middleware/requireRole.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import requirePermission from "../middleware/requirePermission.js";
-import { assertEmployeeInDataScope } from "../utils/dataScopes.js";
+import { assertEmployeeInDataScope, assertCreatedRecordInDataScope } from "../utils/dataScopes.js";
 import { createEmployeeLimiter } from "../middleware/rateLimiter.js";
 import { uploadDocs } from "../middleware/uploadDocs.js";
 import { uploadAttachments } from "../middleware/uploadAttachments.js";
@@ -479,28 +479,37 @@ const recruitmentInterview = [...staff, requireModuleFeature("recruitment_manage
 const recruitmentFeedback = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.record_feedback")];
 const recruitmentOffers = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.manage_offers")];
 const recruitmentHire = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.hire")];
+const recruitmentOpeningScope = async (req, res, next) => {
+  try { await assertCreatedRecordInDataScope(req, "recruitment", "job_openings", req.params.uuid); next(); }
+  catch (error) { next(error); }
+};
+const recruitmentCandidateScope = async (req, res, next) => {
+  try { await assertCreatedRecordInDataScope(req, "recruitment", "candidates", req.params.uuid); next(); }
+  catch (error) { next(error); }
+};
 
 // ---- Job openings ----
 router.get("/job-openings", recruitmentView, asyncHandler(listJobOpenings));
 router.post("/job-openings", recruitmentJobCreate, asyncHandler(createJobOpening));
-router.get("/job-openings/:uuid", recruitmentView, asyncHandler(getJobOpening));
-router.put("/job-openings/:uuid", recruitmentJobEdit, asyncHandler(updateJobOpening));
+router.get("/job-openings/:uuid", recruitmentView, recruitmentOpeningScope, asyncHandler(getJobOpening));
+router.put("/job-openings/:uuid", recruitmentJobEdit, recruitmentOpeningScope, asyncHandler(updateJobOpening));
 
 // ---- Candidates, and applications (the same rows) ----
 router.get("/candidates", recruitmentView, asyncHandler(listCandidates));
-router.get("/candidates/:uuid", recruitmentView, asyncHandler(getCandidate));
+router.get("/candidates/:uuid", recruitmentView, recruitmentCandidateScope, asyncHandler(getCandidate));
 router.post("/candidates", recruitmentCandidates, asyncHandler(createApplication));
 
 router.get("/applications", recruitmentView, asyncHandler(listCandidates));
 router.post("/applications", recruitmentCandidates, asyncHandler(createApplication));
-router.put("/candidates/:uuid", recruitmentCandidates, asyncHandler(updateCandidate));
-router.get("/applications/:uuid", recruitmentView, asyncHandler(getCandidate));
-router.post("/applications/:uuid/move-stage", recruitmentCandidates, asyncHandler(moveApplicationStage));
+router.put("/candidates/:uuid", recruitmentCandidates, recruitmentCandidateScope, asyncHandler(updateCandidate));
+router.get("/applications/:uuid", recruitmentView, recruitmentCandidateScope, asyncHandler(getCandidate));
+router.post("/applications/:uuid/move-stage", recruitmentCandidates, recruitmentCandidateScope, asyncHandler(moveApplicationStage));
 // A candidate is never hired from the pipeline. Only an accepted sent offer can
 // create the employee record through the offer response endpoint.
 router.post(
   "/applications/:uuid/start-offer",
   recruitmentCandidates,
+  recruitmentCandidateScope,
   asyncHandler(startOfferApplication),
 );
 
@@ -544,6 +553,7 @@ router.post("/offers/:uuid/send", recruitmentOffers, asyncHandler(sendOffer));
 router.post(
   "/candidates/:uuid/resume",
   recruitmentCandidates,
+  recruitmentCandidateScope,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadResume),
 );
