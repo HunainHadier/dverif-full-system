@@ -23,14 +23,14 @@ describe("employee-linked data scopes", () => {
     });
   });
 
-  it("filters team scope to direct reports of the caller's employee record", () => {
+  it("filters team scope to the caller and their direct reports", () => {
     const req = {
       user: { uuid: "user-1", org_role: "sub_admin", feature_access: { data_scopes: { attendance: "my_team" } } },
       scopeOrgId: 7,
     };
     expect(employeeScopeCondition(req, "attendance", "e")).toEqual({
-      sql: "e.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1)",
-      params: [7, "user-1"],
+      sql: "(e.linked_user_uuid = ? OR e.reporting_manager_uuid = (SELECT manager.uuid FROM employees manager WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1))",
+      params: ["user-1", 7, "user-1"],
     });
   });
 
