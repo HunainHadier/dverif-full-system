@@ -121,7 +121,7 @@ function permissionAccess(raw?: OrgAdminUserRecord["feature_access"]): Permissio
     "attendance.view":"attendance","attendance.manual_entry":"attendance","attendance.correct_check_in_out":"attendance","attendance.manage_ips":"attendance","attendance.approve_overtime":"attendance",
     "leave_management.view":"leave","leave_management.submit_on_behalf":"leave","leave_management.approve":"leave","leave_management.reject":"leave","leave_management.cancel":"leave","leave_management.allocate_balance":"leave","leave_management.manage_leave_types":"leave",
     "payroll.view":"payroll","payroll.generate":"payroll","payroll.manage_settings":"payroll",
-    "expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses",
+    "expenses.view":"approve_expenses","expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses","expenses.process_payment":"approve_expenses","expenses.export":"approve_expenses",
     "hr_letters.view":"hr_letters","hr_letters.create_draft":"hr_letters","hr_letters.edit_draft":"hr_letters","hr_letters.issue":"hr_letters","hr_letters.revoke":"hr_letters","hr_letters.manage_templates":"hr_letters",
     "assets.view":"manage_assets","assets.create":"manage_assets","assets.edit":"manage_assets","assets.assign":"manage_assets","assets.return":"manage_assets","assets.retire":"manage_assets","assets.manage_categories":"manage_assets",
     "offboarding.view":"manage_separation","offboarding.initiate":"manage_separation","offboarding.manage_checklist":"manage_separation","offboarding.draft_settlement":"manage_separation","offboarding.approve_settlement":"manage_separation","offboarding.complete_exit":"manage_separation",
@@ -613,8 +613,9 @@ function EditSubAdminPermissionsDialog({
           <div className="space-y-2 rounded-lg border border-border p-3">
             <Label className="text-sm font-medium">Permissions</Label>
             <p className="text-xs text-muted-foreground">
-              Sub-admins gain exactly the permissions you grant here. Changes take effect immediately.
+              Sub-admins gain exactly the action permissions you grant here. Changes take effect immediately.
             </p>
+            <p className="text-xs text-amber-600">Data-scope selections are saved separately. Server-side query filtering for these scopes is not yet complete, so do not rely on these selections as an access-control boundary yet.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
         </div>
@@ -727,7 +728,7 @@ function CreateSubAdminDialog({
           <div className="space-y-2 rounded-lg border border-border p-3">
             <Label className="text-sm font-medium">Permissions</Label>
             <p className="text-xs text-muted-foreground">
-              Sub-admins never get full Org Admin power — they gain exactly the permissions you grant here.
+              Sub-admins never get full Org Admin power — they gain exactly the action permissions you grant here.
             </p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
