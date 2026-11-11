@@ -107,6 +107,7 @@ export function hasGranularPermission(user: AuthUser | null | undefined, permiss
  */
 export function usePermissions(): FeatureAccessMap & {
   granular: Record<string, boolean>;
+  hasGranular: (permission: string, legacyFeature?: FeatureKey) => boolean;
   isOrgAdmin: boolean;
   isSubAdmin: boolean;
   isEmployee: boolean;
@@ -123,6 +124,11 @@ export function usePermissions(): FeatureAccessMap & {
     effective[key] = isOrgAdminUser || allowed;
   }
 
+  const hasGranular = (permission: string, legacyFeature?: FeatureKey) =>
+    isOrgAdminUser || (matrix.exists
+      ? matrix.grants[permission] === true
+      : legacyFeature ? fa[legacyFeature] : false);
+
   const granular: Record<string, boolean> = {};
   for (const [feature, permission] of Object.entries(GRANULAR_BY_FEATURE)) {
     if (permission) granular[permission] = isOrgAdminUser || (
@@ -133,6 +139,7 @@ export function usePermissions(): FeatureAccessMap & {
   return {
     ...effective,
     granular,
+    hasGranular,
     isOrgAdmin: isOrgAdminUser,
     isSubAdmin: isSubAdmin(user),
     isEmployee: isEmployee(user),
