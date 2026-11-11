@@ -206,19 +206,31 @@ const leaveMgmt = [...staff, requireModuleFeature("leave_management")];
 const leaveMgmtOwner = [...orgAdminsOnly, requireModuleFeature("leave_management")];
 const payrollMgmt = [...staff, requireModuleFeature("payroll_management")];
 const payrollMgmtOwner = [...orgAdminsOnly, requireModuleFeature("payroll_management")];
+const requireEntireModuleScope = (moduleKey) => (req, res, next) => {
+  if (getDataScope(req.user, moduleKey) !== "entire_organization") {
+    return next(new ApiError(403, `${moduleKey} settings require Entire Organization data scope.`));
+  }
+  return next();
+};
+const employeeOrgWideScope = requireEntireModuleScope("employees");
+const attendanceOrgWideScope = requireEntireModuleScope("attendance");
+const leaveOrgWideScope = requireEntireModuleScope("leave_management");
+const payrollOrgWideScope = requireEntireModuleScope("payroll");
+const hrLettersOrgWideScope = requireEntireModuleScope("hr_letters");
+
 const employeeView = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.view")];
 const employeeCreate = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.create")];
 const employeeEdit = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.edit")];
 const employeeArchive = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.archive")];
-const departmentManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_departments")];
-const designationManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_designations")];
+const departmentManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_departments"), employeeOrgWideScope];
+const designationManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_designations"), employeeOrgWideScope];
 const attendanceView = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")];
 const attendanceManual = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manual_entry")];
 const attendanceCorrect = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.correct_check_in_out")];
-const attendanceIps = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manage_ips")];
+const attendanceIps = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manage_ips"), attendanceOrgWideScope];
 const leaveView = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.view")];
 const leaveAllocate = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.allocate_balance")];
-const leaveTypesManage = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.manage_leave_types")];
+const leaveTypesManage = [...staff, requireModuleFeature("leave_management"), requirePermission("leave_management.manage_leave_types"), leaveOrgWideScope];
 const payrollView = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.view")];
 const payrollGenerateAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.generate")];
 const payrollSettingsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_settings")];
@@ -338,10 +350,10 @@ router.patch("/attendance/:uuid/correction", attendanceCorrect, asyncHandler(cor
 
 // ---- Payroll settings and monthly work calendar ----
 router.get("/payroll-employees", payrollView, asyncHandler(listPayrollEmployees));
-router.get("/payroll-settings", payrollView, asyncHandler(getPayrollSettings));
-router.put("/payroll-settings", payrollSettingsAccess, asyncHandler(updatePayrollSettings));
-router.get("/payroll-schedule", payrollView, asyncHandler(getMonthlyWorkSchedule));
-router.put("/payroll-schedule", payrollSettingsAccess, asyncHandler(saveMonthlyWorkSchedule));
+router.get("/payroll-settings", [...payrollView, payrollOrgWideScope], asyncHandler(getPayrollSettings));
+router.put("/payroll-settings", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(updatePayrollSettings));
+router.get("/payroll-schedule", [...payrollView, payrollOrgWideScope], asyncHandler(getMonthlyWorkSchedule));
+router.put("/payroll-schedule", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(saveMonthlyWorkSchedule));
 
 // ---- Salary records / payroll ledger (staff view+export+build; delete period = org_admin) ----
 router.get("/salary-records", payrollView, asyncHandler(listOrgSalaryRecords));
@@ -351,11 +363,11 @@ router.delete("/salary-records/:uuid", payrollMgmtOwner, asyncHandler(deleteSala
 router.delete("/salary-records/period/:year/:month", payrollMgmtOwner, asyncHandler(deleteSalaryPeriod));
 
 // ---- Salary components —” unified allowances/deductions (staff; delete + status toggle = org_admin) ----
-router.get("/salary-components", payrollView, asyncHandler(listSalaryComponents));
-router.post("/salary-components", payrollSettingsAccess, asyncHandler(createSalaryComponent));
-router.put("/salary-components/:uuid", payrollSettingsAccess, asyncHandler(updateSalaryComponent));
-router.delete("/salary-components/:uuid", payrollMgmtOwner, asyncHandler(deleteSalaryComponent));
-router.patch("/salary-components/:uuid/status", payrollSettingsAccess, asyncHandler(toggleSalaryComponentStatus));
+router.get("/salary-components", [...payrollView, payrollOrgWideScope], asyncHandler(listSalaryComponents));
+router.post("/salary-components", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(createSalaryComponent));
+router.put("/salary-components/:uuid", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(updateSalaryComponent));
+router.delete("/salary-components/:uuid", [...payrollMgmtOwner, payrollOrgWideScope], asyncHandler(deleteSalaryComponent));
+router.patch("/salary-components/:uuid/status", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(toggleSalaryComponentStatus));
 
 // ---- Employee salary history + salary increment (staff) ----
 router.get("/employees/:uuid/salary-history", payrollView, payrollEmployeeScope, asyncHandler(listEmployeeSalaryHistory));
@@ -440,14 +452,14 @@ router.post("/offboarding/exit-requests/:uuid/complete", offboardingComplete, as
 // Ordering note: the literal "/letter-templates" and "/hr-letters/preview" paths
 // are registered BEFORE the "/:uuid" patterns so they cannot be swallowed by the
 // uuid matcher. Same defensive pattern used for "/employees/reference".
-router.get("/letter-templates", hrLetterView, asyncHandler(listTemplates));
-router.post("/letter-templates", hrLetterTemplates, asyncHandler(createTemplate));
-router.post("/letter-templates/preview-pdf", hrLetterView, asyncHandler(previewTemplatePdf));
-router.get("/letter-templates/:uuid", hrLetterView, asyncHandler(getTemplate));
-router.put("/letter-templates/:uuid", hrLetterTemplates, asyncHandler(updateTemplate));
-router.delete("/letter-templates/:uuid", hrLetterTemplates, asyncHandler(deleteTemplate));
+router.get("/letter-templates", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(listTemplates));
+router.post("/letter-templates", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(createTemplate));
+router.post("/letter-templates/preview-pdf", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(previewTemplatePdf));
+router.get("/letter-templates/:uuid", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(getTemplate));
+router.put("/letter-templates/:uuid", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(updateTemplate));
+router.delete("/letter-templates/:uuid", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(deleteTemplate));
 
-router.post("/letter-templates/:uuid/preview", hrLetterView, asyncHandler(previewTemplate));
+router.post("/letter-templates/:uuid/preview", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(previewTemplate));
 
 router.get("/hr-letters", hrLetterView, asyncHandler(listLetters));
 router.post("/hr-letters", hrLetterCreate, asyncHandler(createLetter));
