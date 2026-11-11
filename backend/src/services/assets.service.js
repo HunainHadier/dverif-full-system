@@ -132,7 +132,7 @@ async function loadAsset(orgId, assetUuid, conn = pool, forUpdate = false) {
 // Inventory
 // ---------------------------------------------------------------------------
 
-export async function listAssets({ orgId, page, limit, offset, search, status, employeeUuid }) {
+export async function listAssets({ orgId, page, limit, offset, search, status, employeeUuid, scopeFilter }) {
   const clauses = ["a.organization_id = ?"];
   const params = [orgId];
 
@@ -152,6 +152,10 @@ export async function listAssets({ orgId, page, limit, offset, search, status, e
     assertUuid(employeeUuid, "Employee UUID");
     clauses.push("EXISTS (SELECT 1 FROM asset_assignments af WHERE af.asset_uuid=a.uuid AND af.employee_uuid=? AND af.organization_id=a.organization_id AND af.returned_at IS NULL)");
     params.push(employeeUuid);
+  }
+  if (scopeFilter) {
+    clauses.push(`EXISTS (SELECT 1 FROM asset_assignments sf JOIN employees e ON e.uuid=sf.employee_uuid WHERE sf.asset_uuid=a.uuid AND sf.organization_id=a.organization_id AND sf.returned_at IS NULL AND ${scopeFilter.sql})`);
+    params.push(...scopeFilter.params);
   }
   const where = clauses.join(" AND ");
 
