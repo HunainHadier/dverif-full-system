@@ -66,6 +66,28 @@ describe("granular permission catalog", () => {
     expect(DATA_SCOPES).toEqual(["own_records", "my_team", "entire_organization"]);
   });
 
+  it("grants each explicit action independently without leaking to sibling actions", () => {
+    const allKeys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
+      actions.map((action) => `${module}.${action}`),
+    );
+    for (const key of allKeys) {
+      const user = { org_role: "sub_admin", feature_access: { granular_permissions: { [key]: true } } };
+      expect(hasPermission(user, key), key).toBe(true);
+      for (const other of allKeys) {
+        if (other === key) continue;
+        expect(hasPermission(user, other), `${key} leaked into ${other}`).toBe(false);
+      }
+    }
+  });
+
+  it("preserves legacy expense view, approval and payment grants before granular setup", () => {
+    const legacy = { org_role: "sub_admin", feature_access: { approve_expenses: true } };
+    expect(hasPermission(legacy, "expenses.view")).toBe(true);
+    expect(hasPermission(legacy, "expenses.approve_employee")).toBe(true);
+    expect(hasPermission(legacy, "expenses.process_payment")).toBe(true);
+    expect(hasPermission(legacy, "expenses.create_own")).toBe(false);
+  });
+
   it("keeps org_admin unrestricted", () => {
     expect(hasPermission({ org_role: "org_admin" }, "employees.archive")).toBe(true);
   });
