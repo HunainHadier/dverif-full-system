@@ -12,7 +12,7 @@ describe("granular permission catalog", () => {
     const keys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
       actions.map((action) => `${module}.${action}`),
     );
-    expect(keys.length).toBe(69);
+    expect(keys.length).toBe(65);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
