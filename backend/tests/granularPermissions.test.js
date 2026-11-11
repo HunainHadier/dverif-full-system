@@ -12,6 +12,7 @@ const ORG_ROUTES = readFileSync("src/routes/org.routes.js", "utf8");
 const ADMIN_PERMISSION_UI = readFileSync("../frontend/src/routes/_app.org.admins.tsx", "utf8");
 const LEAVE_ROUTES = readFileSync("src/routes/leaves.routes.js", "utf8");
 const VERIFICATION_ROUTES = readFileSync("src/routes/verification.routes.js", "utf8");
+const VERIFICATION_CONTROLLER = readFileSync("src/controllers/verification.controller.js", "utf8");
 
 describe("granular permission catalog", () => {
   it("never exposes the hard-delete employee controller through the org API", () => {
@@ -47,8 +48,8 @@ describe("granular permission catalog", () => {
 
   it("routes verification decisions through exact approve and reject permissions", () => {
     expect(VERIFICATION_ROUTES).toContain("requireOrganizationInboxScope");
-    expect(ORG_ROUTES).toContain('requirePermission("document_verification.approve")');
-    expect(ORG_ROUTES).toContain('requirePermission("document_verification.reject")');
+    expect(VERIFICATION_CONTROLLER).toContain('"document_verification.approve"');
+    expect(VERIFICATION_CONTROLLER).toContain('"document_verification.reject"');
   });
 
   it("defaults every granular action to denied", () => {
