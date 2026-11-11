@@ -229,7 +229,12 @@ const portalAccessIfRequested = (req, res, next) => {
 
 // HR Letters. Staff manage letters; deleting a template is org-admin-only
 // because it is a shared org-wide resource every issued letter was rendered from.
-const hrLettersMgmt = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters")];
+const hrLetterView = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.view")];
+const hrLetterCreate = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.create_draft")];
+const hrLetterEdit = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.edit_draft")];
+const hrLetterIssue = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.issue")];
+const hrLetterRevoke = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.revoke")];
+const hrLetterTemplates = [...staff, requireModuleFeature("hr_letters_management"), requirePermission("hr_letters.manage_templates")];
 const hrLettersOwner = [...orgAdminsOnly, requireModuleFeature("hr_letters_management")];
 
 // ---- Employees ----
@@ -407,29 +412,35 @@ router.post("/offboarding/exit-requests/:uuid/complete", separationMgmt, asyncHa
 // Ordering note: the literal "/letter-templates" and "/hr-letters/preview" paths
 // are registered BEFORE the "/:uuid" patterns so they cannot be swallowed by the
 // uuid matcher. Same defensive pattern used for "/employees/reference".
-router.get("/letter-templates", hrLettersMgmt, asyncHandler(listTemplates));
-router.post("/letter-templates", hrLettersMgmt, asyncHandler(createTemplate));
-router.post("/letter-templates/preview-pdf", hrLettersMgmt, asyncHandler(previewTemplatePdf));
-router.get("/letter-templates/:uuid", hrLettersMgmt, asyncHandler(getTemplate));
-router.put("/letter-templates/:uuid", hrLettersMgmt, asyncHandler(updateTemplate));
+router.get("/letter-templates", hrLetterView, asyncHandler(listTemplates));
+router.post("/letter-templates", hrLetterTemplates, asyncHandler(createTemplate));
+router.post("/letter-templates/preview-pdf", hrLetterView, asyncHandler(previewTemplatePdf));
+router.get("/letter-templates/:uuid", hrLetterView, asyncHandler(getTemplate));
+router.put("/letter-templates/:uuid", hrLetterTemplates, asyncHandler(updateTemplate));
 router.delete("/letter-templates/:uuid", hrLettersOwner, asyncHandler(deleteTemplate));
 
-router.post("/letter-templates/:uuid/preview", hrLettersMgmt, asyncHandler(previewTemplate));
+router.post("/letter-templates/:uuid/preview", hrLetterView, asyncHandler(previewTemplate));
 
-router.get("/hr-letters", hrLettersMgmt, asyncHandler(listLetters));
-router.post("/hr-letters", hrLettersMgmt, asyncHandler(createLetter));
-router.get("/hr-letters/:uuid", hrLettersMgmt, asyncHandler(getLetter));
-router.put("/hr-letters/:uuid", hrLettersMgmt, asyncHandler(updateLetter));
-router.post("/hr-letters/:uuid/issue", hrLettersMgmt, asyncHandler(issueLetter));
-router.post("/hr-letters/:uuid/revoke", hrLettersMgmt, asyncHandler(revokeLetter));
-router.post("/hr-letters/:uuid/re-draft", hrLettersMgmt, asyncHandler(revertLetter));
-router.delete("/hr-letters/:uuid", hrLettersMgmt, asyncHandler(deleteLetter));
-router.get("/hr-letters/:uuid/pdf", hrLettersMgmt, asyncHandler(downloadLetterPdf));
+router.get("/hr-letters", hrLetterView, asyncHandler(listLetters));
+router.post("/hr-letters", hrLetterCreate, asyncHandler(createLetter));
+router.get("/hr-letters/:uuid", hrLetterView, asyncHandler(getLetter));
+router.put("/hr-letters/:uuid", hrLetterEdit, asyncHandler(updateLetter));
+router.post("/hr-letters/:uuid/issue", hrLetterIssue, asyncHandler(issueLetter));
+router.post("/hr-letters/:uuid/revoke", hrLetterRevoke, asyncHandler(revokeLetter));
+router.post("/hr-letters/:uuid/re-draft", hrLetterEdit, asyncHandler(revertLetter));
+router.delete("/hr-letters/:uuid", hrLettersOwner, asyncHandler(deleteLetter));
+router.get("/hr-letters/:uuid/pdf", hrLetterView, asyncHandler(downloadLetterPdf));
 
 // ---- Assets ----
 // Gated on asset_management, which the plan flags already carry.
 //
-const assetMgmt = [...staff, requireModuleFeature("asset_management"), requirePermission("manage_assets")];
+const assetView = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.view")];
+const assetCreate = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.create")];
+const assetEdit = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.edit")];
+const assetAssign = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.assign")];
+const assetReturn = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.return")];
+const assetRetire = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.retire")];
+const assetCategories = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.manage_categories")];
 
 // ---- Recruitment ----------------------------------------------------------
 // ONE GATE FOR THE WHOLE MODULE, named once.
@@ -445,28 +456,31 @@ const assetMgmt = [...staff, requireModuleFeature("asset_management"), requirePe
 // happens is someone adding a line and forgetting the third argument. There is one
 // gate, every recruitment route uses it, and the auth-matrix test asserts each route
 // individually rather than trusting that.
-const recruitmentMgmt = [
-  ...staff,
-  requireModuleFeature("recruitment_management"),
-  requirePermission("manage_recruitment"),
-];
+const recruitmentView = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.view")];
+const recruitmentJobCreate = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.create_job")];
+const recruitmentJobEdit = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.edit_job")];
+const recruitmentCandidates = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.manage_candidates")];
+const recruitmentInterview = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.schedule_interview")];
+const recruitmentFeedback = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.record_feedback")];
+const recruitmentOffers = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.manage_offers")];
+const recruitmentHire = [...staff, requireModuleFeature("recruitment_management"), requirePermission("recruitment.hire")];
 
 // ---- Job openings ----
-router.get("/job-openings", recruitmentMgmt, asyncHandler(listJobOpenings));
-router.post("/job-openings", recruitmentMgmt, asyncHandler(createJobOpening));
-router.get("/job-openings/:uuid", recruitmentMgmt, asyncHandler(getJobOpening));
-router.put("/job-openings/:uuid", recruitmentMgmt, asyncHandler(updateJobOpening));
+router.get("/job-openings", recruitmentView, asyncHandler(listJobOpenings));
+router.post("/job-openings", recruitmentJobCreate, asyncHandler(createJobOpening));
+router.get("/job-openings/:uuid", recruitmentView, asyncHandler(getJobOpening));
+router.put("/job-openings/:uuid", recruitmentJobEdit, asyncHandler(updateJobOpening));
 
 // ---- Candidates, and applications (the same rows) ----
-router.get("/candidates", recruitmentMgmt, asyncHandler(listCandidates));
-router.get("/candidates/:uuid", recruitmentMgmt, asyncHandler(getCandidate));
-router.post("/candidates", recruitmentMgmt, asyncHandler(createApplication));
+router.get("/candidates", recruitmentView, asyncHandler(listCandidates));
+router.get("/candidates/:uuid", recruitmentView, asyncHandler(getCandidate));
+router.post("/candidates", recruitmentCandidates, asyncHandler(createApplication));
 
-router.get("/applications", recruitmentMgmt, asyncHandler(listCandidates));
-router.post("/applications", recruitmentMgmt, asyncHandler(createApplication));
-router.put("/candidates/:uuid", recruitmentMgmt, asyncHandler(updateCandidate));
-router.get("/applications/:uuid", recruitmentMgmt, asyncHandler(getCandidate));
-router.post("/applications/:uuid/move-stage", recruitmentMgmt, asyncHandler(moveApplicationStage));
+router.get("/applications", recruitmentView, asyncHandler(listCandidates));
+router.post("/applications", recruitmentCandidates, asyncHandler(createApplication));
+router.put("/candidates/:uuid", recruitmentCandidates, asyncHandler(updateCandidate));
+router.get("/applications/:uuid", recruitmentView, asyncHandler(getCandidate));
+router.post("/applications/:uuid/move-stage", recruitmentCandidates, asyncHandler(moveApplicationStage));
 // A candidate is never hired from the pipeline. Only an accepted sent offer can
 // create the employee record through the offer response endpoint.
 router.post(
@@ -476,14 +490,14 @@ router.post(
 );
 
 // ---- Pipeline (Kanban) ----
-router.get("/pipeline", recruitmentMgmt, asyncHandler(getPipeline));
-router.get("/pipeline/:uuid", recruitmentMgmt, asyncHandler(getPipeline));
+router.get("/pipeline", recruitmentView, asyncHandler(getPipeline));
+router.get("/pipeline/:uuid", recruitmentView, asyncHandler(getPipeline));
 
 // ---- Interviews ----
-router.get("/interviewers", recruitmentMgmt, asyncHandler(listInterviewers));
-router.get("/interviews", recruitmentMgmt, asyncHandler(listInterviews));
-router.post("/interviews", recruitmentMgmt, asyncHandler(scheduleInterview));
-router.post("/interviews/:uuid/feedback", recruitmentMgmt, asyncHandler(recordInterviewFeedback));
+router.get("/interviewers", recruitmentView, asyncHandler(listInterviewers));
+router.get("/interviews", recruitmentView, asyncHandler(listInterviews));
+router.post("/interviews", recruitmentInterview, asyncHandler(scheduleInterview));
+router.post("/interviews/:uuid/feedback", recruitmentFeedback, asyncHandler(recordInterviewFeedback));
 
 // Personal assignments: feedback is still checked against the assigned interviewer
 // in the service, so an employee cannot submit another person's interview.
@@ -496,16 +510,16 @@ router.get("/my/interviews", assignedInterviewAccess, asyncHandler(listMyIntervi
 router.post("/my/interviews/:uuid/feedback", assignedInterviewAccess, asyncHandler(recordInterviewFeedback));
 
 // ---- Offers ----
-router.get("/offers", recruitmentMgmt, asyncHandler(listOffers));
-router.get("/offers/:uuid/prepare", recruitmentMgmt, asyncHandler(getOfferPreparation));
-router.get("/offers/:uuid/pdf", recruitmentMgmt, asyncHandler(downloadOfferPdf));
-router.post("/offers/:uuid/preview", recruitmentMgmt, asyncHandler(previewOffer));
+router.get("/offers", recruitmentView, asyncHandler(listOffers));
+router.get("/offers/:uuid/prepare", recruitmentView, asyncHandler(getOfferPreparation));
+router.get("/offers/:uuid/pdf", recruitmentView, asyncHandler(downloadOfferPdf));
+router.post("/offers/:uuid/preview", recruitmentView, asyncHandler(previewOffer));
 // ONLY the employee-create route escalates. `portal_access` is not read by the
 // offer-response path any more (see respondToOffer), so keeping it on that route
 // would gate a field nothing looks at — a permission check that appears to
 // protect something while actually only confusing whoever reads it.
-router.post("/offers/:uuid/hire", recruitmentMgmt, asyncHandler(hireOffer));
-router.post("/offers/:uuid/send", recruitmentMgmt, asyncHandler(sendOffer));
+router.post("/offers/:uuid/hire", recruitmentHire, asyncHandler(hireOffer));
+router.post("/offers/:uuid/send", recruitmentOffers, asyncHandler(sendOffer));
 
 // ---- Resumes ----
 // entity_type='candidate', through the shared attachments service. Distinct
@@ -524,37 +538,39 @@ router.post(
   uploadAttachments.single("file"),
   asyncHandler(parseResume),
 );
-router.delete("/candidate-attachments/:attachmentUuid", recruitmentMgmt, asyncHandler(removeResume));
+router.delete("/candidate-attachments/:attachmentUuid", recruitmentCandidates, asyncHandler(removeResume));
 router.get(
   "/candidate-attachments/:attachmentUuid/download",
   recruitmentMgmt,
   asyncHandler(downloadResume),
 );
-const expenseReviewMgmt = [...staff, requireModuleFeature("expense_management"), requirePermission("approve_expenses")];
+const expenseView = [...staff, requireModuleFeature("expense_management"), requirePermission("expenses.view")];
+const expenseApprove = [...staff, requireModuleFeature("expense_management"), requirePermission("expenses.approve_employee")];
+const expensePay = [...staff, requireModuleFeature("expense_management"), requirePermission("expenses.process_payment")];
 
-router.get("/assets", assetMgmt, asyncHandler(listAssets));
-router.post("/assets", assetMgmt, asyncHandler(createAsset));
+router.get("/assets", assetView, asyncHandler(listAssets));
+router.post("/assets", assetCreate, asyncHandler(createAsset));
 // Summary before /assets/:uuid so "summary" is not read as a uuid.
-router.get("/assets/summary", assetMgmt, asyncHandler(summary));
-router.get("/assets/:uuid", assetMgmt, asyncHandler(getAsset));
-router.put("/assets/:uuid", assetMgmt, asyncHandler(updateAsset));
-router.post("/assets/:uuid/assign", assetMgmt, asyncHandler(assignAsset));
-router.post("/assets/:uuid/return", assetMgmt, asyncHandler(returnAsset));
-router.post("/assets/:uuid/retire", assetMgmt, asyncHandler(retireAsset));
-router.post("/assets/:uuid/reinstate", assetMgmt, asyncHandler(reinstateAsset));
+router.get("/assets/summary", assetView, asyncHandler(summary));
+router.get("/assets/:uuid", assetView, asyncHandler(getAsset));
+router.put("/assets/:uuid", assetEdit, asyncHandler(updateAsset));
+router.post("/assets/:uuid/assign", assetAssign, asyncHandler(assignAsset));
+router.post("/assets/:uuid/return", assetReturn, asyncHandler(returnAsset));
+router.post("/assets/:uuid/retire", assetRetire, asyncHandler(retireAsset));
+router.post("/assets/:uuid/reinstate", assetRetire, asyncHandler(reinstateAsset));
 // Files go through the polymorphic attachments table, never a path column. See
 // 20261103_create_attachments.sql: a module keeps its own row and never grows a
 // file column, because attachments is what supplies tenant scoping, the
 // path-traversal guard, soft delete and the audit entry.
-router.get("/assets/:uuid/receipts", assetMgmt, asyncHandler(listReceipts));
+router.get("/assets/:uuid/receipts", assetView, asyncHandler(listReceipts));
 router.post(
   "/assets/:uuid/receipts",
   assetMgmt,
   uploadAttachments.array("files", 10),
   asyncHandler(uploadReceipts),
 );
-router.delete("/asset-attachments/:attachmentUuid", assetMgmt, asyncHandler(removeAttachment));
-router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandler(downloadAttachment));
+router.delete("/asset-attachments/:attachmentUuid", assetEdit, asyncHandler(removeAttachment));
+router.get("/asset-attachments/:attachmentUuid/download", assetView, asyncHandler(downloadAttachment));
 
 // ---- Expense claims (staff) ----
 // Reuses the same attachments middleware and the shared `attachments` table via
@@ -573,15 +589,15 @@ router.get("/asset-attachments/:attachmentUuid/download", assetMgmt, asyncHandle
 // route is a disabled feature with a working URL, and the next person to add a
 // create button finds it answers instead of finding it refused. See
 // tests/expenseClaimCreationRestricted.test.js, which fails if this comes back.
-router.get("/expense-claims", expenseReviewMgmt, asyncHandler(listExpenseClaims));
-router.get("/expense-claims/:uuid", expenseReviewMgmt, asyncHandler(getExpenseClaim));
+router.get("/expense-claims", expenseView, asyncHandler(listExpenseClaims));
+router.get("/expense-claims/:uuid", expenseView, asyncHandler(getExpenseClaim));
 // Registered BEFORE the /:uuid routes deliberately. Express matches in
 // registration order, so a literal segment sitting behind a parameter is one
 // refactor away from being swallowed by it. `/bulk-pay` as a uuid string would
 // reach loadClaim and 404 with a confusing message instead of paying anything.
-router.post("/expense-claims/bulk-pay", expenseReviewMgmt, asyncHandler(bulkPayExpenseClaims));
-router.post("/expense-claims/:uuid/review", expenseReviewMgmt, asyncHandler(reviewExpenseClaim));
-router.post("/expense-claims/:uuid/pay", expenseReviewMgmt, asyncHandler(payExpenseClaim));
+router.post("/expense-claims/bulk-pay", expensePay, asyncHandler(bulkPayExpenseClaims));
+router.post("/expense-claims/:uuid/review", expenseApprove, asyncHandler(reviewExpenseClaim));
+router.post("/expense-claims/:uuid/pay", expensePay, asyncHandler(payExpenseClaim));
 router.post(
   "/expense-claims/:uuid/receipts",
   expenseReviewMgmt,
@@ -600,7 +616,7 @@ router.get(
 );
 
 // ---- Org dashboard analytics (staff) ----
-router.get("/dashboard/analytics", staff, asyncHandler(orgDashboardAnalytics));
+router.get("/dashboard/analytics", [...staff, requirePermission("reports.view_org_analytics")], asyncHandler(orgDashboardAnalytics));
 
 import {
   uploadReceipts,
