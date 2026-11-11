@@ -68,6 +68,8 @@ async function scopedExit(req, exitUuid) {
 
 export async function listExitChecklistPending(req, res) {
   const orgId = req.scopeOrgId;
+  const scopeFilter = employeeScopeCondition(req, "offboarding", "e");
+  const scopeSql = scopeFilter ? ` AND EXISTS (SELECT 1 FROM employees e WHERE e.uuid=er.employee_uuid AND e.organization_id=er.organization_id AND ${scopeFilter.sql})` : "";
   const [rows] = await pool.query(
     `SELECT er.uuid AS exit_request_uuid, er.employee_uuid, er.employee_name, er.designation,
             er.status, er.request_type, er.last_working_day,
@@ -83,11 +85,11 @@ export async function listExitChecklistPending(req, res) {
        JOIN exit_requests er ON er.uuid = c.exit_request_uuid
       WHERE er.organization_id = ?
         AND er.status IN ('pending','approved')
-        AND c.status = 'pending'
+        AND c.status = 'pending'${scopeSql}
       GROUP BY er.uuid, er.employee_uuid, er.employee_name, er.designation,
                er.status, er.request_type, er.last_working_day
       ORDER BY er.last_working_day ASC, er.employee_name`,
-    [orgId],
+    [orgId, ...(scopeFilter?.params ?? [])],
   );
 
   // last_working_day comes back as a Date at local midnight, so it is normalised
