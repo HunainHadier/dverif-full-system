@@ -222,6 +222,29 @@ describe("canAccessRoute — sub_admin", () => {
     }
   });
 
+  it("uses an explicitly saved granular matrix instead of legacy broad flags", () => {
+    const granted = user({
+      org_role: "sub_admin",
+      feature_access: {
+        manage_employees: true,
+        granular_permissions: { "employees.view": true, "document_verification.generate_request": true },
+      } as unknown as AuthUser["feature_access"],
+    });
+    expect(canAccessRoute(granted, "/org/team")).toBe(true);
+    expect(canAccessRoute(granted, "/requests")).toBe(true);
+
+    const denied = user({
+      org_role: "sub_admin",
+      feature_access: {
+        manage_employees: true,
+        generate_request: true,
+        granular_permissions: { "employees.view": false, "document_verification.generate_request": false },
+      } as unknown as AuthUser["feature_access"],
+    });
+    expect(canAccessRoute(denied, "/org/team")).toBe(false);
+    expect(canAccessRoute(denied, "/requests")).toBe(false);
+  });
+
   it("is always denied org_admin-only pages", () => {
     const s = withFlags("sub_admin", everyFlagOn);
     expect(canAccessRoute(s, "/org/admins")).toBe(false);
