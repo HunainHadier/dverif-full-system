@@ -9,6 +9,9 @@ import {
 } from "../src/utils/permissions.js";
 
 const ORG_ROUTES = readFileSync("src/routes/org.routes.js", "utf8");
+const ADMIN_PERMISSION_UI = readFileSync("../frontend/src/routes/_app.org.admins.tsx", "utf8");
+const LEAVE_ROUTES = readFileSync("src/routes/leaves.routes.js", "utf8");
+const VERIFICATION_ROUTES = readFileSync("src/routes/verification.routes.js", "utf8");
 
 describe("granular permission catalog", () => {
   it("never exposes the hard-delete employee controller through the org API", () => {
@@ -21,6 +24,31 @@ describe("granular permission catalog", () => {
     );
     expect(keys.length).toBe(65);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("keeps the frontend checkbox catalog exactly aligned with the backend catalog", () => {
+    const backendKeys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
+      actions.map((action) => `${module}.${action}`),
+    ).sort();
+    const frontendKeys = ADMIN_PERMISSION_UI.split("\n").flatMap((line) => {
+      const moduleMatch = line.match(/key: "([a-z_]+)".*actions: \[(.*)\] \},?$/);
+      if (!moduleMatch) return [];
+      return [...moduleMatch[2].matchAll(/\["([a-z_]+)","[^"]+"\]/g)]
+        .map((match) => `${moduleMatch[1]}.${match[1]}`);
+    }).sort();
+    expect(frontendKeys).toEqual(backendKeys);
+  });
+
+  it("routes leave decisions through separate approve and reject permissions", () => {
+    expect(LEAVE_ROUTES).toContain('"leave_management.approve"');
+    expect(LEAVE_ROUTES).toContain('"leave_management.reject"');
+    expect(LEAVE_ROUTES).toContain('"leave_management.cancel"');
+  });
+
+  it("routes verification decisions through exact approve and reject permissions", () => {
+    expect(VERIFICATION_ROUTES).toContain("requireOrganizationInboxScope");
+    expect(ORG_ROUTES).toContain('requirePermission("document_verification.approve")');
+    expect(ORG_ROUTES).toContain('requirePermission("document_verification.reject")');
   });
 
   it("defaults every granular action to denied", () => {
