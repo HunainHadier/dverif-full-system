@@ -30,14 +30,8 @@ export const orgService = {
       employment_status?: "current_employee" | "active" | "inactive";
       reference?: boolean;
       /**
-       * "org" widens the list to the whole organization roster.
-       *
-       * By default an org_admin sees only the employee records they personally
-       * added. That is right for the Employees page (a work queue of what I
-       * imported) and wrong for a picker over the company, so anything choosing
-       * a person to hand company property to must pass this — otherwise a
-       * colleague another admin onboarded simply does not exist as far as the
-       * picker is concerned. It never widens past your own organization.
+       * Retained for existing roster-picker callers. The API always enforces the
+       * caller's organization and role/data-scope permissions.
        */
       scope?: "org";
     } = {},
@@ -114,7 +108,7 @@ export const orgService = {
       cnic: string;
       phone?: string;
       granular_permissions: Record<string, boolean>;
-      data_scopes: Record<string, "own_records" | "my_team" | "entire_organization">;
+      data_scopes: Record<string, "own_records" | "entire_organization">;
     }) =>
       api
         .post<{ user: OrgAdminUserRecord; _email_warning?: string }>("/org/admin-users", data)
@@ -129,7 +123,7 @@ export const orgService = {
       uuid: UUID,
       permissions: {
         granular_permissions: Record<string, boolean>;
-        data_scopes: Record<string, "own_records" | "my_team" | "entire_organization">;
+        data_scopes: Record<string, "own_records" | "entire_organization">;
       },
     ) =>
       api

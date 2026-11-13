@@ -21,6 +21,7 @@ import type { DateRange } from "react-day-picker";
 import { authStore } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { useAuth } from "@/lib/auth";
+import { hasGranularPermission } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { PageHeader } from "@/components/common/PageHeader";
@@ -62,7 +63,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { orgAttendanceService, orgService, isCurrentEmployee, type AttendanceRecord } from "@/services";
-import { apiErrorMessage, parseFeatureAccess } from "@/lib/utils";
+import { apiErrorMessage } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/attendance")({
   beforeLoad: () => {
@@ -131,10 +132,8 @@ function formatAttendanceDate(value: string): string {
 function OrgAttendancePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isStaff =
-    user?.role === "user" &&
-    (user?.org_role === "org_admin" ||
-      (user?.org_role === "sub_admin" && parseFeatureAccess(user.feature_access).attendance));
+  const isStaff = user?.role === "user" &&
+    (user.org_role === "org_admin" || user.org_role === "sub_admin");
 
   useEffect(() => {
     if (user && !isStaff) navigate({ to: "/dashboard" });
@@ -151,6 +150,9 @@ function OrgAttendanceContent() {
   const qc = useQueryClient();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
   const canDelete = user?.org_role === "org_admin";
+  const canMarkAttendance = hasGranularPermission(user, "attendance.manual_entry", "attendance");
+  const canCorrectAttendance = hasGranularPermission(user, "attendance.correct_check_in_out", "attendance");
+  const canManageIps = hasGranularPermission(user, "attendance.manage_ips", "attendance");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -162,8 +164,13 @@ function OrgAttendanceContent() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [ipInput, setIpInput] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
+  const [manualTarget, setManualTarget] = useState<{ employeeUuid: string; date: string } | null>(null);
   const [attendanceTab, setAttendanceTab] = useState("records");
   const [correctionRecord, setCorrectionRecord] = useState<AttendanceRecord | null>(null);
+
+  useEffect(() => {
+    if (!canMarkAttendance && attendanceTab === "missing") setAttendanceTab("records");
+  }, [attendanceTab, canMarkAttendance]);
 
   const employeesQ = useQuery({
     queryKey: ["orgAttendanceEmployees"],
@@ -177,6 +184,7 @@ function OrgAttendanceContent() {
   const ips = useQuery({
     queryKey: ["orgAllowedIps"],
     queryFn: () => orgAttendanceService.ips(),
+    enabled: canManageIps,
   });
 
   const records = useQuery({
@@ -228,29 +236,44 @@ function OrgAttendanceContent() {
 
       {attendanceTab === "records" ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            onClick={() => setManualOpen(true)}
-            disabled={isLocked}
-            title="Record attendance for an employee manually"
-          >
-            {isLocked ? <Lock className="mr-1 h-3 w-3" /> : <UserCheck className="mr-1 h-3 w-3" />}
-            {isLocked ? "Subscription Required" : "Mark attendance"}
-          </Button>
+          {canMarkAttendance ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setManualTarget(null);
+                setManualOpen(true);
+              }}
+              disabled={isLocked}
+              title="Record attendance for an employee manually"
+            >
+              {isLocked ? <Lock className="mr-1 h-3 w-3" /> : <UserCheck className="mr-1 h-3 w-3" />}
+              {isLocked ? "Subscription Required" : "Mark attendance"}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
-      <ManualAttendanceDialog
-        open={manualOpen}
-        onOpenChange={setManualOpen}
-        disabled={isLocked}
-        onDone={() => {
-          setManualOpen(false);
-          setPage(1);
-          qc.invalidateQueries({ queryKey: ["orgAttendance"] });
-          qc.invalidateQueries({ queryKey: ["orgMissingAttendance"] });
-        }}
-      />
+      {canMarkAttendance ? (
+        <ManualAttendanceDialog
+          key={`${manualTarget?.employeeUuid ?? "all"}-${manualTarget?.date ?? "today"}`}
+          open={manualOpen}
+          onOpenChange={(open) => {
+            setManualOpen(open);
+            if (!open) setManualTarget(null);
+          }}
+          initialEmployeeUuid={manualTarget?.employeeUuid}
+          initialDate={manualTarget?.date}
+          isMissingEntry={manualTarget !== null}
+          disabled={isLocked}
+          onDone={() => {
+            setManualOpen(false);
+            setManualTarget(null);
+            setPage(1);
+            qc.invalidateQueries({ queryKey: ["orgAttendance"] });
+            qc.invalidateQueries({ queryKey: ["orgMissingAttendance"] });
+          }}
+        />
+      ) : null}
       <AttendanceCorrectionDialog
         key={correctionRecord?.uuid ?? "no-correction"}
         record={correctionRecord}
@@ -262,7 +285,7 @@ function OrgAttendanceContent() {
         }}
       />
 
-      <Card className="border-border/70 shadow-none">
+      {canManageIps ? <Card className="border-border/70 shadow-none">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             {t("attendance.allowedIpsTitle")}
@@ -330,7 +353,7 @@ function OrgAttendanceContent() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <Card className="mt-4 border-border/70 shadow-none">
         <CardContent className="p-0">
@@ -340,7 +363,7 @@ function OrgAttendanceContent() {
           }}>
           <TabsList className="m-4 mb-0">
             <TabsTrigger value="records">Attendance records</TabsTrigger>
-            <TabsTrigger value="missing">Missing Attendance</TabsTrigger>
+            {canMarkAttendance ? <TabsTrigger value="missing">Missing Attendance</TabsTrigger> : null}
           </TabsList>
           <TabsContent value="records" className="mt-0">
           <div className="grid min-w-0 grid-cols-1 gap-3 border-b border-border p-4 sm:grid-cols-2 xl:grid-cols-12">
@@ -524,7 +547,7 @@ function OrgAttendanceContent() {
                       <TableHead className="whitespace-nowrap">{t("attendance.status")}</TableHead>
                       <TableHead className="whitespace-nowrap">Duration</TableHead>
                       <TableHead className="whitespace-nowrap">Checkout source</TableHead>
-                      <TableHead className="whitespace-nowrap">Actions</TableHead>
+                      {canCorrectAttendance ? <TableHead className="whitespace-nowrap">Actions</TableHead> : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -568,7 +591,7 @@ function OrgAttendanceContent() {
                         <TableCell data-label="Checkout source" className="whitespace-nowrap text-sm text-muted-foreground">
                           {r.checkout_source ?? "—"}
                         </TableCell>
-                        <TableCell data-label="Actions">
+                        {canCorrectAttendance ? <TableCell data-label="Actions">
                           <Button
                             type="button"
                             size="sm"
@@ -579,7 +602,7 @@ function OrgAttendanceContent() {
                             <Pencil className="mr-1 h-3.5 w-3.5" />
                             Correct
                           </Button>
-                        </TableCell>
+                        </TableCell> : null}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -594,9 +617,17 @@ function OrgAttendanceContent() {
             </>
           )}
           </TabsContent>
-          <TabsContent value="missing" className="mt-0 p-4">
-            <MissingAttendancePanel />
-          </TabsContent>
+          {canMarkAttendance ? (
+            <TabsContent value="missing" className="mt-0 p-4">
+              <MissingAttendancePanel
+                disabled={isLocked}
+                onMarkAttendance={(item) => {
+                  setManualTarget({ employeeUuid: item.employee_uuid, date: item.date });
+                  setManualOpen(true);
+                }}
+              />
+            </TabsContent>
+          ) : null}
           </Tabs>
         </CardContent>
       </Card>
@@ -604,7 +635,13 @@ function OrgAttendanceContent() {
   );
 }
 
-function MissingAttendancePanel() {
+function MissingAttendancePanel({
+  disabled,
+  onMarkAttendance,
+}: {
+  disabled: boolean;
+  onMarkAttendance: (item: { employee_uuid: string; date: string }) => void;
+}) {
   const [month, setMonth] = useState(localToday().slice(0, 7));
   const [page, setPage] = useState(1);
   const missing = useQuery({
@@ -652,6 +689,7 @@ function MissingAttendancePanel() {
                 <TableRow>
                   <TableHead>Employee</TableHead>
                   <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -662,6 +700,18 @@ function MissingAttendancePanel() {
                       <div className="text-xs text-muted-foreground">{item.employee_email ?? ""}</div>
                     </TableCell>
                     <TableCell>{formatAttendanceDate(item.date)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => onMarkAttendance({ employee_uuid: item.employee_uuid, date: item.date })}
+                      >
+                        <UserCheck className="mr-1 h-3.5 w-3.5" />
+                        Mark attendance
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -795,16 +845,22 @@ function AttendanceCorrectionDialog({
 function ManualAttendanceDialog({
   open,
   onOpenChange,
+  initialEmployeeUuid,
+  initialDate,
+  isMissingEntry,
   disabled,
   onDone,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  initialEmployeeUuid?: string;
+  initialDate?: string;
+  isMissingEntry: boolean;
   disabled?: boolean;
   onDone: () => void;
 }) {
-  const [employeeUuid, setEmployeeUuid] = useState("");
-  const [date, setDate] = useState(localToday());
+  const [employeeUuid, setEmployeeUuid] = useState(initialEmployeeUuid ?? "");
+  const [date, setDate] = useState(initialDate ?? localToday());
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [reason, setReason] = useState("");
@@ -824,14 +880,18 @@ function ManualAttendanceDialog({
   );
 
   const submit = useMutation({
-    mutationFn: () =>
-      orgAttendanceService.manualEntry({
+    mutationFn: () => {
+      const data = {
         employee_uuid: employeeUuid,
         date,
         check_in_time: checkIn,
         check_out_time: checkOut || undefined,
         reason: reason.trim(),
-      }),
+      };
+      return isMissingEntry
+        ? orgAttendanceService.manualMissingEntry(data)
+        : orgAttendanceService.manualEntry(data);
+    },
     onSuccess: () => {
       toast.success("Attendance recorded");
       setEmployeeUuid("");
@@ -869,8 +929,8 @@ function ManualAttendanceDialog({
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
             <Label>Employee *</Label>
-            <Select value={employeeUuid} onValueChange={(v) => setEmployeeUuid(v)}>
-              <SelectTrigger>
+            <Select value={employeeUuid} onValueChange={(v) => setEmployeeUuid(v)} disabled={isMissingEntry}>
+              <SelectTrigger disabled={isMissingEntry}>
                 <SelectValue placeholder="Select employee" />
               </SelectTrigger>
               <SelectContent>
@@ -893,6 +953,7 @@ function ManualAttendanceDialog({
               type="date"
               value={date}
               max={localToday()}
+              disabled={isMissingEntry}
               onChange={(e) => setDate(e.target.value)}
             />
             {errors.date ? <p className="text-xs text-destructive">{errors.date}</p> : null}

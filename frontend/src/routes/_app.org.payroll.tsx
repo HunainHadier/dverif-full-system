@@ -7,8 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
-import { parseFeatureAccess } from "@/lib/utils";
-import { usePermissions } from "@/lib/permissions";
+import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { AccessDenied } from "@/components/common/RequireOrgFeature";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
@@ -55,7 +54,6 @@ import {
 } from "@/components/ui/table";
 import {
   orgSalaryService,
-  orgService,
   type PayrollPreview,
   type SalaryRecord,
   type PayrollEmployeeRow,
@@ -315,12 +313,22 @@ function OrgPayrollPage() {
    */
   const [previewSource, setPreviewSource] = useState<"generation" | "record" | null>(null);
   const canDelete = user?.org_role === "org_admin";
+  const canViewPayroll = perms.hasGranular("payroll.view", "payroll");
+  const canGeneratePayroll = perms.hasGranular("payroll.generate", "payroll");
+  const canExportPayroll = perms.hasGranular("reports.export");
+  const hasEntirePayrollScope = hasEntireOrganizationScope(user, "payroll");
+  const canManagePayrollSettings = perms.hasGranular("payroll.manage_settings", "payroll");
+  const canEditPayrollSettings = canManagePayrollSettings && hasEntirePayrollScope;
+
+  useEffect(() => {
+    if ((tab === "components" || tab === "policies") && !canManagePayrollSettings) {
+      setTab("employees");
+    }
+  }, [tab, canManagePayrollSettings]);
 
   const MONTHS = Array.from({ length: 12 }, (_, i) =>
     new Date(2026, i, 1).toLocaleDateString(undefined, { month: "long" }),
   );
-
-  const departmentsQ = useQuery({ queryKey: ["payrollDepartments"], queryFn: () => orgService.departments.list() });
 
   const records = useQuery({
     queryKey: ["orgSalaryRecords", page, recSearch, month, year, recordEmployee, recordDepartment],
@@ -512,7 +520,6 @@ function OrgPayrollPage() {
     overtimeAmounts: runOvertimeAmounts,
     componentSelections: runComponentSelections,
   });
-  const canEditPayrollSettings = perms.hasGranular("payroll.manage_settings", "payroll");
   const setGenerateScheduleEveryDay = (dayType: "working" | "off") =>
     setGenerateDayTypes(Object.fromEntries(
       selectedMonthScheduleDates.map((date) => [date, dayType]),
@@ -881,12 +888,17 @@ function OrgPayrollPage() {
   });
 
   const items = records.data?.items ?? [];
+  const departmentNames = [...new Set(
+    (employeesQ.data?.items ?? [])
+      .map((employee) => employee.department)
+      .filter((department): department is string => !!department),
+  )].sort((a, b) => a.localeCompare(b));
   const years: number[] = [];
   const nowYear = new Date().getFullYear();
   for (let y = nowYear - 1; y <= nowYear + 1; y++) years.push(y);
   const employeePeriodYears = Array.from({ length: 101 }, (_, index) => 2000 + index);
 
-  if (!perms.isOrgAdmin && !perms.payroll) return <AccessDenied feature="payroll" />;
+  if (!canViewPayroll) return <AccessDenied feature="payroll" />;
 
   const moduleLocked = isModuleFlagOff("payroll_management");
   if (moduleLocked) return <ModuleFeatureLockedCard feature="payroll_management" />;
@@ -898,7 +910,7 @@ function OrgPayrollPage() {
         description={t("payroll.description")}
         actions={
           tab === "components" || tab === "policies" ? null : tab === "records" ? (
-            <div className="flex shrink-0 flex-nowrap gap-2 whitespace-nowrap">
+            canExportPayroll ? <div className="flex shrink-0 flex-nowrap gap-2 whitespace-nowrap">
               <Button
                 className="w-40 shrink-0 justify-center"
                 variant="outline"
@@ -916,9 +928,9 @@ function OrgPayrollPage() {
                     ? t("payroll.exporting")
                     : t("payroll.exportCsv")}
               </Button>
-            </div>
+            </div> : null
           ) : (
-            <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
+            canGeneratePayroll ? <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap">
               <span className="text-sm text-muted-foreground">
                 {t("payroll.selectedCount", { count: validSelected.size })}
               </span>
@@ -934,7 +946,7 @@ function OrgPayrollPage() {
                 )}
                 {isLocked ? "Subscription Required" : t("payroll.generatePayroll")}
               </Button>
-            </div>
+            </div> : null
           )
         }
       />
@@ -946,23 +958,23 @@ function OrgPayrollPage() {
           className="mt-0 min-w-0"
         >
           <TabsList className="h-auto flex-wrap">
-            <TabsTrigger value="employees">
+            {canViewPayroll ? <TabsTrigger value="employees">
               <Users className="mr-1.5 h-4 w-4" />
               {t("payroll.employeesTab", "Employees")}
-            </TabsTrigger>
-            <TabsTrigger value="records">
+            </TabsTrigger> : null}
+            {canViewPayroll ? <TabsTrigger value="records">
               <FileText className="mr-1.5 h-4 w-4" />
               {t("payroll.recordsTab", "Payroll Records")}
-            </TabsTrigger>
-            <TabsTrigger value="components">Salary Components</TabsTrigger>
-            <TabsTrigger value="policies">
+            </TabsTrigger> : null}
+            {canManagePayrollSettings ? <TabsTrigger value="components">Salary Components</TabsTrigger> : null}
+            {canManagePayrollSettings ? <TabsTrigger value="policies">
               <SlidersHorizontal className="mr-1.5 h-4 w-4" />
               Policies
-            </TabsTrigger>
+            </TabsTrigger> : null}
           </TabsList>
 
           {/* ---------------- Employee selection table ---------------- */}
-          <TabsContent value="employees">
+          {canViewPayroll ? <TabsContent value="employees">
             <Card className="border-border/70 shadow-none">
               <CardContent className="p-0">
                 <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
@@ -1029,13 +1041,13 @@ function OrgPayrollPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="w-10">
+                          {canGeneratePayroll ? <TableHead className="w-10">
                             <Checkbox
                               checked={allVisibleSelected}
                               onCheckedChange={toggleAllVisible}
                               aria-label={t("payroll.selectAll")}
                             />
-                          </TableHead>
+                          </TableHead> : null}
                           <TableHead className="whitespace-nowrap">{t("payroll.employee")}</TableHead>
                           <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.basicSalary")}
@@ -1046,9 +1058,9 @@ function OrgPayrollPage() {
                           <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.deduction")}
                           </TableHead>
-                          <TableHead className="whitespace-nowrap text-right">
+                          {canGeneratePayroll ? <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.overtimeAmount", "Overtime")}
-                          </TableHead>
+                          </TableHead> : null}
                           <TableHead className="whitespace-nowrap text-right">
                             {t("payroll.netSalary")}
                           </TableHead>
@@ -1071,13 +1083,13 @@ function OrgPayrollPage() {
                           ) * 100) / 100;
                           return (
                             <TableRow key={emp.uuid}>
-                              <TableCell className="w-10">
+                              {canGeneratePayroll ? <TableCell className="w-10">
                                 <Checkbox
                                   checked={validSelected.has(emp.uuid)}
                                   onCheckedChange={() => toggleEmployee(emp.uuid)}
                                   aria-label={emp.full_name}
                                 />
-                              </TableCell>
+                              </TableCell> : null}
                               <TableCell data-label="Employee" className="whitespace-nowrap">
                                 <div className="text-sm font-medium text-foreground">
                                   {emp.full_name}
@@ -1105,14 +1117,14 @@ function OrgPayrollPage() {
                                   {emp.allowance_items.length > 0 ? emp.allowance_items.map((item) => (
                                     <label key={item.uuid} className="flex items-center justify-between gap-3">
                                       <span className="flex items-center gap-2 text-muted-foreground">
-                                        <Checkbox
+                                        {canGeneratePayroll ? <Checkbox
                                           checked={selectedComponents.allowance_uuids.includes(item.uuid)}
-                                          disabled={!canEditPayrollSettings || isLocked}
+                                          disabled={isLocked}
                                           onCheckedChange={(checked) => togglePayrollComponent(
                                             emp.uuid, "allowance", item.uuid, checked === true,
                                           )}
                                           aria-label={`Include allowance ${item.name} for ${emp.full_name}`}
-                                        />
+                                        /> : null}
                                         {item.name}
                                       </span>
                                       <span>{money(item.amount)}</span>
@@ -1133,14 +1145,14 @@ function OrgPayrollPage() {
                                   {emp.deduction_items.length > 0 ? emp.deduction_items.map((item) => (
                                     <label key={item.uuid} className="flex items-center justify-between gap-3">
                                       <span className="flex items-center gap-2 text-muted-foreground">
-                                        <Checkbox
+                                        {canGeneratePayroll ? <Checkbox
                                           checked={selectedComponents.deduction_uuids.includes(item.uuid)}
-                                          disabled={!canEditPayrollSettings || isLocked}
+                                          disabled={isLocked}
                                           onCheckedChange={(checked) => togglePayrollComponent(
                                             emp.uuid, "deduction", item.uuid, checked === true,
                                           )}
                                           aria-label={`Include deduction ${item.name} for ${emp.full_name}`}
-                                        />
+                                        /> : null}
                                         {item.name}
                                       </span>
                                       <span>{money(item.amount)}</span>
@@ -1153,7 +1165,7 @@ function OrgPayrollPage() {
                                   )}
                                 </div>
                               </TableCell>
-                              <TableCell
+                              {canGeneratePayroll ? <TableCell
                                 data-label={t("payroll.overtimeAmount", "Overtime")}
                                 className="whitespace-nowrap text-right text-sm"
                               >
@@ -1166,7 +1178,7 @@ function OrgPayrollPage() {
                                     [draftKey]: value,
                                   }))}
                                 />
-                              </TableCell>
+                              </TableCell> : null}
 
                               <TableCell
                                 data-label={t("payroll.netSalary")}
@@ -1183,10 +1195,10 @@ function OrgPayrollPage() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent> : null}
 
           {/* ---------------- Payroll records (history) table ---------------- */}
-          <TabsContent value="records">
+          {canViewPayroll ? <TabsContent value="records">
             <Card className="border-border/70 shadow-none">
               <CardContent className="p-0">
                 <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
@@ -1202,10 +1214,10 @@ function OrgPayrollPage() {
                     <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All employees" /></SelectTrigger>
                     <SelectContent><SelectItem value="all">All employees</SelectItem>{(employeesQ.data?.items ?? []).map((e) => <SelectItem key={e.uuid} value={e.uuid}>{e.full_name}</SelectItem>)}</SelectContent>
                   </Select>
-                  <Select value={recordDepartment || "all"} onValueChange={(v) => { setRecordDepartment(v === "all" ? "" : v); setPage(1); }}>
+                  {departmentNames.length ? <Select value={recordDepartment || "all"} onValueChange={(v) => { setRecordDepartment(v === "all" ? "" : v); setPage(1); }}>
                     <SelectTrigger className="w-full lg:w-48"><SelectValue placeholder="All departments" /></SelectTrigger>
-                    <SelectContent><SelectItem value="all">All departments</SelectItem>{(departmentsQ.data ?? []).map((d) => <SelectItem key={d.uuid} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
-                  </Select>
+                    <SelectContent><SelectItem value="all">All departments</SelectItem>{departmentNames.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent>
+                  </Select> : null}
                   <Select
                     value={month}
                     onValueChange={(v) => {
@@ -1438,9 +1450,25 @@ function OrgPayrollPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent> : null}
+          {canManagePayrollSettings ? (
+          <TabsContent value="components">
+            {hasEntirePayrollScope ? (
+              <SalaryComponentsManager canManage={canEditPayrollSettings} />
+            ) : (
+              <PayrollScopeRequiredNotice />
+            )}
           </TabsContent>
-          <TabsContent value="components"><SalaryComponentsManager /></TabsContent>
-          <TabsContent value="policies"><PayrollPoliciesPanel canManage={perms.isOrgAdmin} /></TabsContent>
+          ) : null}
+          {canManagePayrollSettings ? (
+          <TabsContent value="policies">
+            {hasEntirePayrollScope ? (
+              <PayrollPoliciesPanel canManage={canEditPayrollSettings} />
+            ) : (
+              <PayrollScopeRequiredNotice />
+            )}
+          </TabsContent>
+          ) : null}
         </Tabs>
       </div>
 
@@ -2047,6 +2075,16 @@ function OrgPayrollPage() {
   );
 }
 
+
+function PayrollScopeRequiredNotice() {
+  return (
+    <Card className="border-border/70 shadow-none">
+      <CardContent className="p-4 text-sm text-muted-foreground">
+        Payroll policies and shared salary components require Entire Organization data scope.
+      </CardContent>
+    </Card>
+  );
+}
 
 function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();

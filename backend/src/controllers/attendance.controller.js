@@ -416,7 +416,7 @@ export async function manualEntry(req, res) {
   const earliest = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay - maxAgeDays));
   const minDate = `${earliest.getUTCFullYear()}-${String(earliest.getUTCMonth() + 1).padStart(2, "0")}-${String(earliest.getUTCDate()).padStart(2, "0")}`;
   if (date > todayStr) throw new ApiError(400, "Manual entries cannot be for a future date");
-  if (date < minDate) {
+  if (date < minDate && !req.allowMissingAttendanceBackdate) {
     throw new ApiError(
       400,
       `Manual entries can only be backdated up to ${maxAgeDays} day(s) (earliest allowed: ${minDate})`
@@ -431,7 +431,7 @@ export async function manualEntry(req, res) {
 
   // Target employee must belong to the admin's organization and never be the admin themselves.
   const [empRows] = await pool.query(
-    "SELECT uuid, organization_id, linked_user_uuid, full_name, status FROM employees WHERE uuid=?",
+    "SELECT uuid, organization_id, linked_user_uuid, full_name, status, joining_date FROM employees WHERE uuid=?",
     [employee_uuid]
   );
   if (!empRows.length) throw new ApiError(404, "Employee not found");
@@ -448,6 +448,29 @@ export async function manualEntry(req, res) {
   // employee, since a newly created one is 'current_employee'.
   if (!["active", "current_employee"].includes(emp.status)) {
     throw new ApiError(400, "Employee is not a current employee of this organization");
+  }
+  if (req.allowMissingAttendanceBackdate) {
+    if (emp.joining_date && date < isoDate(emp.joining_date)) {
+      throw new ApiError(400, "Attendance cannot be recorded before the employee's joining date");
+    }
+    const [missingRows] = await pool.query(
+      `SELECT 1
+         FROM organization_monthly_work_schedules s
+        WHERE s.organization_id=? AND s.schedule_date=? AND s.day_type='working'
+          AND NOT EXISTS (
+            SELECT 1 FROM holidays h
+             WHERE h.organization_id=s.organization_id AND h.date=s.schedule_date
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM attendance_records ar
+             WHERE ar.employee_uuid=? AND ar.organization_id=s.organization_id AND ar.date=s.schedule_date
+          )
+        LIMIT 1`,
+      [req.scopeOrgId, date, emp.uuid],
+    );
+    if (!missingRows.length) {
+      throw new ApiError(400, "Only an unrecorded scheduled working day can be filled from Missing Attendance");
+    }
   }
 
   const status = timeRange.checkOutAt ? "checked_out" : "checked_in";
@@ -513,6 +536,11 @@ export async function manualEntry(req, res) {
   });
 
   return created(res, { record: serializeAttendanceDate(rows[0]) }, "Manual attendance entry added");
+}
+
+export async function manualMissingEntry(req, res) {
+  req.allowMissingAttendanceBackdate = true;
+  return manualEntry(req, res);
 }
 
 export async function correctAttendance(req, res) {

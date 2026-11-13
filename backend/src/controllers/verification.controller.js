@@ -602,16 +602,6 @@ export async function mySentRequests(req, res) {
   if (req.user.org_role === "org_admin" || (req.user.org_role === "sub_admin" && dataScope === "entire_organization")) {
     whereClause = "WHERE requester.organization = ?";
     params = [req.user.organization];
-  } else if (req.user.org_role === "sub_admin" && dataScope === "my_team") {
-    whereClause = `WHERE (requester.uuid = ? OR requester.uuid IN (
-      SELECT team_member.linked_user_uuid FROM employees team_member
-       WHERE team_member.organization_id = ?
-         AND team_member.reporting_manager_uuid = (
-           SELECT manager.uuid FROM employees manager
-            WHERE manager.organization_id = ? AND manager.linked_user_uuid = ? LIMIT 1
-         )
-    ))`;
-    params = [req.user.uuid, req.user.organization, req.user.organization, req.user.uuid];
   } else {
     whereClause = "WHERE vr.user_id = ?";
     params = [req.user.id];

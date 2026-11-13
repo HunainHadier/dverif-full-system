@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { orgService, type ManagedOption, type UUID } from "@/services";
 import { useAuth } from "@/lib/auth";
+import { hasGranularPermission } from "@/lib/permissions";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -52,15 +53,15 @@ export function ManageOptionsDialog({
   const title = isDept ? "Manage Departments" : "Manage Designations";
   const noun = isDept ? "Department" : "Designation";
   const { user } = useAuth();
-  // Deleting a department is org-admin only, matching the endpoints behind it.
-  // Adding is open to anyone who can reach the picker at all, because the
-  // alternative is an admin adding one on the employee's behalf.
+  const permission = isDept ? "employees.manage_departments" : "employees.manage_designations";
+  const canManage = user?.role === "admin" || hasGranularPermission(user, permission, "manage_employees");
+  // Deletion is org-admin only; creating requires the matching granular grant.
   const canDelete = user?.org_role === "org_admin";
 
   const listQ = useQuery({
     queryKey: [isDept ? "org-departments" : "org-designations"],
     queryFn: () => (isDept ? orgService.departments.list() : orgService.designations.list()),
-    enabled: open,
+    enabled: open && canManage,
   });
 
   const [name, setName] = useState("");
@@ -100,22 +101,26 @@ export function ManageOptionsDialog({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          <div className="flex gap-2">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={`New ${isDept ? "department" : "designation"} name`}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && name.trim()) createMut.mutate(name.trim());
-              }}
-            />
-            <Button
-              onClick={() => name.trim() && createMut.mutate(name.trim())}
-              loading={createMut.isPending}
-            >
-              <Plus className="mr-1.5 h-4 w-4" /> Add
-            </Button>
-          </div>
+          {canManage ? (
+            <div className="flex gap-2">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={`New ${isDept ? "department" : "designation"} name`}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && name.trim()) createMut.mutate(name.trim());
+                }}
+              />
+              <Button
+                onClick={() => name.trim() && createMut.mutate(name.trim())}
+                loading={createMut.isPending}
+              >
+                <Plus className="mr-1.5 h-4 w-4" /> Add
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">You do not have permission to manage {noun.toLowerCase()}s.</p>
+          )}
           <div className="max-h-60 space-y-1.5 overflow-y-auto">
             {items.map((opt) => (
               <div

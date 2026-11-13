@@ -9,6 +9,7 @@ import {
 } from "@/lib/routeAccess";
 import { allNavPaths } from "@/lib/navItems";
 import type { AuthUser } from "@/lib/auth";
+import { hasGranularPermission } from "@/lib/permissions";
 
 // ---------------------------------------------------------------------------
 // canAccessRoute is the one place that answers "may this user open this page?".
@@ -44,6 +45,21 @@ function user(over: Partial<AuthUser> = {}): AuthUser {
 function withFlags(orgRole: OrgRole, flags: Record<FeatureKey, boolean>): AuthUser {
   return user({ org_role: orgRole, feature_access: flags });
 }
+
+describe("payroll route action dependencies", () => {
+  it.each([
+    "payroll.generate",
+    "payroll.manage_settings",
+    "payroll.manage_employee_components",
+  ])("%s also grants Payroll View", (action) => {
+    const grants = {
+      granular_permissions: { [action]: true, "payroll.view": false },
+    } as unknown as AuthUser["feature_access"];
+    const subAdmin = user({ org_role: "sub_admin", feature_access: grants });
+    expect(canAccessRoute(subAdmin, "/org/payroll")).toBe(true);
+    expect(hasGranularPermission(subAdmin, "payroll.view", "payroll")).toBe(true);
+  });
+});
 
 const everyFlagOn = ALL_FEATURES.reduce<Record<FeatureKey, boolean>>(
   (acc, k) => ({ ...acc, [k]: true }),

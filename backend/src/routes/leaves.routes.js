@@ -5,6 +5,7 @@ import requireRole from "../middleware/requireRole.js";
 import requireActiveSubscription from "../middleware/requireActiveSubscription.js";
 import requireModuleFeature from "../middleware/requireModuleFeature.js";
 import requirePermission from "../middleware/requirePermission.js";
+import ApiError from "../utils/ApiError.js";
 import { createLeaveLimiter } from "../middleware/rateLimiter.js";
 import {
   createLeave,
@@ -31,8 +32,8 @@ const mayDecideLeave = (req, res, next) => {
   return requirePermission(permission)(req, res, next);
 };
 const mayCancelLeave = (req, res, next) => {
-  if (req.user?.org_role === "employee") return next();
-  return requirePermission("leave_management.cancel")(req, res, next);
+  if (req.user?.org_role !== "sub_admin") return next();
+  return next(new ApiError(403, "Sub-admin leave cancellation is not available"));
 };
 const leaveParticipants = [requireRole("employee", "org_admin", "sub_admin"), requireActiveSubscription, requireModuleFeature("leave_management")];
 

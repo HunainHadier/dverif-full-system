@@ -88,6 +88,24 @@ function connSql() {
 }
 
 describe("createEmployee — automatic platform-user invite", () => {
+  it("rejects a starting salary when the sub-admin lacks payroll management permission", async () => {
+    const req = makeReq({ ...OWNER, current_salary: 85000 });
+    req.user = {
+      ...req.user,
+      org_role: "sub_admin",
+      feature_access: {
+        granular_permissions: {
+          "employees.create": true,
+          "payroll.view": true,
+          "payroll.manage_settings": false,
+        },
+      },
+    };
+
+    await expect(createEmployee(req, mockRes())).rejects.toMatchObject({ statusCode: 403 });
+    expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
   it("creates a platform user, an invite token and links the employee when an email is given", async () => {
     const res = mockRes();
     await createEmployee(makeReq({ document_type: undefined, ...OWNER, email: EMAIL, send_invite: true }), res);

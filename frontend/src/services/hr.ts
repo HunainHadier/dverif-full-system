@@ -66,6 +66,8 @@ export const leavesService = {
 };
 
 export const orgLeavesService = {
+  filterEmployees: () =>
+    api.get<{ employees: { uuid: UUID; full_name: string }[] }>("/org/leave-employees").then((r) => r.data.employees),
   types: () =>
     api.get<{ leaveTypes: LeaveType[] }>("/org/leave-types").then((r) => r.data.leaveTypes),
   createType: (data: { name: string; days_allowed_per_year?: number; is_paid?: "yes" | "no" }) =>
@@ -180,6 +182,17 @@ removeIp: (id: number) =>
     }) =>
       api
         .post<{ record: AttendanceRecord }>("/org/attendance/manual-entry", data)
+        .then((r) => r.data),
+    manualMissingEntry: (data: {
+      employee_uuid: UUID;
+      date: string;
+      check_in_time: string;
+      check_out_time?: string;
+      break_duration_minutes?: number | null;
+      reason: string;
+    }) =>
+      api
+        .post<{ record: AttendanceRecord }>("/org/attendance/missing/manual-entry", data)
         .then((r) => r.data),
     correct: (uuid: UUID, data: {
       check_in_time: string;

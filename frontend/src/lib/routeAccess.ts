@@ -373,7 +373,14 @@ export function canAccessRoute(user: AuthUser | null | undefined, path: string):
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       const matrix = (raw as Record<string, unknown>).granular_permissions;
       if (matrix && typeof matrix === "object" && !Array.isArray(matrix)) {
-        return (matrix as Record<string, unknown>)[rule.granular] === true;
+        const grants = matrix as Record<string, unknown>;
+        if (grants[rule.granular] === true) return true;
+        return rule.granular === "payroll.view"
+          && (
+            grants["payroll.generate"] === true
+            || grants["payroll.manage_settings"] === true
+            || grants["payroll.manage_employee_components"] === true
+          );
       }
     }
     // Existing accounts without a granular matrix keep the legacy route decision

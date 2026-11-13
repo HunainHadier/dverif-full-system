@@ -13,7 +13,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccessDenied } from "@/components/common/RequireOrgFeature";
 import { useAuth } from "@/lib/auth";
 import { ProtectedDocumentLink } from "@/components/common/ProtectedDocumentLink";
-import { usePermissions, hasGranularPermission } from "@/lib/permissions";
+import { usePermissions, hasEntireOrganizationScope, hasGranularPermission } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { Button } from "@/components/ui/button";
@@ -113,11 +113,21 @@ function EmployeeDetailPage() {
   const { uuid } = useParams({ from: "/_app/org/team/$uuid" });
   const search = useSearch({ from: "/_app/org/team/$uuid" });
   const qc = useQueryClient();
-  const [editing, setEditing] = useState(search.edit === true);
-  const [activeTab, setActiveTab] = useState<"profile" | "documents" | "payroll" | "letters">(search.salary ? "payroll" : "profile");
   const { user } = useAuth();
   const perms = usePermissions();
+  const canViewPayroll = perms.hasGranular("payroll.view", "payroll");
+  const canManagePayroll = perms.hasGranular("payroll.manage_settings", "payroll");
+  const [editing, setEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"profile" | "documents" | "payroll" | "letters">(
+    search.salary && canViewPayroll ? "payroll" : "profile",
+  );
+  const canEditEmployee = perms.hasGranular("employees.edit", "manage_employees");
+  const isEditing = editing && canEditEmployee;
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
+
+  useEffect(() => {
+    setEditing(search.edit === true && canEditEmployee);
+  }, [search.edit, canEditEmployee]);
 
   const empQ = useQuery({
     queryKey: ["org-employee", uuid],
@@ -143,7 +153,7 @@ function EmployeeDetailPage() {
   const managersQ = useQuery({
     queryKey: ["org-employee-managers", emp?.organization_id],
     queryFn: () => orgService.employees({ limit: 1000 }),
-    enabled: editing,
+    enabled: isEditing,
   });
 
   const original = {
@@ -178,8 +188,8 @@ function EmployeeDetailPage() {
 
   // Reset staged documents when leaving edit mode.
   useEffect(() => {
-    if (!editing) setStagedDocs([]);
-  }, [editing]);
+    if (!isEditing) setStagedDocs([]);
+  }, [isEditing]);
 
   const isFormDirty = (Object.keys(original) as (keyof typeof original)[]).some(
     (k) => form[k] !== original[k]
@@ -253,7 +263,7 @@ function EmployeeDetailPage() {
           title={emp?.full_name ?? "Employee"}
           description="Full employee record"
         actions={
-          editing ? (
+          isEditing ? (
             <>
               <Button variant="ghost" disabled={isLocked} onClick={() => { setForm(original); setStagedDocs([]); setEditing(false); }}>
                 Cancel
@@ -266,12 +276,12 @@ function EmployeeDetailPage() {
                 <Save className="mr-1.5 h-4 w-4" /> Save
               </Button>
             </>
-          ) : (
+          ) : canEditEmployee ? (
             <Button size="sm" disabled={isLocked} onClick={() => setEditing(true)}>
               {isLocked ? <Lock className="mr-1.5 h-3.5 w-3.5" /> : <Pencil className="mr-1.5 h-3.5 w-3.5" />}
               {isLocked ? "Subscription Required" : "Edit"}
             </Button>
-          )
+          ) : null
         }
       />
 
@@ -296,7 +306,7 @@ function EmployeeDetailPage() {
             {([
               ["profile", "Profile"],
               ["documents", "Documents"],
-              ...(isCurrentEmployee(emp.status) ? [["payroll", "Payroll"] as const] : []),
+              ...(isCurrentEmployee(emp.status) && canViewPayroll ? [["payroll", "Payroll"] as const] : []),
               ...(canAccessRoute(user, "/org/hr-letters") && !isModuleFlagOff("hr_letters_management") ? [["letters", "Letters"] as const] : []),
             ] as const).map(([key, label]) => (
               <button
@@ -316,13 +326,15 @@ function EmployeeDetailPage() {
             <DisplayContent
               key={emp.uuid}
               emp={emp}
-              editing={editing}
+              editing={isEditing}
               form={form}
               setForm={setForm}
               original={original}
               designationsQ={designationsQ}
               departmentsQ={departmentsQ}
               managersQ={managersQ}
+              canManageDepartments={perms.hasGranular("employees.manage_departments", "manage_employees")}
+              canManageDesignations={perms.hasGranular("employees.manage_designations", "manage_employees")}
               onManageOptions={setManageType}
             />
           )}
@@ -332,7 +344,7 @@ function EmployeeDetailPage() {
               uuid={uuid}
               docs={docs}
               docsQ={docsQ}
-              editing={editing}
+              editing={isEditing}
               stagedDocs={stagedDocs}
               setStagedDocs={setStagedDocs}
               onUpload={() => uploadDocsMut.mutate()}
@@ -340,12 +352,12 @@ function EmployeeDetailPage() {
             />
           )}
 
-          {activeTab === "payroll" && isCurrentEmployee(emp.status) && (
+          {activeTab === "payroll" && isCurrentEmployee(emp.status) && canViewPayroll && (
             isModuleFlagOff("payroll_management") ? (
               <ModuleFeatureLockedCard feature="payroll_management" />
             ) : (
               <div className="space-y-6">
-                <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
+                <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true && canManagePayroll} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
                 <SalaryComponentsCard uuid={uuid} />
               </div>
             )
@@ -451,8 +463,8 @@ function statusDotClass(status: EmployeeRecord["status"]) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: any; setForm: (f: any) => void; original: any; designationsQ: any; departmentsQ: any; managersQ: any; onManageOptions: (t: "department" | "designation") => void }) {
-  const { emp, editing, form, setForm, designationsQ, departmentsQ, managersQ, onManageOptions } = props;
+function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: any; setForm: (f: any) => void; original: any; designationsQ: any; departmentsQ: any; managersQ: any; canManageDepartments: boolean; canManageDesignations: boolean; onManageOptions: (t: "department" | "designation") => void }) {
+  const { emp, editing, form, setForm, designationsQ, departmentsQ, managersQ, canManageDepartments, canManageDesignations, onManageOptions } = props;
 
   const initials = emp.full_name
     ?.split(" ")
@@ -603,12 +615,12 @@ function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: an
                 label="Designation"
                 value={emp.designation ?? "—"}
                 editing={editing}
-                labelAction={
+                labelAction={canManageDesignations ? (
                   <ManageOptionButton
                     type="designation"
                     onClick={() => onManageOptions("designation")}
                   />
-                }
+                ) : undefined}
                 input={
                   <Select value={form.designation} onValueChange={(v) => setForm({ ...form, designation: v })}>
                     <SelectTrigger>
@@ -640,12 +652,12 @@ function DisplayContent(props: { emp: EmployeeRecord; editing: boolean; form: an
                 label="Department"
                 value={emp.department ?? "—"}
                 editing={editing}
-                labelAction={
+                labelAction={canManageDepartments ? (
                   <ManageOptionButton
                     type="department"
                     onClick={() => onManageOptions("department")}
                   />
-                }
+                ) : undefined}
                 input={
                   <Select value={form.department} onValueChange={(v) => setForm({ ...form, department: v })}>
                     <SelectTrigger>
@@ -908,9 +920,11 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
   const effectiveCurrent = t("team.effectiveCurrent", "Current");
   const qc = useQueryClient();
   const { user } = useAuth();
+  const perms = usePermissions();
+  const canManagePayroll = perms.hasGranular("payroll.manage_settings", "payroll");
   const { isLocked } = useOrgSubscription();
   const canEdit = user?.org_role === "org_admin";
-  const [incrementOpen, setIncrementOpen] = useState(autoOpen);
+  const [incrementOpen, setIncrementOpen] = useState(autoOpen && canManagePayroll);
   const [newSalary, setNewSalary] = useState("");
   const [newEffective, setNewEffective] = useState("");
   const todayDate = localDateInputMin();
@@ -983,10 +997,12 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Salary History</CardTitle>
-          <Button size="sm" disabled={isLocked} onClick={() => setIncrementOpen(true)}>
-            {isLocked ? <Lock className="mr-1 h-3.5 w-3.5" /> : null}
-            {isLocked ? "Subscription Required" : "Increment Salary"}
-          </Button>
+          {canManagePayroll ? (
+            <Button size="sm" disabled={isLocked} onClick={() => setIncrementOpen(true)}>
+              {isLocked ? <Lock className="mr-1 h-3.5 w-3.5" /> : null}
+              {isLocked ? "Subscription Required" : "Increment Salary"}
+            </Button>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>
@@ -1045,7 +1061,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
         )}
       </CardContent>
 
-      <Dialog open={incrementOpen} onOpenChange={(o) => !o && setIncrementOpen(false)}>
+      {canManagePayroll ? <Dialog open={incrementOpen} onOpenChange={(o) => !o && setIncrementOpen(false)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Increment Salary</DialogTitle>
@@ -1089,7 +1105,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
       <Dialog open={!!editingEntry} onOpenChange={(o) => !o && setEditingEntry(null)}>
         <DialogContent className="sm:max-w-sm">
@@ -1174,9 +1190,11 @@ function formatAmount(amount: string | number) {
 
 function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
   const qc = useQueryClient();
-  const { user } = useAuth();
+  const perms = usePermissions();
   const { isLocked } = useOrgSubscription();
-  const canManage = user?.org_role === "org_admin" || user?.org_role === "sub_admin";
+  const { user } = useAuth();
+  const canManage = perms.hasGranular("payroll.manage_employee_components", "payroll")
+    && hasEntireOrganizationScope(user, "payroll");
   const now = new Date();
   const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 

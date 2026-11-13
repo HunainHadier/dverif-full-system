@@ -91,12 +91,12 @@ export function parseFeatureAccess(value) {
  * while new routes can require an exact module.action capability.
  */
 export const GRANULAR_PERMISSION_CATALOG = Object.freeze({
-  employees: ["view", "create", "edit", "archive", "export", "manage_departments", "manage_designations"],
-  document_verification: ["view_requests", "generate_request", "edit_draft", "approve", "reject", "download_documents"],
-  attendance: ["view", "manual_entry", "correct_check_in_out", "manage_ips", "approve_overtime"],
-  leave_management: ["view", "submit_on_behalf", "approve", "reject", "cancel", "allocate_balance", "manage_leave_types"],
-  payroll: ["view", "generate", "manage_settings"],
-  expenses: ["view", "create_own", "approve_employee", "process_payment", "export"],
+  employees: ["view", "create", "edit", "archive", "manage_departments", "manage_designations"],
+  document_verification: ["view_requests", "generate_request", "edit_draft", "approve", "reject"],
+  attendance: ["view", "manual_entry", "correct_check_in_out", "manage_ips"],
+  leave_management: ["view", "approve", "reject", "allocate_balance", "manage_leave_types"],
+  payroll: ["view", "generate", "manage_settings", "manage_employee_components"],
+  expenses: ["view", "create_own", "approve_employee", "process_payment"],
   hr_letters: ["view", "create_draft", "edit_draft", "issue", "revoke", "manage_templates"],
   assets: ["view", "create", "edit", "assign", "return", "retire", "manage_categories"],
   offboarding: ["view", "initiate", "manage_checklist", "draft_settlement", "approve_settlement", "complete_exit"],
@@ -105,13 +105,26 @@ export const GRANULAR_PERMISSION_CATALOG = Object.freeze({
   organization_settings: ["view", "edit"],
 });
 
-export const DATA_SCOPES = Object.freeze(["own_records", "my_team", "entire_organization"]);
+export const DATA_SCOPES = Object.freeze(["own_records", "entire_organization"]);
 
 const GRANULAR_KEYS = new Set(
   Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
     actions.map((action) => `${module}.${action}`),
   ),
 );
+
+const ACTION_REQUIRES_VIEW = Object.freeze({
+  "employees.create": "employees.view",
+  "document_verification.generate_request": "document_verification.view_requests",
+  "leave_management.allocate_balance": "leave_management.view",
+  "payroll.generate": "payroll.view",
+  "payroll.manage_settings": "payroll.view",
+  "payroll.manage_employee_components": "payroll.view",
+  "expenses.create_own": "expenses.view",
+  "hr_letters.create_draft": "hr_letters.view",
+  "assets.create": "assets.view",
+  "recruitment.create_job": "recruitment.view",
+});
 
 // A legacy module grant keeps its former broad access until an Org Admin replaces
 // it with explicit granular grants. New granular permissions always default deny.
@@ -120,22 +133,19 @@ const LEGACY_GRANT_MAP = Object.freeze({
   "attendance.manual_entry": "attendance",
   "attendance.correct_check_in_out": "attendance",
   "attendance.manage_ips": "attendance",
-  "attendance.approve_overtime": "attendance",
   "leave_management.view": "leave",
-  "leave_management.submit_on_behalf": "leave",
   "leave_management.approve": "leave",
   "leave_management.reject": "leave",
-  "leave_management.cancel": "leave",
   "leave_management.allocate_balance": "leave",
   "leave_management.manage_leave_types": "leave",
   "payroll.view": "payroll",
   "payroll.generate": "payroll",
   "payroll.manage_settings": "payroll",
+  "payroll.manage_employee_components": "payroll",
   "employees.view": "manage_employees",
   "employees.create": "manage_employees",
   "employees.edit": "manage_employees",
   "employees.archive": "manage_employees",
-  "employees.export": "manage_employees",
   "employees.manage_departments": "manage_employees",
   "employees.manage_designations": "manage_employees",
   "document_verification.view_requests": "approve_request",
@@ -143,12 +153,10 @@ const LEGACY_GRANT_MAP = Object.freeze({
   "document_verification.edit_draft": "generate_request",
   "document_verification.approve": "approve_request",
   "document_verification.reject": "approve_request",
-  "document_verification.download_documents": "approve_request",
   "expenses.view": "approve_expenses",
   "expenses.create_own": "create_expenses",
   "expenses.approve_employee": "approve_expenses",
   "expenses.process_payment": "approve_expenses",
-  "expenses.export": "approve_expenses",
   "expenses.approve_employee": "approve_expenses",
   "hr_letters.view": "hr_letters",
   "hr_letters.create_draft": "hr_letters",
@@ -190,6 +198,9 @@ export function parseGranularPermissions(value) {
   const grants = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const out = {};
   for (const key of GRANULAR_KEYS) out[key] = grants[key] === true;
+  for (const [action, view] of Object.entries(ACTION_REQUIRES_VIEW)) {
+    if (out[action]) out[view] = true;
+  }
   return out;
 }
 
@@ -205,8 +216,7 @@ export function normalizedFeatureAccess(body = {}) {
   }
   const supplied = body.granular_permissions ?? src.granular_permissions;
   if (supplied && typeof supplied === "object" && !Array.isArray(supplied)) {
-    out.granular_permissions = {};
-    for (const key of GRANULAR_KEYS) out.granular_permissions[key] = supplied[key] === true;
+    out.granular_permissions = parseGranularPermissions({ granular_permissions: supplied });
   }
   const scopes = body.data_scopes ?? src.data_scopes;
   if (scopes && typeof scopes === "object" && !Array.isArray(scopes)) {

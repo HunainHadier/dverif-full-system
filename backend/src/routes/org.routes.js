@@ -36,6 +36,7 @@ import {
   createLeaveType,
   deleteLeaveType,
   listLeaveTypes,
+  listLeaveEmployees,
   listOrgLeaves,
   updateLeaveType,
 } from "../controllers/leave.controller.js";
@@ -123,6 +124,7 @@ import {
   listMissingAttendance,
   listOrgAttendance,
   manualEntry,
+  manualMissingEntry,
   removeAllowedIp,
 } from "../controllers/attendance.controller.js";
 import {
@@ -223,8 +225,8 @@ const employeeView = [...staff, requireModuleFeature("employee_management"), req
 const employeeCreate = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.create")];
 const employeeEdit = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.edit")];
 const employeeArchive = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.archive")];
-const departmentManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_departments"), employeeOrgWideScope];
-const designationManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_designations"), employeeOrgWideScope];
+const departmentManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_departments")];
+const designationManage = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.manage_designations")];
 const attendanceView = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")];
 const attendanceManual = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.manual_entry")];
 const attendanceCorrect = [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.correct_check_in_out")];
@@ -235,6 +237,7 @@ const leaveTypesManage = [...staff, requireModuleFeature("leave_management"), re
 const payrollView = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.view")];
 const payrollGenerateAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.generate")];
 const payrollSettingsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_settings")];
+const payrollEmployeeComponentsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_employee_components")];
 const employeeDataScope = (moduleKey) => async (req, res, next) => {
   try {
     await assertEmployeeInDataScope(req, moduleKey, req.params.uuid);
@@ -330,23 +333,25 @@ router.delete("/designations/:uuid", designationManage, asyncHandler(deleteDesig
 router.get("/leave-types", leaveView, asyncHandler(listLeaveTypes));
 router.post("/leave-types", leaveTypesManage, asyncHandler(createLeaveType));
 router.put("/leave-types/:id", leaveTypesManage, asyncHandler(updateLeaveType));
-router.delete("/leave-types/:id", leaveTypesManage, asyncHandler(deleteLeaveType));
+router.delete("/leave-types/:id", [...leaveTypesManage, requireRole("org_admin")], asyncHandler(deleteLeaveType));
 
+router.get("/leave-employees", leaveView, asyncHandler(listLeaveEmployees));
 router.get("/leaves", leaveView, asyncHandler(listOrgLeaves));
 
 // ---- Leave allocations (staff: allocate/edit balances; history = staff) ----
-router.get("/leave-allocations", leaveView, asyncHandler(listLeaveAllocations));
+router.get("/leave-allocations", leaveAllocate, asyncHandler(listLeaveAllocations));
 router.put("/leave-allocations", leaveAllocate, asyncHandler(setLeaveAllocation));
 router.put("/leave-allocations/designation", [...leaveAllocate, leaveOrgWideScope], asyncHandler(setDesignationLeaveAllocation));
-router.get("/employees/:uuid/leave-allocations", leaveView, asyncHandler(getEmployeeLeaveHistory));
+router.get("/employees/:uuid/leave-allocations", leaveAllocate, asyncHandler(getEmployeeLeaveHistory));
 
 // ---- Attendance (staff: view, add/edit IPs, manual entries; delete IP = org_admin) ----
 router.get("/attendance", attendanceView, asyncHandler(listOrgAttendance));
-router.get("/attendance/missing", attendanceView, asyncHandler(listMissingAttendance));
+router.get("/attendance/missing", attendanceManual, asyncHandler(listMissingAttendance));
 router.get("/attendance/ips", attendanceIps, asyncHandler(getAllowedIps));
 router.post("/attendance/ips", attendanceIps, asyncHandler(addAllowedIp));
 router.delete("/attendance/ips/:id", attendanceIps, asyncHandler(removeAllowedIp));
 router.post("/attendance/manual-entry", attendanceManual, asyncHandler(manualEntry));
+router.post("/attendance/missing/manual-entry", attendanceManual, asyncHandler(manualMissingEntry));
 router.patch("/attendance/:uuid/correction", attendanceCorrect, asyncHandler(correctAttendance));
 
 // ---- Payroll settings and monthly work calendar ----
@@ -378,13 +383,13 @@ router.delete("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, 
 
 // ---- Per-employee salary component assignments (staff) ----
 router.get("/employees/:uuid/salary-components", payrollView, payrollEmployeeScope, asyncHandler(listEmployeeSalaryComponents));
-router.post("/employees/:uuid/salary-components", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(assignEmployeeSalaryComponent));
-router.put("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryComponent));
-router.delete("/employees/:uuid/salary-components/:assignUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(removeEmployeeSalaryComponent));
+router.post("/employees/:uuid/salary-components", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(assignEmployeeSalaryComponent));
+router.put("/employees/:uuid/salary-components/:assignUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryComponent));
+router.delete("/employees/:uuid/salary-components/:assignUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(removeEmployeeSalaryComponent));
 router.get("/employees/:uuid/monthly-salary-variables", payrollView, payrollEmployeeScope, asyncHandler(listMonthlySalaryVariables));
-router.post("/employees/:uuid/monthly-salary-variables", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(createMonthlySalaryVariable));
-router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(updateMonthlySalaryVariable));
-router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(deleteMonthlySalaryVariable));
+router.post("/employees/:uuid/monthly-salary-variables", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(createMonthlySalaryVariable));
+router.put("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(updateMonthlySalaryVariable));
+router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(deleteMonthlySalaryVariable));
 
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
@@ -407,8 +412,8 @@ router.post("/payroll/generate", payrollGenerateAccess, asyncHandler(generatePay
 // a clock event: attendance records that someone was present, this records that
 // the extra hours were authorised.
 router.get("/overtime-requests", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.view")], asyncHandler(listOvertimeRequests));
-router.post("/overtime-requests", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.approve_overtime")], asyncHandler(createOvertimeRequest));
-router.post("/overtime-requests/:uuid/decide", [...staff, requireModuleFeature("attendance_management"), requirePermission("attendance.approve_overtime")], asyncHandler(decideOvertimeRequest));
+router.post("/overtime-requests", attendanceMgmtOwner, asyncHandler(createOvertimeRequest));
+router.post("/overtime-requests/:uuid/decide", attendanceMgmtOwner, asyncHandler(decideOvertimeRequest));
 
 // ---- Offboarding / exit management (staff) ----
 // Gated on separation_management, which already exists as a module flag; no new

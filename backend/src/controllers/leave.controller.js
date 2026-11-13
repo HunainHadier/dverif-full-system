@@ -642,6 +642,20 @@ export async function listOrgLeaves(req, res) {
   return ok(res, paginatedResponse(items, total, page, limit), "Org leave requests");
 }
 
+export async function listLeaveEmployees(req, res) {
+  const scopeFilter = employeeScopeCondition(req, "leave_management", "e");
+  const whereClause = `WHERE e.organization_id = ?${scopeFilter ? ` AND ${scopeFilter.sql}` : ""}`;
+  const params = [req.scopeOrgId, ...(scopeFilter?.params ?? [])];
+  const [rows] = await pool.query(
+    `SELECT e.uuid, e.full_name
+       FROM employees e
+       ${whereClause}
+      ORDER BY e.full_name`,
+    params,
+  );
+  return ok(res, { employees: rows }, "Leave filter employees");
+}
+
 export async function decideLeave(req, res) {
   const { uuid } = req.params;
   const { status } = req.body;

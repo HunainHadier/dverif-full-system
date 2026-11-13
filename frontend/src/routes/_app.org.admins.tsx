@@ -84,16 +84,16 @@ type PermissionPayload = {
   granular_permissions: Record<string, boolean>;
   data_scopes: Record<string, DataScope>;
 };
-type DataScope = "own_records" | "my_team" | "entire_organization";
+type DataScope = "own_records" | "entire_organization";
 
 const PERMISSION_MODULES = [
-  { key: "employees", label: "Employees", actions: [["view","View"],["create","Create"],["edit","Edit"],["archive","Archive"],["export","Export"],["manage_departments","Manage Departments"],["manage_designations","Manage Designations"]] },
-  { key: "document_verification", label: "Document Verification", actions: [["view_requests","View Requests"],["generate_request","Generate Request"],["edit_draft","Edit Draft"],["approve","Approve"],["reject","Reject"],["download_documents","Download Documents"]] },
-  { key: "attendance", label: "Attendance", actions: [["view","View"],["manual_entry","Manual Entry"],["correct_check_in_out","Correct Check-in/out"],["manage_ips","Manage IPs"],["approve_overtime","Approve Overtime"]] },
-  { key: "leave_management", label: "Leave Management", actions: [["view","View"],["submit_on_behalf","Submit on Behalf"],["approve","Approve"],["reject","Reject"],["cancel","Cancel"],["allocate_balance","Allocate Balance"],["manage_leave_types","Manage Leave Types"]] },
-  { key: "payroll", label: "Payroll", actions: [["view","View"],["generate","Generate"],["manage_settings","Manage Payroll Settings"]] },
-  { key: "expenses", label: "Expenses", actions: [["view","View"],["create_own","Create Own Expense"],["approve_employee","Approve Employee Expenses"],["process_payment","Process Payment"],["export","Export"]] },
-  { key: "hr_letters", label: "HR Letters", actions: [["view","View"],["create_draft","Create Draft"],["edit_draft","Edit Draft"],["issue","Issue"],["revoke","Revoke"],["manage_templates","Manage Templates"]] },
+  { key: "employees", label: "Employees", actions: [["view","View"],["create","Create"],["edit","Edit"],["archive","Archive"],["manage_departments","Manage Departments"],["manage_designations","Manage Designations"]] },
+  { key: "document_verification", label: "Document Verification", actions: [["view_requests","View Requests"],["generate_request","Generate Request"],["edit_draft","Edit Draft"],["approve","Approve"],["reject","Reject"]] },
+  { key: "attendance", label: "Attendance", actions: [["view","View"],["manual_entry","Manual Entry"],["correct_check_in_out","Correct Check-in/out"],["manage_ips","Manage IPs"]] },
+  { key: "leave_management", label: "Leave Management", actions: [["view","View"],["approve","Approve"],["reject","Reject"],["allocate_balance","Allocate Balance"],["manage_leave_types","Manage Leave Types"]] },
+  { key: "payroll", label: "Payroll", actions: [["view","View"],["generate","Generate"],["manage_settings","Manage Payroll Settings"],["manage_employee_components","Manage Employee Salary Components"]] },
+  { key: "expenses", label: "Expenses", actions: [["view","View"],["create_own","Create Own Expense"],["approve_employee","Approve Employee Expenses"],["process_payment","Process Payment"]] },
+  { key: "hr_letters", label: "HR Letters", actions: [["view","View"],["create_draft","Create Letter"],["edit_draft","Edit Draft"],["issue","Issue"],["revoke","Revoke"],["manage_templates","Manage Templates"]] },
   { key: "assets", label: "Assets", actions: [["view","View"],["create","Create"],["edit","Edit"],["assign","Assign"],["return","Return"],["retire","Retire"],["manage_categories","Manage Categories"]] },
   { key: "offboarding", label: "Offboarding", actions: [["view","View"],["initiate","Initiate"],["manage_checklist","Manage Checklist"],["draft_settlement","Draft Settlement"],["approve_settlement","Approve Settlement"],["complete_exit","Complete Exit"]] },
   { key: "recruitment", label: "Recruitment", actions: [["view","View"],["create_job","Create Job"],["edit_job","Edit Job"],["manage_candidates","Manage Candidates"],["schedule_interview","Schedule Interview"],["record_feedback","Record Feedback"],["manage_offers","Manage Offers"],["hire","Hire"]] },
@@ -102,6 +102,18 @@ const PERMISSION_MODULES = [
 ] as const;
 
 const ALL_GRANULAR_KEYS = PERMISSION_MODULES.flatMap((module) => module.actions.map(([action]) => `${module.key}.${action}`));
+const ACTION_REQUIRES_VIEW: Record<string, string> = {
+  "employees.create": "employees.view",
+  "document_verification.generate_request": "document_verification.view_requests",
+  "leave_management.allocate_balance": "leave_management.view",
+  "payroll.generate": "payroll.view",
+  "payroll.manage_settings": "payroll.view",
+  "payroll.manage_employee_components": "payroll.view",
+  "expenses.create_own": "expenses.view",
+  "hr_letters.create_draft": "hr_letters.view",
+  "assets.create": "assets.view",
+  "recruitment.create_job": "recruitment.view",
+};
 const EMPTY_PERMISSION_PAYLOAD: PermissionPayload = {
   granular_permissions: Object.fromEntries(ALL_GRANULAR_KEYS.map((key) => [key, false])),
   data_scopes: Object.fromEntries(PERMISSION_MODULES.map((module) => [module.key, "own_records" as DataScope])),
@@ -116,12 +128,12 @@ function permissionAccess(raw?: OrgAdminUserRecord["feature_access"]): Permissio
   const scopes = parsed.data_scopes && typeof parsed.data_scopes === "object"
     ? parsed.data_scopes as Record<string, unknown> : {};
   const legacy: Record<string, string> = {
-    "employees.view":"manage_employees","employees.create":"manage_employees","employees.edit":"manage_employees","employees.archive":"manage_employees","employees.export":"manage_employees","employees.manage_departments":"manage_employees","employees.manage_designations":"manage_employees",
-    "document_verification.view_requests":"approve_request","document_verification.generate_request":"generate_request","document_verification.edit_draft":"generate_request","document_verification.approve":"approve_request","document_verification.reject":"approve_request","document_verification.download_documents":"approve_request",
-    "attendance.view":"attendance","attendance.manual_entry":"attendance","attendance.correct_check_in_out":"attendance","attendance.manage_ips":"attendance","attendance.approve_overtime":"attendance",
-    "leave_management.view":"leave","leave_management.submit_on_behalf":"leave","leave_management.approve":"leave","leave_management.reject":"leave","leave_management.cancel":"leave","leave_management.allocate_balance":"leave","leave_management.manage_leave_types":"leave",
-    "payroll.view":"payroll","payroll.generate":"payroll","payroll.manage_settings":"payroll",
-    "expenses.view":"approve_expenses","expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses","expenses.process_payment":"approve_expenses","expenses.export":"approve_expenses",
+    "employees.view":"manage_employees","employees.create":"manage_employees","employees.edit":"manage_employees","employees.archive":"manage_employees","employees.manage_departments":"manage_employees","employees.manage_designations":"manage_employees",
+    "document_verification.view_requests":"approve_request","document_verification.generate_request":"generate_request","document_verification.edit_draft":"generate_request","document_verification.approve":"approve_request","document_verification.reject":"approve_request",
+    "attendance.view":"attendance","attendance.manual_entry":"attendance","attendance.correct_check_in_out":"attendance","attendance.manage_ips":"attendance",
+    "leave_management.view":"leave","leave_management.approve":"leave","leave_management.reject":"leave","leave_management.allocate_balance":"leave","leave_management.manage_leave_types":"leave",
+    "payroll.view":"payroll","payroll.generate":"payroll","payroll.manage_settings":"payroll","payroll.manage_employee_components":"payroll",
+    "expenses.view":"approve_expenses","expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses","expenses.process_payment":"approve_expenses",
     "hr_letters.view":"hr_letters","hr_letters.create_draft":"hr_letters","hr_letters.edit_draft":"hr_letters","hr_letters.issue":"hr_letters","hr_letters.revoke":"hr_letters","hr_letters.manage_templates":"hr_letters",
     "assets.view":"manage_assets","assets.create":"manage_assets","assets.edit":"manage_assets","assets.assign":"manage_assets","assets.return":"manage_assets","assets.retire":"manage_assets","assets.manage_categories":"manage_assets",
     "offboarding.view":"manage_separation","offboarding.initiate":"manage_separation","offboarding.manage_checklist":"manage_separation","offboarding.draft_settlement":"manage_separation","offboarding.approve_settlement":"manage_separation","offboarding.complete_exit":"manage_separation",
@@ -130,9 +142,12 @@ function permissionAccess(raw?: OrgAdminUserRecord["feature_access"]): Permissio
   const granular_permissions = Object.fromEntries(ALL_GRANULAR_KEYS.map((key) => [
     key, parsed.granular_permissions ? grants[key] === true : Boolean(parsed[legacy[key]]),
   ]));
+  for (const [action, view] of Object.entries(ACTION_REQUIRES_VIEW)) {
+    if (granular_permissions[action]) granular_permissions[view] = true;
+  }
   const data_scopes = Object.fromEntries(PERMISSION_MODULES.map((module) => {
     const scope = scopes[module.key];
-    return [module.key, scope === "my_team" || scope === "entire_organization" ? scope : "own_records"];
+    return [module.key, scope === "entire_organization" ? scope : "own_records"];
   })) as Record<string, DataScope>;
   return { granular_permissions, data_scopes };
 }
@@ -174,10 +189,8 @@ function OrgAdminsPage() {
     mutationFn: ({ uuid, permissions }: { uuid: UUID; permissions: PermissionPayload }) =>
       orgService.adminUsers.update(uuid, permissions),
     onSuccess: () => {
-      toast.success("Sub-admin permissions updated");
       invalidate();
     },
-    onError: (e) => toast.error(apiErrorMessage(e, "Update failed")),
   });
 
   // Pending-invite lifecycle, mirroring the platform /admin/users page. Both are
@@ -512,6 +525,15 @@ function OrgAdminsPage() {
 }
 
 function FeatureCheckboxes({ value, onChange }: { value: PermissionPayload; onChange: (v: PermissionPayload) => void }) {
+  const toggleAction = (key: string, checked: boolean) => {
+    const next = { ...value.granular_permissions, [key]: checked };
+    const requiredView = ACTION_REQUIRES_VIEW[key];
+    if (requiredView && checked) next[requiredView] = true;
+    for (const [action, view] of Object.entries(ACTION_REQUIRES_VIEW)) {
+      if (key === view && !checked) next[action] = false;
+    }
+    onChange({ ...value, granular_permissions: next });
+  };
   const toggleModule = (moduleKey: string, checked: boolean) => {
     const module = PERMISSION_MODULES.find((item) => item.key === moduleKey);
     if (!module) return;
@@ -540,7 +562,7 @@ function FeatureCheckboxes({ value, onChange }: { value: PermissionPayload; onCh
               const key = `${module.key}.${action}`;
               return <label key={key} className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox checked={value.granular_permissions[key] === true}
-                  onCheckedChange={(checked) => onChange({ ...value, granular_permissions: { ...value.granular_permissions, [key]: checked === true }})} />
+                  onCheckedChange={(checked) => toggleAction(key, checked === true)} />
                 <span>{label}</span>
               </label>;
             })}
@@ -550,8 +572,7 @@ function FeatureCheckboxes({ value, onChange }: { value: PermissionPayload; onCh
             <select value={value.data_scopes[module.key] ?? "own_records"}
               onChange={(event) => onChange({ ...value, data_scopes: { ...value.data_scopes, [module.key]: event.target.value as DataScope }})}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="own_records">Own Records</option><option value="my_team">My Team (You + Direct Reports)</option>
-              <option value="entire_organization">Entire Organization</option>
+              <option value="own_records">Own Records</option><option value="entire_organization">Entire Organization</option>
             </select>
           </div>
         </AccordionContent>
@@ -612,10 +633,6 @@ function EditSubAdminPermissionsDialog({
           )}
           <div className="space-y-2 rounded-lg border border-border p-3">
             <Label className="text-sm font-medium">Permissions</Label>
-            <p className="text-xs text-muted-foreground">
-              Sub-admins gain exactly the action permissions you grant here. Changes take effect immediately.
-            </p>
-            <p className="text-xs text-amber-600">Data visibility is enforced by the API for employee-linked records. My Team includes your own records and direct reports. Shared settings, templates, network policy, organization inbox and organization-wide analytics require Entire Organization scope.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
         </div>
@@ -730,7 +747,6 @@ function CreateSubAdminDialog({
             <p className="text-xs text-muted-foreground">
               Sub-admins never get full Org Admin power — they gain exactly the action permissions you grant here.
             </p>
-            <p className="text-xs text-amber-600">Data visibility is enforced by the API for employee-linked records. My Team includes your own records and direct reports. Shared settings, templates, network policy, organization inbox and organization-wide analytics require Entire Organization scope.</p>
             <FeatureCheckboxes value={access} onChange={setAccess} />
           </div>
 

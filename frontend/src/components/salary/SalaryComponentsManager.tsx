@@ -59,10 +59,10 @@ function TypeBadge({ type }: { type: "allowance" | "deduction" }) {
   );
 }
 
-export function SalaryComponentsManager() {
+export function SalaryComponentsManager({ canManage }: { canManage: boolean }) {
   const { user } = useAuth();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
-  const canManage = user?.org_role === "org_admin";
+  const canDelete = user?.org_role === "org_admin";
   const { t } = useTranslation();
   const qc = useQueryClient();
 
@@ -149,10 +149,10 @@ export function SalaryComponentsManager() {
         title={t("payrollComponents.title")}
         description={t("payrollComponents.desc")}
         actions={
-          <Button size="sm" disabled={isLocked} onClick={openCreate}>
+          canManage ? <Button size="sm" disabled={isLocked} onClick={openCreate}>
             {isLocked ? <Lock className="mr-1.5 h-3.5 w-3.5" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}
             {isLocked ? "Subscription Required" : t("payrollComponents.addComponent")}
-          </Button>
+          </Button> : null
         }
       />
 
@@ -208,11 +208,11 @@ export function SalaryComponentsManager() {
                     </TableCell>
                     <TableCell data-label={t("payrollComponents.status")}>
                       <div className="flex items-center gap-2">
-                        <Switch
+                        {canManage ? <Switch
                           checked={!!c.is_active}
-                          disabled={isLocked || !canManage || toggleMut.isPending}
+                          disabled={isLocked || toggleMut.isPending}
                           onCheckedChange={() => toggleMut.mutate(c.uuid)}
-                        />
+                        /> : null}
                         <span className="text-xs text-muted-foreground">
                           {c.is_active
                             ? t("payrollComponents.active")
@@ -222,10 +222,10 @@ export function SalaryComponentsManager() {
                     </TableCell>
                     <TableCell data-label="Actions" className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button size="icon" variant="ghost" className="h-8 w-8" disabled={isLocked} onClick={() => openEdit(c)}>
+                        {canManage ? <Button size="icon" variant="ghost" className="h-8 w-8" disabled={isLocked} onClick={() => openEdit(c)}>
                           {isLocked ? <Lock className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-                        </Button>
-                        {canManage ? (
+                        </Button> : null}
+                        {canDelete ? (
                           <Button
                             size="icon"
                             variant="ghost"

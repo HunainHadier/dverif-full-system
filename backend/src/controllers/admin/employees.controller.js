@@ -11,7 +11,8 @@ import { sendInviteEmail } from "../../utils/mailer.js";
 import { firstFrontendUrl } from "../../utils/frontendUrl.js";
 import { logAudit, getActorFromReq } from "../../utils/auditLog.js";
 import { applyDesignationLeavePolicies } from "../../utils/designationLeavePolicy.js";
-import { STAFF_ROLES, assertRole, ROLE_ORG_ADMIN } from "../../utils/roles.js";
+import { STAFF_ROLES, assertRole } from "../../utils/roles.js";
+import { hasPermission } from "../../utils/permissions.js";
 import { cnicError, isValidPhone as isValidContactPhone, normalizeCnic } from "../../utils/contactFormat.js";
 
 const EMPLOYEE_SELECT = `SELECT e.id, e.uuid, e.employee_code, e.organization_id, e.full_name, e.email, e.phone,
@@ -196,8 +197,15 @@ function normalizeEmployeePayload(body) {
 
 export async function createEmployee(req, res) {
   assertRole(req.user, STAFF_ROLES);
-  const scope = await resolveScopeOrganization(req);
   const data = normalizeEmployeePayload(req.body);
+  if (
+    data.current_salary !== null &&
+    !req.admin &&
+    !hasPermission(req.user, "payroll.manage_settings")
+  ) {
+    throw new ApiError(403, "You do not have permission to set employee salary");
+  }
+  const scope = await resolveScopeOrganization(req);
 
   let orgId;
   if (scope.scoped) {
@@ -497,34 +505,6 @@ export async function listEmployees(req, res) {
   if (scope.scoped) {
     conditions.push("e.organization_id = ?");
     params.push(scope.orgId);
-    // Per-admin visibility: each org_admin sees only the employee records THEY
-    // personally added. Platform admins are unfiltered.
-    //
-    // Deliberately NOT applied to sub-admins. A sub-admin is staff
-    // (STAFF_ROLES = [org_admin, sub_admin]) and is documented as sharing the
-    // org_admin's operational access, differing only in that it cannot delete
-    // anything, manage sub-admins, or touch org settings. Applying this filter to
-    // them made the Employees page permanently empty for them: the roster belongs
-    // to the org_admin who imported it, so a sub-admin's list was filtered down to
-    // nothing while their granted 'manage_employees' permission appeared to do
-    // nothing at all. A sub-admin sees the whole org roster, which is also what
-    // makes their approve/generate work meaningful — they need to see the people
-    // whose documents they are reviewing.
-    //
-    // ?scope=org opts OUT of it, and only out of it. The organization_id
-    // predicate above is unconditional, so this widens visibility WITHIN the
-    // caller's own org and can never reach another tenant.
-    //
-    // The asset Assign picker needs that: it is a picker over the company roster,
-    // not a work queue of "records I imported". With the filter applied, an
-    // org_admin physically could not hand a laptop to a colleague another admin
-    // had onboarded — the picker showed no such person, and the only visible
-    // symptom was that the company's own employees seemed not to exist.
-    const orgWide = req.query.scope === "org";
-    if (req.user.org_role === ROLE_ORG_ADMIN && !orgWide) {
-      conditions.push("e.added_by_uuid = ?");
-      params.push(req.user.uuid);
-    }
   }
 
   const employeeDataScope = employeeScopeCondition(req, "employees", "e");

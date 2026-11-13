@@ -352,10 +352,8 @@ type ScheduleForm = {
  * user's typing rather than at the form. A control that cannot be filled correctly by
  * knowing what the thing is should not exist.
  *
- * `scope: "org"` on the lookup is load-bearing. Without it an org_admin sees only the
- * employee records they personally added, so a colleague another admin onboarded does
- * not exist as far as this picker is concerned — and the interviewer list silently
- * omits most of the company.
+ * The explicit organization-roster scope is retained for compatibility with the
+ * picker API; the server enforces the tenant boundary and any sub-admin data scope.
  *
  * The interviewer stays OPTIONAL on purpose. `interviewer_uuid: undefined` is allowed
  * by the server (an interview can be booked before a panel is assigned), which is a

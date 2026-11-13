@@ -13,6 +13,7 @@ import {
   checkOut,
   correctAttendance,
   listMissingAttendance,
+  manualMissingEntry,
 } from "../src/controllers/attendance.controller.js";
 
 const ORG_ID = 7;
@@ -298,6 +299,123 @@ describe("admin attendance correction", () => {
 });
 
 describe("missing attendance API", () => {
+  it("allows an authorized missing-day entry beyond the normal backdate window only for a scheduled missing day", async () => {
+    pool.query.mockImplementation(async (sql) => {
+      const statement = String(sql);
+      if (statement.includes("SELECT uuid, organization_id, linked_user_uuid")) {
+        return [[{
+          uuid: EMPLOYEE_UUID,
+          organization_id: ORG_ID,
+          linked_user_uuid: null,
+          full_name: "Employee",
+          status: "current_employee",
+          joining_date: "2020-01-01",
+        }]];
+      }
+      if (statement.includes("FROM organization_monthly_work_schedules s")) return [[{ eligible: 1 }]];
+      if (statement.startsWith("INSERT INTO attendance_records")) return [{ affectedRows: 1 }];
+      if (statement.includes("WHERE ar.employee_uuid=? AND ar.date=?")) {
+        return [[{
+          uuid: ATTENDANCE_UUID,
+          employee_uuid: EMPLOYEE_UUID,
+          organization_id: ORG_ID,
+          date: "2026-10-01",
+          check_in_at: "2026-10-01 09:00:00",
+          check_out_at: null,
+          status: "checked_in",
+          is_manual: "yes",
+          break_duration_minutes: 0,
+        }]];
+      }
+      throw new Error(`Unexpected query: ${statement}`);
+    });
+    const req = request({
+      employee_uuid: EMPLOYEE_UUID,
+      date: "2026-10-01",
+      check_in_time: "09:00",
+      reason: "Approved missing attendance",
+    });
+    req.user.org_role = "org_admin";
+    const res = response();
+
+    await manualMissingEntry(req, res);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.body.message).toBe("Manual attendance entry added");
+    const missingCheck = pool.query.mock.calls.find(([sql]) => String(sql).includes("FROM organization_monthly_work_schedules s"))[0];
+    expect(missingCheck).toContain("NOT EXISTS");
+    expect(missingCheck).toContain("FROM attendance_records ar");
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "attendance.manual_entry",
+      details: expect.objectContaining({ date: "2026-10-01" }),
+    }));
+  });
+
+  it("rejects a historical missing-entry request unless the day is scheduled and still missing", async () => {
+    pool.query.mockImplementation(async (sql) => {
+      const statement = String(sql);
+      if (statement.includes("SELECT uuid, organization_id, linked_user_uuid")) {
+        return [[{
+          uuid: EMPLOYEE_UUID,
+          organization_id: ORG_ID,
+          linked_user_uuid: null,
+          full_name: "Employee",
+          status: "current_employee",
+          joining_date: "2020-01-01",
+        }]];
+      }
+      if (statement.includes("FROM organization_monthly_work_schedules s")) return [[]];
+      throw new Error(`Unexpected query: ${statement}`);
+    });
+    const req = request({
+      employee_uuid: EMPLOYEE_UUID,
+      date: "2026-10-01",
+      check_in_time: "09:00",
+      reason: "Approved missing attendance",
+    });
+    req.user.org_role = "org_admin";
+
+    await expect(manualMissingEntry(req, response())).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringContaining("scheduled working day"),
+    });
+  });
+
+  it("returns a conflict if another request inserts attendance after the missing-day check", async () => {
+    pool.query.mockImplementation(async (sql) => {
+      const statement = String(sql);
+      if (statement.includes("SELECT uuid, organization_id, linked_user_uuid")) {
+        return [[{
+          uuid: EMPLOYEE_UUID,
+          organization_id: ORG_ID,
+          linked_user_uuid: null,
+          full_name: "Employee",
+          status: "current_employee",
+          joining_date: "2020-01-01",
+        }]];
+      }
+      if (statement.includes("FROM organization_monthly_work_schedules s")) return [[{ eligible: 1 }]];
+      if (statement.startsWith("INSERT INTO attendance_records")) {
+        const duplicate = new Error("Duplicate entry for employee/date");
+        duplicate.code = "ER_DUP_ENTRY";
+        throw duplicate;
+      }
+      throw new Error(`Unexpected query: ${statement}`);
+    });
+    const req = request({
+      employee_uuid: EMPLOYEE_UUID,
+      date: "2026-10-01",
+      check_in_time: "09:00",
+      reason: "Approved missing attendance",
+    });
+    req.user.org_role = "org_admin";
+
+    await expect(manualMissingEntry(req, response())).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("already exists"),
+    });
+  });
+
   it("lists only scheduled working days with no existing record", async () => {
     setup();
     pool.query.mockImplementation(async (sql) => {

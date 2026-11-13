@@ -532,6 +532,9 @@ function EmployeeFormDialog({
   const isEdit = !!editing;
   const { user } = useAuth();
   const canEdit = user?.role === "admin" || hasGranularPermission(user, "employees.edit", "manage_employees");
+  const canManageDepartments = user?.role === "admin" || hasGranularPermission(user, "employees.manage_departments", "manage_employees");
+  const canManageDesignations = user?.role === "admin" || hasGranularPermission(user, "employees.manage_designations", "manage_employees");
+  const canManagePayroll = user?.role === "admin" || hasGranularPermission(user, "payroll.manage_settings", "payroll");
 
   const [form, setForm] = useState({
     full_name: editing?.full_name ?? "",
@@ -849,13 +852,13 @@ function EmployeeFormDialog({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>Designation</Label>
-                <button
+                {canManageDesignations ? <button
                   type="button"
                   className="text-xs text-primary hover:underline"
                   onClick={() => setManageType("designation")}
                 >
                   Manage
-                </button>
+                </button> : null}
               </div>
               <Select value={form.designation} onValueChange={(v) => setForm({ ...form, designation: v })}>
                 <SelectTrigger>
@@ -871,13 +874,13 @@ function EmployeeFormDialog({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>Department</Label>
-                <button
+                {canManageDepartments ? <button
                   type="button"
                   className="text-xs text-primary hover:underline"
                   onClick={() => setManageType("department")}
                 >
                   Manage
-                </button>
+                </button> : null}
               </div>
               <Select value={form.department} onValueChange={(v) => setForm({ ...form, department: v })}>
                 <SelectTrigger>
@@ -935,9 +938,9 @@ function EmployeeFormDialog({
               Workdays and payroll rules follow the confirmed organization schedule.
             </p>
           )}
-          {!isEdit ? <h3 className="border-b pb-1 pt-1 text-sm font-semibold">Payroll Setup</h3> : null}
+          {!isEdit && canManagePayroll ? <h3 className="border-b pb-1 pt-1 text-sm font-semibold">Payroll Setup</h3> : null}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {!isEdit && (
+            {!isEdit && canManagePayroll && (
               <div className="space-y-1.5">
                 <Label>Starting Basic Salary</Label>
                 <Input
@@ -1086,8 +1089,6 @@ function EmployeeFormDialog({
     </Dialog>
   );
 }
-
-
 
 
 

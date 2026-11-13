@@ -235,16 +235,11 @@ describe("asset actions match the server's transitions", () => {
 });
 
 describe("the Assign picker can reach the whole company", () => {
-  it("asks for the org roster, not just the records this admin imported", () => {
-    // By default an org_admin's employee list is filtered to what they personally
-    // added, which is right for the Employees page and wrong for a picker over
-    // the company: a colleague another admin onboarded was not hidden behind a
-    // "show more", they were absent, so the only symptom was that the company's
-    // own employees seemed not to exist.
+  it("retains the explicit roster-picker scope", () => {
     expect(ASSETS_PAGE).toMatch(/orgService\.employees\(\{[^}]*scope: "org"/);
   });
 
-  it("the service can express the opt-out", () => {
+  it("the service supports the legacy picker scope", () => {
     expect(ORG_SERVICE).toMatch(/scope\?:\s*"org"/);
   });
 });

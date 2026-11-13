@@ -873,10 +873,8 @@ function ActionDialog({
   // count is surfaced, so a capped list can never read as "that is everyone".
   const employees = useQuery({
     queryKey: ["org-employees", "asset-assign"],
-    // scope=org: the default list is "employee records I personally added", which
-    // is a work queue for the Employees page and the wrong set for a picker over
-    // the company. Without it an org_admin cannot hand a laptop to a colleague
-    // another admin onboarded - the person is not merely hidden, they are absent.
+    // Keep the explicit roster-picker scope for compatibility; the API still
+    // enforces the caller's organization and any sub-admin data scope.
     queryFn: () => orgService.employees({ page: 1, limit: 100, scope: "org" }),
     enabled: kind === "assign" && Boolean(asset),
   });

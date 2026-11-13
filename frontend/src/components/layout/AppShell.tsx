@@ -114,6 +114,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryKey: ["me-sync"],
     queryFn: () => authService.me(),
     enabled: mounted && !!user && !isAdmin,
+    refetchInterval: user?.org_role === "sub_admin" ? 30_000 : false,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 
