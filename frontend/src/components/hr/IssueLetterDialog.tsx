@@ -34,12 +34,14 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 export function IssueLetterDialog({
   letter,
   open,
+  canSaveDraft = true,
   onOpenChange,
   onIssued,
   onDraftSaved,
 }: {
   letter: HrLetterListItem | null;
   open: boolean;
+  canSaveDraft?: boolean;
   onOpenChange: (open: boolean) => void;
   onIssued: () => void;
   onDraftSaved: () => void;
@@ -291,14 +293,16 @@ export function IssueLetterDialog({
           >
             {t("hr.formDialog.cancel")}
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => saveDraft.mutate()}
-            disabled={!draftReady || saveDraft.isPending || issue.isPending}
-          >
-            {saveDraft.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {t("letters.saveDraft")}
-          </Button>
+          {canSaveDraft ? (
+            <Button
+              variant="outline"
+              onClick={() => saveDraft.mutate()}
+              disabled={!draftReady || saveDraft.isPending || issue.isPending}
+            >
+              {saveDraft.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t("letters.saveDraft")}
+            </Button>
+          ) : null}
           <Button
             onClick={() => issue.mutate()}
             disabled={blocked || !hasTemplate || issue.isPending || saveDraft.isPending}

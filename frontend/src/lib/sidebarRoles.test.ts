@@ -68,9 +68,13 @@ function user(over: Partial<AuthUser> = {}): AuthUser {
 const allFeatures: FeatureAccessMap = Object.fromEntries(
   FEATURE_KEYS.map((k) => [k, true]),
 ) as FeatureAccessMap;
+const staffFeatures = {
+  ...allFeatures,
+  data_scopes: { hr_letters: "entire_organization" },
+} as unknown as FeatureAccessMap;
 
 const orgAdmin = user({ org_role: "org_admin", feature_access: allFeatures });
-const staff = user({ org_role: "sub_admin", feature_access: allFeatures });
+const staff = user({ org_role: "sub_admin", feature_access: staffFeatures });
 const employee = user({ org_role: "employee", feature_access: allFeatures });
 /** Platform admin. Distinct from org_admin: no org, and the platform area's own menus. */
 const platformAdmin = user({ role: "admin", org_role: undefined, feature_access: allFeatures });
@@ -85,18 +89,15 @@ describe("staff primary menu is management only", () => {
   it.each([
     ["org_admin", orgAdmin],
     ["sub_admin", staff],
-  ])("%s sees no ROSTER-ONLY link, because they have no employee record", (_role, u) => {
+  ])("%s is kept out of other employee self-service links", (_role, u) => {
     const shown = paths(primaryNavItemsFor(u.org_role));
-    // /my-assets, /my-expenses and /my-resignation resolve the caller to an employee
-    // row, and a manager has none — `callerEmployee` returns null and the handler
-    // answers with an EMPTY list rather than a 403. So these are not features for
-    // them, and a link would promise a page they cannot populate.
+    // Assets and resignation require an employee row. My Expenses is separately
+    // permission-gated and covered below.
     //
     // /requests is deliberately NOT in this list: it needs no employee record and is
     // shown to everyone now that the Personal ESS group is gone.
     for (const p of [
       "/my-assets",
-      "/my-expenses",
       "/my-resignation",
       "/attendance",
       "/my-letters",
@@ -104,6 +105,9 @@ describe("staff primary menu is management only", () => {
       "/leaves",
     ]) {
       expect(shown, `${p} is still in the management menu`).not.toContain(p);
+    }
+    if (u.org_role === "org_admin") {
+      expect(canAccessRoute(u, "/my-expenses")).toBe(false);
     }
   });
 
@@ -164,6 +168,19 @@ describe("staff primary menu is management only", () => {
     expect(shown.indexOf("/org/expense-claims")).toBeLessThan(shown.indexOf("/org/assets"));
     expect(shown.indexOf("/org/assets")).toBeLessThan(shown.indexOf("/org/offboarding"));
   });
+
+  it("gives sub-admins a separate My Expenses page only with Create Own Expense", () => {
+    expect(paths(primaryNavItemsFor("sub_admin"))).toContain("/my-expenses");
+    expect(canAccessRoute(staff, "/my-expenses")).toBe(true);
+
+    const noOwnExpense = user({
+      org_role: "sub_admin",
+      feature_access: {
+        granular_permissions: { "expenses.create_own": false },
+      } as unknown as AuthUser["feature_access"],
+    });
+    expect(canAccessRoute(noOwnExpense, "/my-expenses")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -184,7 +201,9 @@ describe("employee menu is self-service only", () => {
     ]) {
       expect(shown, `${p} missing from the employee menu`).toContain(p);
     }
-    for (const p of orgAdminNavItems.map((i) => i.to)) {
+    for (const p of orgAdminNavItems.map((i) => i.to).filter(
+      (p) => p !== "/my-expenses" && p !== "/my-interviews",
+    )) {
       expect(shown, `${p} leaked into the employee menu`).not.toContain(p);
     }
   });
@@ -277,8 +296,12 @@ describe("separation hides, it does not delete", () => {
     // The default is the safe one: a newly added operational page appearing in the
     // staff menu is correct, and appearing in an employee's menu would be a leak.
     // /dashboard is excluded because it is deliberately cross-cutting.
+    const employeeAndStaffPages = new Set(["/my-expenses", "/my-interviews"]);
     const untagged = [...userNavItems, ...memberNavItems, ...orgAdminNavItems].filter(
-      (i) => i.audience === undefined && i.to !== "/dashboard",
+      (i) =>
+        i.audience === undefined
+        && i.to !== "/dashboard"
+        && !employeeAndStaffPages.has(i.to),
     );
     expect(untagged.length).toBeGreaterThan(0);
     const shown = new Set(paths(primaryNavItemsFor("employee")));
@@ -288,10 +311,8 @@ describe("separation hides, it does not delete", () => {
     }
   });
 
-  it("orgAdminNavItems carries no self-service item by accident", () => {
-    for (const it of orgAdminNavItems) {
-      expect(it.audience, `${it.to} is tagged self-service inside the org list`).toBeUndefined();
-    }
+  it("keeps the separate My Expenses destination in the staff menu", () => {
+    expect(paths(orgAdminNavItems)).toContain("/my-expenses");
   });
 });
 

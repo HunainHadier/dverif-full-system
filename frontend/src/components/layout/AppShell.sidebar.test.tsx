@@ -145,15 +145,13 @@ function primaryNav() {
 }
 
 /**
- * Pages that need an employee record of their own, so they cannot appear in a staff
- * member's menu.
+ * Personal pages unavailable to an org_admin.
  *
- * /my-assets, /my-expenses and /my-resignation resolve the caller to an employee row;
- * `callerEmployee` returns null for an org_admin and the handler answers with an EMPTY
- * list rather than a 403. /requests is here only because it is the assertion's subject
- * below — it needs no employee record and IS shown to everyone.
+ * Org-admins cannot file personal claims; /my-expenses is shown to employees and to
+ * sub-admins with Create Own Expense. /requests is not in this list because it needs
+ * no employee record and is shown to everyone.
  */
-const ROSTER_ONLY_PATHS = ["/my-assets", "/my-expenses", "/my-resignation"];
+const ORG_ADMIN_PERSONAL_PATHS = ["/my-assets", "/my-expenses", "/my-resignation"];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -179,9 +177,31 @@ describe("the org_admin sidebar renders management modules only", () => {
   it("shows NO personal employee link in the primary nav", () => {
     renderSidebarFor(orgAdmin);
     const nav = primaryNav();
-    for (const p of ROSTER_ONLY_PATHS) {
+    for (const p of ORG_ADMIN_PERSONAL_PATHS) {
       expect(within(nav).queryByTestId(`link-${p}`), `${p} is in the primary nav`).toBeNull();
     }
+  });
+
+  it("shows My Expenses to a sub-admin with Create Own Expense", () => {
+    const subAdmin = user({
+      org_role: "sub_admin",
+      feature_access: {
+        granular_permissions: { "expenses.create_own": true },
+      } as unknown as AuthUser["feature_access"],
+    });
+    renderSidebarFor(subAdmin);
+    expect(within(primaryNav()).getByTestId("link-/my-expenses")).toBeInTheDocument();
+  });
+
+  it("hides My Expenses from a sub-admin without Create Own Expense", () => {
+    const subAdmin = user({
+      org_role: "sub_admin",
+      feature_access: {
+        granular_permissions: { "expenses.create_own": false },
+      } as unknown as AuthUser["feature_access"],
+    });
+    renderSidebarFor(subAdmin);
+    expect(within(primaryNav()).queryByTestId("link-/my-expenses")).toBeNull();
   });
 
   it("shows My Requests in the primary nav, plainly and not in a dropdown", async () => {

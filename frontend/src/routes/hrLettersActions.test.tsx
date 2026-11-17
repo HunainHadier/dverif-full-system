@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { authStore, type AuthUser } from "@/lib/auth";
 
 /**
  * Guards the two things the actions menu must never get wrong:
@@ -145,6 +146,14 @@ function SavedDraftDialogHarness() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  authStore.setSession("test-access-token", {
+    uuid: "org-admin",
+    full_name: "Org Admin",
+    email: "admin@example.com",
+    role: "user",
+    org_role: "org_admin",
+    organization: 1,
+  });
   update.mockReset();
   update.mockResolvedValue({} as never);
   // mockReset, not just clearAllMocks: clear leaves the implementation intact,
@@ -152,6 +161,18 @@ beforeEach(() => {
   preview.mockReset();
   preview.mockImplementation(previewImpl);
 });
+
+afterEach(() => authStore.clear());
+
+function setSubAdminPermissions(grants: Record<string, boolean>) {
+  const user = authStore.get().user!;
+  authStore.updateUser({
+    ...user,
+    role: "user",
+    org_role: "sub_admin",
+    feature_access: { granular_permissions: grants } as unknown as AuthUser["feature_access"],
+  });
+}
 
 /** Open one row's dropdown; returns the user so the caller can keep clicking. */
 async function openRow(index: number) {
@@ -197,6 +218,39 @@ describe("actions offered per status", () => {
     await openRow(2);
 
     await waitFor(() => expect(screen.getByText("Revert to Draft")).toBeInTheDocument());
+  });
+
+  it("view-only access does not expose draft actions or revoke", async () => {
+    setSubAdminPermissions({
+      "hr_letters.view": true,
+      "hr_letters.create_draft": false,
+      "hr_letters.edit_draft": false,
+      "hr_letters.issue": false,
+      "hr_letters.revoke": false,
+      "hr_letters.manage_templates": false,
+    });
+    const user = userEvent.setup();
+    render(<Harness />);
+    const rows = screen.getAllByRole("row");
+
+    expect(within(rows[0]).queryByRole("button", { name: /actions/i })).not.toBeInTheDocument();
+
+    await user.click(within(rows[1]).getByRole("button", { name: /actions/i }));
+    expect(await screen.findByText("Download PDF")).toBeInTheDocument();
+    expect(screen.queryByText("Revoke letter")).not.toBeInTheDocument();
+  });
+
+  it("issue-only access permits issuing but does not permit editing the draft", async () => {
+    setSubAdminPermissions({ "hr_letters.issue": true });
+    render(<Harness />);
+    const user = await openRow(0);
+
+    expect(await screen.findByText("Issue Letter")).toBeInTheDocument();
+    expect(screen.queryByText("Edit Draft")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete Draft")).not.toBeInTheDocument();
+    await user.click(screen.getByText("Issue Letter"));
+    expect(await screen.findByRole("button", { name: /issue letter/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save draft/i })).not.toBeInTheDocument();
   });
 });
 

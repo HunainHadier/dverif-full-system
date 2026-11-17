@@ -79,13 +79,8 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
  * hidden on every row the payroll owns: a menu item whose only possible outcome
  * is a 409 teaches people the page is broken.
  *
- * THERE IS NO "NEW CLAIM" BUTTON, AND THAT IS THE POLICY. An org_admin reaches
- * this page through a gate that makes them unconditionally `approve_expenses`, so
- * a create control here would hand the one account that can rubber-stamp every
- * reimbursement the power to originate one - approving its own. Staff adjudicate
- * claims (review); they do not spend the company's money by filing against an
- * employee of their choosing. Employees file from /my-expenses, where the server
- * derives the claimant from the session.
+ * THIS QUEUE DOES NOT CREATE CLAIMS. Employees and permitted sub-admins file
+ * their own claims from /my-expenses, where the server derives the claimant.
  */
 function ExpenseClaimsPage() {
   const { t } = useTranslation();

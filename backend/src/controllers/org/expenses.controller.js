@@ -86,6 +86,9 @@ export async function reviewExpenseClaim(req, res) {
   if (isSubAdmin) {
     const employee = await callerEmployee(req.scopeOrgId, req);
     const claim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+    if (claim.created_by === req.user.uuid) {
+      throw new ApiError(403, "A sub-admin cannot approve or reject their own expense claim");
+    }
     await assertEmployeeInDataScope(req, "expenses", claim.employee_uuid);
     if (employee && employee.uuid === claim.employee_uuid) {
       throw new ApiError(403, "A sub-admin cannot approve or reject their own expense claim");
@@ -116,6 +119,12 @@ export async function reviewExpenseClaim(req, res) {
 
 export async function payExpenseClaim(req, res) {
   const existingClaim = await getClaim({ orgId: req.scopeOrgId, claimUuid: req.params.uuid });
+  if (
+    req.user?.org_role === "sub_admin"
+    && existingClaim.created_by === req.user.uuid
+  ) {
+    throw new ApiError(403, "A sub-admin cannot pay their own expense claim");
+  }
   await assertEmployeeInDataScope(req, "expenses", existingClaim.employee_uuid);
   const claim = await markClaimPaid({
     orgId: req.scopeOrgId,
@@ -138,6 +147,12 @@ export async function bulkPayExpenseClaims(req, res) {
   const claimUuids = Array.isArray(req.body?.claim_uuids) ? req.body.claim_uuids : [];
   for (const claimUuid of claimUuids) {
     const existingClaim = await getClaim({ orgId: req.scopeOrgId, claimUuid });
+    if (
+      req.user?.org_role === "sub_admin"
+      && existingClaim.created_by === req.user.uuid
+    ) {
+      throw new ApiError(403, "A sub-admin cannot pay their own expense claim");
+    }
     await assertEmployeeInDataScope(req, "expenses", existingClaim.employee_uuid);
   }
   const result = await bulkMarkClaimsPaid({
@@ -209,7 +224,7 @@ export async function downloadExpenseReceipt(req, res) {
 // ---------------------------------------------------------------------------
 
 /**
- * The employee's own claims, and nothing else's.
+ * The caller's own claims, and nothing else's.
  *
  * Derived from the session rather than from a parameter, because "list claims for
  * a colleague" is not a feature.
@@ -217,14 +232,11 @@ export async function downloadExpenseReceipt(req, res) {
 export async function myExpenseClaims(req, res) {
   const orgId = req.scopeOrgId ?? req.user?.organization;
   const employee = await callerEmployee(orgId, req);
-  if (!employee) {
-    return ok(res, { items: [], total: 0, page: 1, limit: 20 }, "No claims");
-  }
-
   const { page, limit, offset } = parsePagination(req.query);
   const result = await listClaims({
     orgId,
-    employeeUuid: employee.uuid,
+    employeeUuid: employee?.uuid,
+    createdByUuid: req.user?.uuid,
     status: req.query.status,
     page,
     limit,
@@ -239,11 +251,12 @@ export async function submitMyExpenseClaim(req, res) {
   if (!["employee", "org_admin", "sub_admin"].includes(req.user?.org_role)) {
     throw new ApiError(403, "This account cannot create an employee expense claim");
   }
-  if (isSubAdmin && !hasPermission(req.user, "create_expenses")) {
-    throw new ApiError(403, "You do not have the 'create_expenses' permission");
+  if (isSubAdmin && !hasPermission(req.user, "expenses.create_own")) {
+    throw new ApiError(403, "You do not have the 'expenses.create_own' permission");
   }
   const employee = await callerEmployee(orgId, req);
-  if (!employee) {
+  const standaloneSubAdmin = isSubAdmin && !employee;
+  if (!employee && !standaloneSubAdmin) {
     throw new ApiError(
       403,
       "Your account is not linked to an employee record, so it cannot file an expense claim",
@@ -260,12 +273,13 @@ export async function submitMyExpenseClaim(req, res) {
     const claim = await createClaim({
       orgId,
       actorUuid: req.user?.uuid ?? null,
-      employeeUuid: employee.uuid,
+      employeeUuid: employee?.uuid ?? null,
+      employeeName: employee?.full_name ?? req.user?.full_name,
       expenseName: req.body?.expense_name,
       amount: req.body?.amount,
       expenseDate: req.body?.expense_date,
       description: req.body?.description,
-      paymentMode: req.body?.payment_mode,
+      paymentMode: standaloneSubAdmin ? "direct" : req.body?.payment_mode,
       conn,
     });
     claimUuid = claim.uuid;
@@ -316,12 +330,14 @@ export async function submitMyExpenseClaim(req, res) {
 export async function myExpenseClaimDetail(req, res) {
   const orgId = req.scopeOrgId ?? req.user?.organization;
   const employee = await callerEmployee(orgId, req);
-  if (!employee) throw new ApiError(403, "Your account is not linked to an employee record");
 
   // loadClaim already scopes by org; the ownership check on top is what stops an
-  // employee opening a colleague's claim by uuid.
+  // account opening someone else's claim by uuid.
   const claim = await getClaim({ orgId, claimUuid: req.params.uuid });
-  if (claim.employee_uuid !== employee.uuid) {
+  if (
+    claim.created_by !== req.user?.uuid
+    && (!employee || claim.employee_uuid !== employee.uuid)
+  ) {
     throw new ApiError(404, "Expense claim not found");
   }
   assertUuid(req.params.uuid, "Claim UUID");
@@ -342,11 +358,11 @@ export async function myExpenseClaimDetail(req, res) {
  */
 async function callersOwnClaim(orgId, req, claimUuid) {
   const employee = await callerEmployee(orgId, req);
-  if (!employee) {
-    throw new ApiError(403, "Your account is not linked to an employee record");
-  }
   const claim = await getClaim({ orgId, claimUuid });
-  if (claim.employee_uuid !== employee.uuid) {
+  if (
+    claim.created_by !== req.user?.uuid
+    && (!employee || claim.employee_uuid !== employee.uuid)
+  ) {
     throw new ApiError(404, "Expense claim not found");
   }
   return { employee, claim };

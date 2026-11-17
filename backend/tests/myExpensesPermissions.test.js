@@ -56,6 +56,17 @@ describe("self-service expense creation authorization", () => {
     expect(response.status).toBe(201);
   });
 
+  it("allows a Sub Admin with the granular Create Own Expense grant", async () => {
+    const response = await request(app())
+      .post("/api/v1/my/expenses")
+      .set("x-org-role", "sub_admin")
+      .set("x-feature-access", JSON.stringify({
+        granular_permissions: { "expenses.create_own": true },
+      }))
+      .send({});
+    expect(response.status).toBe(201);
+  });
+
   it("does not treat Approve Employee Expenses as Create Expense", async () => {
     const response = await request(app())
       .post("/api/v1/my/expenses")

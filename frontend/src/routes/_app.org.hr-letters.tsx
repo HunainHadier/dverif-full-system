@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { apiErrorMessage } from "@/lib/utils";
+import { usePermissions } from "@/lib/permissions";
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, DataTableToolbar, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
@@ -40,9 +41,8 @@ import type { HrLetter, HrLetterListItem, HrLetterStatus, UUID } from "@/service
 /**
  * Issued and draft HR letters.
  *
- * Plan gating is ModuleGate (hr_letters_management), NOT RequireOrgFeature:
- * letters are not delegable to sub-admins via feature_access, so the only axis
- * here is the plan. See the ROUTE_ACCESS comment for why.
+ * The plan gate controls module availability; granular permissions control
+ * which letter actions a sub-admin may perform.
  */
 export const Route = createFileRoute("/_app/org/hr-letters")({
   component: HrLettersPage,
@@ -57,6 +57,8 @@ const STATUS_VARIANT: Record<HrLetterStatus, "default" | "secondary" | "destruct
 function HrLettersPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canCreateLetter = permissions.hasGranular("hr_letters.create_draft", "hr_letters");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | HrLetterStatus>("");
@@ -150,12 +152,12 @@ function HrLettersPage() {
         <PageHeader
           title={t("letters.title")}
           description={t("letters.description")}
-          actions={
+          actions={canCreateLetter ? (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
               {t("letters.newLetter")}
             </Button>
-          }
+          ) : undefined}
         />
 
         <DataTableToolbar>
@@ -201,16 +203,18 @@ function HrLettersPage() {
             emptyIcon={FileSignature}
             emptyTitle={t("letters.emptyTitle")}
             emptyDescription={t("letters.emptyDescription")}
-            emptyAction={
+            emptyAction={canCreateLetter ? (
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus className="h-4 w-4" />
                 {t("letters.newLetter")}
               </Button>
-            }
+            ) : undefined}
           />
         )}
 
-        <CreateLetterDialog open={createOpen} onOpenChange={setCreateOpen} onDone={invalidate} />
+        {canCreateLetter ? (
+          <CreateLetterDialog open={createOpen} onOpenChange={setCreateOpen} onDone={invalidate} />
+        ) : null}
       </div>
     </ModuleGate>
   );
@@ -247,6 +251,10 @@ type CreateLetterFormValues = {
 export function RowActions({ row }: { row: HrLetterListItem }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canEditDraft = permissions.hasGranular("hr_letters.edit_draft", "hr_letters");
+  const canIssue = permissions.hasGranular("hr_letters.issue", "hr_letters");
+  const canRevoke = permissions.hasGranular("hr_letters.revoke", "hr_letters");
   const [confirm, setConfirm] = useState<null | "delete" | "revoke" | "revert">(null);
   /**
    * Issue opens a dialog rather than firing straight at the API. The backend
@@ -293,79 +301,88 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
 
   const busy = download.isPending || remove.isPending || revoke.isPending || revert.isPending;
   const error = remove.error ?? revoke.error ?? revert.error ?? download.error;
+  const hasActions = row.status !== "draft" || canEditDraft || canIssue || permissions.isOrgAdmin;
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" disabled={busy} title={t("common.actions")}>
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {row.status === "draft" ? (
-            <>
-              <DropdownMenuItem onSelect={() => setEditing(true)}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit Draft
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setIssuing(true)}>
-                <Send className="mr-2 h-4 w-4" />
-                {t("letters.issueLetter")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onSelect={() => setConfirm("delete")}
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                {t("letters.deleteDraft")}
-              </DropdownMenuItem>
-            </>
-          ) : null}
+      {hasActions ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" disabled={busy} title={t("common.actions")}>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {row.status === "draft" ? (
+              <>
+                {canEditDraft ? (
+                  <DropdownMenuItem onSelect={() => setEditing(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit Draft
+                  </DropdownMenuItem>
+                ) : null}
+                {canIssue ? (
+                  <DropdownMenuItem onSelect={() => setIssuing(true)}>
+                    <Send className="mr-2 h-4 w-4" />
+                    {t("letters.issueLetter")}
+                  </DropdownMenuItem>
+                ) : null}
+                {permissions.isOrgAdmin ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setConfirm("delete")}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {t("letters.deleteDraft")}
+                  </DropdownMenuItem>
+                ) : null}
+              </>
+            ) : null}
 
-          {row.status === "issued" ? (
-            <>
-              <DropdownMenuItem onSelect={() => download.mutate()}>
-                <Download className="mr-2 h-4 w-4" />
-                {t("letters.downloadPdf")}
-              </DropdownMenuItem>
-              {row.verify_url ? (
-                <DropdownMenuItem asChild>
-                  <a href={row.verify_url} target="_blank" rel="noreferrer">
-                    <ShieldCheck className="mr-2 h-4 w-4" />
-                    {t("letters.viewVerification")}
-                  </a>
+            {row.status === "issued" ? (
+              <>
+                <DropdownMenuItem onSelect={() => download.mutate()}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {t("letters.downloadPdf")}
                 </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onSelect={() => setConfirm("revoke")}
-              >
-                <Ban className="mr-2 h-4 w-4" />
-                {t("letters.revoke")}
-              </DropdownMenuItem>
-            </>
-          ) : null}
+                {row.verify_url ? (
+                  <DropdownMenuItem asChild>
+                    <a href={row.verify_url} target="_blank" rel="noreferrer">
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                      {t("letters.viewVerification")}
+                    </a>
+                  </DropdownMenuItem>
+                ) : null}
+                {canRevoke ? (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setConfirm("revoke")}
+                  >
+                    <Ban className="mr-2 h-4 w-4" />
+                    {t("letters.revoke")}
+                  </DropdownMenuItem>
+                ) : null}
+              </>
+            ) : null}
 
-          {row.status === "revoked" ? (
-            <>
-              <DropdownMenuItem onSelect={() => download.mutate()}>
-                <Download className="mr-2 h-4 w-4" />
-                {t("letters.downloadRevokedPdf")}
-              </DropdownMenuItem>
-              {/* Revocation was one-way, which left HR unable to fix a letter
-                  revoked over a typo: a revoked letter could be neither edited
-                  into a correct draft nor issued. This is the way back. It only
-                  returns the letter to draft — issuing stays a separate,
-                  deliberate step with its own preview. */}
-              <DropdownMenuItem onSelect={() => setConfirm("revert")}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                {t("letters.revertToDraft")}
-              </DropdownMenuItem>
-            </>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {row.status === "revoked" ? (
+              <>
+                <DropdownMenuItem onSelect={() => download.mutate()}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {t("letters.downloadRevokedPdf")}
+                </DropdownMenuItem>
+                {/* Reverting restores draft state; issuing remains a separate permission. */}
+                {canEditDraft ? (
+                  <DropdownMenuItem onSelect={() => setConfirm("revert")}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    {t("letters.revertToDraft")}
+                  </DropdownMenuItem>
+                ) : null}
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
 
       <EditDraftDialog
         row={row}
@@ -377,6 +394,7 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
       <IssueLetterDialog
         letter={row}
         open={issuing}
+        canSaveDraft={canEditDraft}
         onOpenChange={setIssuing}
         onIssued={() => qc.invalidateQueries({ queryKey: ["hr-letters"] })}
         onDraftSaved={() => qc.invalidateQueries({ queryKey: ["hr-letters"] })}

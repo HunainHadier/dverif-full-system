@@ -43,7 +43,7 @@ export type ExpenseAttachment = {
 /** A reimbursement claim: a free-text expense name, an amount, a date, a receipt. */
 export type ExpenseClaim = {
   uuid: UUID;
-  employee_uuid: UUID;
+  employee_uuid: UUID | null;
   employee_name: string;
   expense_name: string;
   amount: number;
@@ -219,12 +219,12 @@ export const expenseClaimsService = {
 };
 
 /**
- * Employee self-service: my own claims.
+ * Self-service claims belonging to the authenticated user.
  *
  * A SEPARATE object from expenseClaimsService, and `create` here has no
- * employee_uuid parameter at all. That absence is the feature: the server derives
- * the employee from the session, so there is no field a caller could change to
- * file a reimbursement against a colleague and have the company pay it.
+ * employee_uuid parameter at all. The server derives the linked employee, or
+ * permits a standalone sub-admin claim, from the session; callers cannot name a
+ * colleague to receive a reimbursement.
  */
 export const myExpensesService = {
   list: (params: { status?: ClaimStatus } = {}) =>

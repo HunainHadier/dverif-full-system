@@ -18,15 +18,16 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, DataTableToolbar, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
+import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
+import { useAuth } from "@/lib/auth";
 import { letterTemplatesService, HR_LETTER_TYPES } from "@/services";
 import type { LetterTemplate, UUID } from "@/services";
 
 /**
  * Reusable letter templates.
  *
- * Templates are ORG-WIDE: every issued letter was rendered from one, so deleting
- * one is org-admin-only server-side (enforced by the hrLettersOwner gate) even
- * though a sub-admin can still read and use them.
+ * Templates are shared organization-wide: viewing them requires Entire
+ * Organization scope, and every write requires the manage_templates permission.
  */
 export const Route = createFileRoute("/_app/org/letter-templates")({
   component: LetterTemplatesPage,
@@ -35,6 +36,12 @@ export const Route = createFileRoute("/_app/org/letter-templates")({
 function LetterTemplatesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const permissions = usePermissions();
+  const hasTemplateScope =
+    permissions.isOrgAdmin || hasEntireOrganizationScope(user, "hr_letters");
+  const canManageTemplates =
+    hasTemplateScope && permissions.hasGranular("hr_letters.manage_templates", "hr_letters");
   const [editing, setEditing] = useState<LetterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<LetterTemplate | null>(null);
@@ -42,6 +49,7 @@ function LetterTemplatesPage() {
   const query = useQuery({
     queryKey: ["letter-templates"],
     queryFn: () => letterTemplatesService.list({ include_inactive: true }),
+    enabled: hasTemplateScope,
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["letter-templates"] });
@@ -94,7 +102,10 @@ function LetterTemplatesPage() {
         </Badge>
       ),
     },
-    {
+  ];
+
+  if (canManageTemplates) {
+    columns.push({
       key: "actions",
       header: t("common.actions"),
       className: "text-right",
@@ -118,8 +129,8 @@ function LetterTemplatesPage() {
           </Button>
         </div>
       ),
-    },
-  ];
+    });
+  }
 
   return (
     <ModuleGate module="hr_letters_management">
@@ -127,19 +138,25 @@ function LetterTemplatesPage() {
         <PageHeader
           title={t("letters.templatesTitle")}
           description={t("letters.templatesDescription")}
-          actions={
+          actions={canManageTemplates ? (
             <Button onClick={() => setCreating(true)}>
               <Plus className="h-4 w-4" />
               {t("letters.newTemplate")}
             </Button>
-          }
+          ) : undefined}
         />
 
         <DataTableToolbar>
           <p className="text-xs text-muted-foreground">{t("letters.templatesHint")}</p>
         </DataTableToolbar>
 
-        {query.isError ? (
+        {!hasTemplateScope ? (
+          <EmptyState
+            icon={FileText}
+            title={t("letters.templateScopeRequired")}
+            description={t("letters.templateScopeRequiredDescription")}
+          />
+        ) : query.isError ? (
           <EmptyState
             icon={FileText}
             title={t("letters.loadFailed")}
@@ -157,17 +174,19 @@ function LetterTemplatesPage() {
           />
         )}
 
-        <TemplateDialog
-          open={creating || editing !== null}
-          template={editing}
-          onOpenChange={(v) => {
-            if (!v) {
-              setCreating(false);
-              setEditing(null);
-            }
-          }}
-          onDone={invalidate}
-        />
+        {canManageTemplates ? (
+          <TemplateDialog
+            open={creating || editing !== null}
+            template={editing}
+            onOpenChange={(v) => {
+              if (!v) {
+                setCreating(false);
+                setEditing(null);
+              }
+            }}
+            onDone={invalidate}
+          />
+        ) : null}
 
         <ConfirmDialog
           open={deleting !== null}

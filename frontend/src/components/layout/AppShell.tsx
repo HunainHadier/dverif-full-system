@@ -55,6 +55,7 @@ import { adminNav, accountItemsFor, primaryNavItemsFor, type NavItem } from "@/l
 export function AppShell({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const queryClient = useQueryClient();
   const { t } = useTranslation();
   const { openPicker } = usePlanPicker();
   const { isLocked, isModuleFlagOff } = useOrgSubscription();
@@ -75,8 +76,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const canOpenCurrentRoute = !user || canAccessRoute(user, pathname);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (canOpenCurrentRoute || !user) return;
+    queryClient.clear();
+    void router.navigate({ to: "/dashboard", replace: true });
+  }, [canOpenCurrentRoute, pathname, queryClient, router, user]);
 
   const onLogout = async () => {
     try {
@@ -185,6 +193,8 @@ export function AppShell({ children }: { children: ReactNode }) {
    * position.
    */
   const accountItems = isAdmin ? [] : accountItemsFor(user);
+
+  if (!canOpenCurrentRoute) return null;
 
   return (
     <PlanPickerProvider>

@@ -45,14 +45,13 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
 };
 
 /**
- * Employee self-service: file an expense claim and follow it.
+ * Personal expense self-service for employees and permitted sub-admins.
  *
  * THERE IS NO EMPLOYEE FIELD ON THIS FORM, and that absence is the design. The
- * server derives the employee from the session, so there is nothing here that
- * could be pointed at a colleague — a reimbursement form with an employee picker
- * on it is a form that can be used to have the company pay someone else's taxi.
+ * server derives the employee when one is linked, or uses the authenticated
+ * sub-admin as a standalone claimant. Nothing here can be pointed at a colleague.
  *
- * AMOUNT IS THE EMPLOYEE'S OWN FIGURE, typed and never adjusted by finance from
+ * AMOUNT IS THE CLAIMANT'S OWN FIGURE, typed and never adjusted by finance from
  * this page. Finance reviews the amount as filed; if it is wrong the route is a
  * rejection with a reason and a corrected resubmission.
  *
@@ -242,7 +241,7 @@ function NewClaimDialog({
   }, [open, reset, today]);
 
   // Advisory only. The server re-checks both of these, and it is the server's
-  // answer that counts — this exists so the employee finds out before a round trip.
+  // answer that counts — this exists so the claimant finds out before a round trip.
   const daysBack = form.watch("expense_date")
     ? Math.round(
         (new Date(`${today}T00:00:00Z`).getTime() -

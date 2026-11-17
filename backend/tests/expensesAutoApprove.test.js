@@ -37,6 +37,10 @@ const EXPENSE_MIGRATION = readFileSync(
   "migrations/20261226_expense_permissions_payroll_safety.sql",
   "utf8",
 );
+const STANDALONE_EXPENSE_MIGRATION = readFileSync(
+  "migrations/20261227_standalone_subadmin_expenses.sql",
+  "utf8",
+);
 
 function installDb() {
   const query = async (sql, params = []) => {
@@ -62,16 +66,16 @@ function installDb() {
       h.claim = {
         uuid: CLAIM,
         organization_id: ORG_ID,
-        employee_uuid: EMPLOYEE,
-        employee_name: "Ayesha",
+        employee_uuid: params[2],
+        employee_name: params[3],
         expense_name: "Taxi",
         amount: "1000.00",
         expense_date: "2026-09-10",
         description: null,
         status: "pending",
-        payment_mode: "payroll",
+        payment_mode: params[8],
         auto_approved: 0,
-        created_by: ACTOR,
+        created_by: params[9],
       };
       return [{ insertId: 1 }];
     }
@@ -143,6 +147,13 @@ describe("independent Sub Admin expense permissions", () => {
       expect(EXPENSE_MIGRATION).toContain("FOREIGN KEY (organization_id, salary_record_uuid, employee_uuid)");
       expect(EXPENSE_MIGRATION).not.toMatch(/DROP\s+TABLE/i);
     });
+
+    it("allows standalone claim and payment rows while retaining tenant-scoped claim integrity", () => {
+      expect(STANDALONE_EXPENSE_MIGRATION).toContain("MODIFY employee_uuid CHAR(36) DEFAULT NULL");
+      expect(STANDALONE_EXPENSE_MIGRATION).toContain("FOREIGN KEY (organization_id, claim_uuid)");
+      expect(STANDALONE_EXPENSE_MIGRATION).toContain("REFERENCES expense_claims (organization_id, uuid)");
+      expect(STANDALONE_EXPENSE_MIGRATION).not.toMatch(/DROP\s+TABLE/i);
+    });
   });
 });
 
@@ -188,6 +199,43 @@ describe("Sub Admin own-claim approval bypass", () => {
 });
 
 describe("expense workflow and payroll eligibility", () => {
+  it("creates and auto-approves a direct claim without an employee or payroll period", async () => {
+    h.claim = null;
+    await createClaim({
+      orgId: ORG_ID,
+      actorUuid: ACTOR,
+      employeeUuid: null,
+      employeeName: "Sub-admin",
+      expenseName: "Taxi",
+      amount: 1000,
+      expenseDate: "2026-09-10",
+      paymentMode: "direct",
+      conn: h.conn,
+    });
+
+    expect(h.claim.employee_uuid).toBeNull();
+    expect(h.claim.employee_name).toBe("Sub-admin");
+    expect(h.claim.payment_mode).toBe("direct");
+
+    await approveOwnClaim({ orgId: ORG_ID, actorUuid: ACTOR, claimUuid: CLAIM, conn: h.conn });
+    expect(h.claim.status).toBe("approved");
+    expect(h.claim.reimbursement_year).toBeNull();
+  });
+
+  it("rejects an employee-less claim unless direct payment is selected", async () => {
+    await expect(createClaim({
+      orgId: ORG_ID,
+      actorUuid: ACTOR,
+      employeeUuid: null,
+      employeeName: "Sub-admin",
+      expenseName: "Taxi",
+      amount: 1000,
+      expenseDate: "2026-09-10",
+      paymentMode: "payroll",
+      conn: h.conn,
+    })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
   it("creates claims pending, while a rejection leaves them out of payroll", async () => {
     h.claim = null;
     await createClaim({

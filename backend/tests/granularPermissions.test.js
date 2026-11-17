@@ -21,6 +21,10 @@ const APP_SHELL = readFileSync("../frontend/src/components/layout/AppShell.tsx",
 const LEAVE_UI = readFileSync("../frontend/src/routes/_app.org.leaves.tsx", "utf8");
 const PAYROLL_UI = readFileSync("../frontend/src/routes/_app.org.payroll.tsx", "utf8");
 const SALARY_COMPONENTS_UI = readFileSync("../frontend/src/components/salary/SalaryComponentsManager.tsx", "utf8");
+const HR_LETTERS_UI = readFileSync("../frontend/src/routes/_app.org.hr-letters.tsx", "utf8");
+const LETTER_TEMPLATES_UI = readFileSync("../frontend/src/routes/_app.org.letter-templates.tsx", "utf8");
+const EMPLOYEE_LETTERS_UI = readFileSync("../frontend/src/components/hr/EmployeeLettersPanel.tsx", "utf8");
+const ISSUE_LETTER_DIALOG = readFileSync("../frontend/src/components/hr/IssueLetterDialog.tsx", "utf8");
 
 describe("granular permission catalog", () => {
   it("never exposes the hard-delete employee controller through the org API", () => {
@@ -31,7 +35,7 @@ describe("granular permission catalog", () => {
     const keys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
       actions.map((action) => `${module}.${action}`),
     );
-    expect(keys.length).toBe(60);
+    expect(keys.length).toBe(61);
     expect(new Set(keys).size).toBe(keys.length);
     expect(GRANULAR_PERMISSION_CATALOG.leave_management).not.toContain("submit_on_behalf");
     expect(ADMIN_PERMISSION_UI).not.toContain("submit_on_behalf");
@@ -151,14 +155,22 @@ describe("granular permission catalog", () => {
   });
 
   it("keeps employee payroll writes behind their dedicated permission", () => {
-    expect(EMPLOYEE_DETAIL).toContain('perms.hasGranular("payroll.manage_settings", "payroll")');
+    expect(EMPLOYEE_DETAIL).toContain('perms.hasGranular("payroll.adjust_salary", "payroll")');
     expect(EMPLOYEE_DETAIL).toContain('perms.hasGranular("payroll.manage_employee_components", "payroll")');
-    expect(EMPLOYEE_DETAIL).toContain("{canManagePayroll ? (");
-    expect(EMPLOYEE_DETAIL).toContain('hasEntireOrganizationScope(user, "payroll")');
+    expect(EMPLOYEE_DETAIL).toContain("{canAdjustSalary ? (");
     expect(ORG_ROUTES).toContain('requirePermission("payroll.manage_employee_components")');
+    expect(ORG_ROUTES).toContain('requirePermission("payroll.adjust_salary")');
+    expect(ORG_ROUTES).toContain('router.post("/employees/:uuid/increment-salary", payrollSalaryAccess, payrollEmployeeScope, asyncHandler(incrementEmployeeSalary));');
     expect(ORG_ROUTES).toContain('router.post("/employees/:uuid/salary-components", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(assignEmployeeSalaryComponent));');
     expect(ORG_ROUTES).toContain('router.put("/employees/:uuid/salary-components/:assignUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryComponent));');
     expect(ORG_ROUTES).toContain('router.delete("/employees/:uuid/salary-components/:assignUuid", payrollEmployeeComponentsAccess, payrollEmployeeScope, asyncHandler(removeEmployeeSalaryComponent));');
+    expect(ORG_ROUTES).toContain('router.get("/payroll-settings", payrollView, asyncHandler(getPayrollSettings));');
+    expect(ORG_ROUTES).toContain('router.put("/payroll-settings", payrollSettingsAccess, asyncHandler(updatePayrollSettings));');
+    expect(ORG_ROUTES).toContain('router.get("/payroll-schedule", payrollView, asyncHandler(getMonthlyWorkSchedule));');
+    expect(ORG_ROUTES).toContain('router.put("/payroll-schedule", payrollSettingsAccess, asyncHandler(saveMonthlyWorkSchedule));');
+    expect(ORG_ROUTES).toContain('router.get("/salary-components", payrollView, asyncHandler(listSalaryComponents));');
+    expect(ORG_ROUTES).toContain('router.post("/salary-components", payrollSettingsAccess, asyncHandler(createSalaryComponent));');
+    expect(ORG_ROUTES).not.toContain("payrollOrgWideScope");
   });
 
   it("shows payroll controls only for their exact grants", () => {
@@ -168,10 +180,32 @@ describe("granular permission catalog", () => {
     expect(PAYROLL_UI).toContain("canManagePayrollSettings ? <TabsTrigger value=\"components\"");
     expect(PAYROLL_UI).toContain("canManagePayrollSettings ? <TabsTrigger value=\"policies\"");
     expect(PAYROLL_UI).toContain("{canGeneratePayroll ? <Checkbox");
-    expect(PAYROLL_UI).toContain("<PayrollScopeRequiredNotice />");
-    expect(PAYROLL_UI).toContain('hasEntireOrganizationScope(user, "payroll")');
+    expect(PAYROLL_UI).toContain("Payroll Settings");
     expect(SALARY_COMPONENTS_UI).toContain("export function SalaryComponentsManager({ canManage }: { canManage: boolean })");
     expect(SALARY_COMPONENTS_UI).toContain("canManage ? <Button size=\"sm\"");
+  });
+
+  it("gates HR letter controls by their exact grants and shared template scope", () => {
+    for (const permission of [
+      "hr_letters.create_draft",
+      "hr_letters.edit_draft",
+      "hr_letters.issue",
+      "hr_letters.revoke",
+    ]) {
+      expect(HR_LETTERS_UI).toContain(`permissions.hasGranular("${permission}", "hr_letters")`);
+    }
+    expect(HR_LETTERS_UI).toContain("canCreateLetter ? (");
+    expect(HR_LETTERS_UI).toContain("permissions.isOrgAdmin ? (");
+    expect(EMPLOYEE_LETTERS_UI).toContain('permissions.hasGranular("hr_letters.create_draft", "hr_letters")');
+    expect(EMPLOYEE_LETTERS_UI).toContain('permissions.hasGranular("hr_letters.edit_draft", "hr_letters")');
+    expect(EMPLOYEE_LETTERS_UI).toContain('permissions.hasGranular("hr_letters.issue", "hr_letters")');
+    expect(EMPLOYEE_LETTERS_UI).toContain("permissions.isOrgAdmin ? (");
+    expect(ISSUE_LETTER_DIALOG).toContain("canSaveDraft = true");
+    expect(LETTER_TEMPLATES_UI).toContain('permissions.hasGranular("hr_letters.manage_templates", "hr_letters")');
+    expect(LETTER_TEMPLATES_UI).toContain("enabled: hasTemplateScope");
+    expect(LETTER_TEMPLATES_UI).toContain("!hasTemplateScope");
+    expect(ORG_ROUTES).toContain('requireEntireModuleScope("hr_letters")');
+    expect(ORG_ROUTES).toContain('requirePermission("hr_letters.manage_templates")');
   });
 
   it("keeps department and designation management behind their exact permissions", () => {
@@ -190,12 +224,17 @@ describe("granular permission catalog", () => {
         "employees.create": true,
         "employees.view": false,
         "hr_letters.create_draft": true,
+        "hr_letters.edit_draft": true,
+        "hr_letters.issue": true,
+        "hr_letters.revoke": true,
+        "hr_letters.manage_templates": true,
         "hr_letters.view": false,
         "leave_management.allocate_balance": true,
         "leave_management.view": false,
         "payroll.generate": true,
         "payroll.manage_settings": true,
         "payroll.manage_employee_components": true,
+        "payroll.adjust_salary": true,
         "payroll.view": false,
       },
     });
@@ -203,6 +242,19 @@ describe("granular permission catalog", () => {
     expect(saved.granular_permissions["hr_letters.view"]).toBe(true);
     expect(saved.granular_permissions["leave_management.view"]).toBe(true);
     expect(saved.granular_permissions["payroll.view"]).toBe(true);
+
+    for (const action of [
+      "hr_letters.create_draft",
+      "hr_letters.edit_draft",
+      "hr_letters.issue",
+      "hr_letters.revoke",
+      "hr_letters.manage_templates",
+    ]) {
+      const actionOnly = normalizedFeatureAccess({
+        granular_permissions: { [action]: true, "hr_letters.view": false },
+      });
+      expect(actionOnly.granular_permissions["hr_letters.view"], action).toBe(true);
+    }
   });
 
   it("removes permissions with no delegated use and restricts overtime changes to Org Admin", () => {
@@ -285,8 +337,13 @@ describe("granular permission catalog", () => {
       "payroll.generate": "payroll.view",
       "payroll.manage_settings": "payroll.view",
       "payroll.manage_employee_components": "payroll.view",
+      "payroll.adjust_salary": "payroll.view",
       "expenses.create_own": "expenses.view",
       "hr_letters.create_draft": "hr_letters.view",
+      "hr_letters.edit_draft": "hr_letters.view",
+      "hr_letters.issue": "hr_letters.view",
+      "hr_letters.revoke": "hr_letters.view",
+      "hr_letters.manage_templates": "hr_letters.view",
       "assets.create": "assets.view",
       "recruitment.create_job": "recruitment.view",
     };

@@ -110,12 +110,12 @@ describe("an employee can only ever file a claim for themselves", () => {
     expect(STAFF).toContain("employee_uuid?: UUID");
   });
 
-  it("the staff page has no create affordance to wire up", () => {
-    // Defense in depth on the same property, one layer up: no button, no dialog,
-    // no employee picker. Otherwise the 404 above is discovered by a user.
+  it("the staff review queue has no create action", () => {
+    // Expense Claims only reviews employee claims. The personal claim form has
+    // its own sidebar page and derives ownership from the session.
     expect(code(ORG_PAGE)).not.toMatch(/expenseClaimsService\.create/);
     expect(ORG_PAGE).not.toMatch(/function NewClaimDialog/);
-    expect(ORG_PAGE).not.toContain("expenses.newClaim");
+    expect(ORG_PAGE).not.toContain('to="/my-expenses"');
   });
 });
 

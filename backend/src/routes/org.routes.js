@@ -217,7 +217,6 @@ const requireEntireModuleScope = (moduleKey) => (req, res, next) => {
 const employeeOrgWideScope = requireEntireModuleScope("employees");
 const attendanceOrgWideScope = requireEntireModuleScope("attendance");
 const leaveOrgWideScope = requireEntireModuleScope("leave_management");
-const payrollOrgWideScope = requireEntireModuleScope("payroll");
 const hrLettersOrgWideScope = requireEntireModuleScope("hr_letters");
 const offboardingOrgWideScope = requireEntireModuleScope("offboarding");
 
@@ -238,6 +237,7 @@ const payrollView = [...staff, requireModuleFeature("payroll_management"), requi
 const payrollGenerateAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.generate")];
 const payrollSettingsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_settings")];
 const payrollEmployeeComponentsAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.manage_employee_components")];
+const payrollSalaryAccess = [...staff, requireModuleFeature("payroll_management"), requirePermission("payroll.adjust_salary")];
 const employeeDataScope = (moduleKey) => async (req, res, next) => {
   try {
     await assertEmployeeInDataScope(req, moduleKey, req.params.uuid);
@@ -356,10 +356,10 @@ router.patch("/attendance/:uuid/correction", attendanceCorrect, asyncHandler(cor
 
 // ---- Payroll settings and monthly work calendar ----
 router.get("/payroll-employees", payrollView, asyncHandler(listPayrollEmployees));
-router.get("/payroll-settings", [...payrollView, payrollOrgWideScope], asyncHandler(getPayrollSettings));
-router.put("/payroll-settings", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(updatePayrollSettings));
-router.get("/payroll-schedule", [...payrollView, payrollOrgWideScope], asyncHandler(getMonthlyWorkSchedule));
-router.put("/payroll-schedule", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(saveMonthlyWorkSchedule));
+router.get("/payroll-settings", payrollView, asyncHandler(getPayrollSettings));
+router.put("/payroll-settings", payrollSettingsAccess, asyncHandler(updatePayrollSettings));
+router.get("/payroll-schedule", payrollView, asyncHandler(getMonthlyWorkSchedule));
+router.put("/payroll-schedule", payrollSettingsAccess, asyncHandler(saveMonthlyWorkSchedule));
 
 // ---- Salary records / payroll ledger (staff view+export+build; delete period = org_admin) ----
 router.get("/salary-records", payrollView, asyncHandler(listOrgSalaryRecords));
@@ -369,15 +369,15 @@ router.delete("/salary-records/:uuid", payrollMgmtOwner, asyncHandler(deleteSala
 router.delete("/salary-records/period/:year/:month", payrollMgmtOwner, asyncHandler(deleteSalaryPeriod));
 
 // ---- Salary components —” unified allowances/deductions (staff; delete + status toggle = org_admin) ----
-router.get("/salary-components", [...payrollView, payrollOrgWideScope], asyncHandler(listSalaryComponents));
-router.post("/salary-components", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(createSalaryComponent));
-router.put("/salary-components/:uuid", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(updateSalaryComponent));
-router.delete("/salary-components/:uuid", [...payrollMgmtOwner, payrollOrgWideScope], asyncHandler(deleteSalaryComponent));
-router.patch("/salary-components/:uuid/status", [...payrollSettingsAccess, payrollOrgWideScope], asyncHandler(toggleSalaryComponentStatus));
+router.get("/salary-components", payrollView, asyncHandler(listSalaryComponents));
+router.post("/salary-components", payrollSettingsAccess, asyncHandler(createSalaryComponent));
+router.put("/salary-components/:uuid", payrollSettingsAccess, asyncHandler(updateSalaryComponent));
+router.delete("/salary-components/:uuid", payrollMgmtOwner, asyncHandler(deleteSalaryComponent));
+router.patch("/salary-components/:uuid/status", payrollSettingsAccess, asyncHandler(toggleSalaryComponentStatus));
 
 // ---- Employee salary history + salary increment (staff) ----
 router.get("/employees/:uuid/salary-history", payrollView, payrollEmployeeScope, asyncHandler(listEmployeeSalaryHistory));
-router.post("/employees/:uuid/increment-salary", payrollSettingsAccess, payrollEmployeeScope, asyncHandler(incrementEmployeeSalary));
+router.post("/employees/:uuid/increment-salary", payrollSalaryAccess, payrollEmployeeScope, asyncHandler(incrementEmployeeSalary));
 router.put("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, payrollEmployeeScope, asyncHandler(updateEmployeeSalaryHistory));
 router.delete("/employees/:uuid/salary-history/:historyUuid", payrollMgmtOwner, payrollEmployeeScope, asyncHandler(deleteEmployeeSalaryHistory));
 

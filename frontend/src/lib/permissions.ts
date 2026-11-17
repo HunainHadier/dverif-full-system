@@ -101,8 +101,13 @@ const ACTION_REQUIRES_VIEW: Readonly<Record<string, string>> = {
   "payroll.generate": "payroll.view",
   "payroll.manage_settings": "payroll.view",
   "payroll.manage_employee_components": "payroll.view",
+  "payroll.adjust_salary": "payroll.view",
   "expenses.create_own": "expenses.view",
   "hr_letters.create_draft": "hr_letters.view",
+  "hr_letters.edit_draft": "hr_letters.view",
+  "hr_letters.issue": "hr_letters.view",
+  "hr_letters.revoke": "hr_letters.view",
+  "hr_letters.manage_templates": "hr_letters.view",
   "assets.create": "assets.view",
   "recruitment.create_job": "recruitment.view",
 };

@@ -120,11 +120,8 @@ export const memberNavItems: NavItem[] = [
   { to: "/my-interviews", labelKey: "nav.myAssignedInterviews", icon: CalendarCheck, audience: "self-service" },
   { to: "/attendance", labelKey: "nav.attendance", icon: ClipboardCheck, audience: "self-service" },
   { to: "/my-letters", labelKey: "nav.myLetters", icon: FileSignature, audience: "self-service" },
-  // Self-service, and NOT shown in a staff member's primary menu even though
-  // ROUTE_ACCESS opens it to every org role: a sub-admin who is also on the roster
-  // really is holding a company laptop and really can file for their own taxi.
-  // They reach both through "Personal ESS" rather than having them crowd the
-  // modules they administer.
+  // Employees reach their own assets through the self-service menu. Sub-admins
+  // use the separate management-menu entry below when they have that permission.
   { to: "/my-assets", labelKey: "nav.myAssets", icon: Package, audience: "self-service" },
   { to: "/my-expenses", labelKey: "nav.myExpenses", icon: Receipt, audience: "self-service" },
   { to: "/payroll", labelKey: "nav.payroll", icon: Wallet, audience: "self-service" },
@@ -143,6 +140,9 @@ export const orgAdminNavItems: NavItem[] = [
   // read in that order: payroll decides what is paid, expense claims are what
   // reimburses on top of it, and assets is the register of what was bought.
   { to: "/org/expense-claims", labelKey: "nav.expenseClaims", icon: Receipt },
+  // A separate self-claim page, not a create action on the employee review queue.
+  // ROUTE_ACCESS exposes it to sub-admins only when Create Own Expense is granted.
+  { to: "/my-expenses", labelKey: "nav.myExpenses", icon: Receipt, audience: "management" },
   { to: "/org/assets", labelKey: "nav.assets", icon: Package },
   // Offboarding sits after payroll because the FnF settlement is where the two
   // meet, and next to assets because the clearance checklist is what stands

@@ -13,7 +13,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AccessDenied } from "@/components/common/RequireOrgFeature";
 import { useAuth } from "@/lib/auth";
 import { ProtectedDocumentLink } from "@/components/common/ProtectedDocumentLink";
-import { usePermissions, hasEntireOrganizationScope, hasGranularPermission } from "@/lib/permissions";
+import { usePermissions, hasGranularPermission } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
 import { Button } from "@/components/ui/button";
@@ -116,7 +116,7 @@ function EmployeeDetailPage() {
   const { user } = useAuth();
   const perms = usePermissions();
   const canViewPayroll = perms.hasGranular("payroll.view", "payroll");
-  const canManagePayroll = perms.hasGranular("payroll.manage_settings", "payroll");
+  const canAdjustSalary = perms.hasGranular("payroll.adjust_salary", "payroll");
   const [editing, setEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<"profile" | "documents" | "payroll" | "letters">(
     search.salary && canViewPayroll ? "payroll" : "profile",
@@ -357,7 +357,7 @@ function EmployeeDetailPage() {
               <ModuleFeatureLockedCard feature="payroll_management" />
             ) : (
               <div className="space-y-6">
-                <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true && canManagePayroll} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
+                <SalaryHistoryCard uuid={uuid} autoOpen={search.salary === true && canAdjustSalary} onHistoryChange={() => qc.invalidateQueries({ queryKey: ["org-employee", uuid] })} />
                 <SalaryComponentsCard uuid={uuid} />
               </div>
             )
@@ -921,10 +921,10 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
   const qc = useQueryClient();
   const { user } = useAuth();
   const perms = usePermissions();
-  const canManagePayroll = perms.hasGranular("payroll.manage_settings", "payroll");
+  const canAdjustSalary = perms.hasGranular("payroll.adjust_salary", "payroll");
   const { isLocked } = useOrgSubscription();
   const canEdit = user?.org_role === "org_admin";
-  const [incrementOpen, setIncrementOpen] = useState(autoOpen && canManagePayroll);
+  const [incrementOpen, setIncrementOpen] = useState(autoOpen && canAdjustSalary);
   const [newSalary, setNewSalary] = useState("");
   const [newEffective, setNewEffective] = useState("");
   const todayDate = localDateInputMin();
@@ -997,7 +997,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Salary History</CardTitle>
-          {canManagePayroll ? (
+          {canAdjustSalary ? (
             <Button size="sm" disabled={isLocked} onClick={() => setIncrementOpen(true)}>
               {isLocked ? <Lock className="mr-1 h-3.5 w-3.5" /> : null}
               {isLocked ? "Subscription Required" : "Increment Salary"}
@@ -1061,7 +1061,7 @@ function SalaryHistoryCard({ uuid, autoOpen = false, onHistoryChange }: { uuid: 
         )}
       </CardContent>
 
-      {canManagePayroll ? <Dialog open={incrementOpen} onOpenChange={(o) => !o && setIncrementOpen(false)}>
+      {canAdjustSalary ? <Dialog open={incrementOpen} onOpenChange={(o) => !o && setIncrementOpen(false)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Increment Salary</DialogTitle>
@@ -1192,9 +1192,7 @@ function SalaryComponentsCard({ uuid }: { uuid: UUID }) {
   const qc = useQueryClient();
   const perms = usePermissions();
   const { isLocked } = useOrgSubscription();
-  const { user } = useAuth();
-  const canManage = perms.hasGranular("payroll.manage_employee_components", "payroll")
-    && hasEntireOrganizationScope(user, "payroll");
+  const canManage = perms.hasGranular("payroll.manage_employee_components", "payroll");
   const now = new Date();
   const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 

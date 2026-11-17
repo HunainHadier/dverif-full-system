@@ -10,11 +10,21 @@ import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { IssueLetterDialog } from "@/components/hr/IssueLetterDialog";
 import { apiErrorMessage } from "@/lib/utils";
+import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
+import { useAuth } from "@/lib/auth";
 import { letterTemplatesService, hrLettersService, HR_LETTER_TYPES, type HrLetterListItem, type HrLetterType, type UUID } from "@/services";
 
 export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const permissions = usePermissions();
+  const hasTemplateScope =
+    permissions.isOrgAdmin || hasEntireOrganizationScope(user, "hr_letters");
+  const canCreateLetter =
+    hasTemplateScope && permissions.hasGranular("hr_letters.create_draft", "hr_letters");
+  const canEditDraft = permissions.hasGranular("hr_letters.edit_draft", "hr_letters");
+  const canIssue = permissions.hasGranular("hr_letters.issue", "hr_letters");
   const [templateUuid, setTemplateUuid] = useState("");
   const [letterType, setLetterType] = useState<HrLetterType>("custom");
   const [reviewLetter, setReviewLetter] = useState<HrLetterListItem | null>(null);
@@ -24,6 +34,7 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
   const templates = useQuery({
     queryKey: ["employee-letter-templates"],
     queryFn: () => letterTemplatesService.list(),
+    enabled: hasTemplateScope,
   });
   const letters = useQuery({
     queryKey: ["hr-letters", "employee", employeeUuid],
@@ -73,35 +84,58 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
 
   return (
     <div className="space-y-5">
-      <Card className="border-border/70 shadow-none">
-        <CardContent className="space-y-3 p-4">
-          <div>
-            <h3 className="text-sm font-semibold">Assign a Letter</h3>
-            <p className="text-xs text-muted-foreground">Choose a template to create a draft for this employee. Review and issue it after checking the preview.</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-[1fr_220px_auto]">
-            <select value={templateUuid} onChange={(e) => {
-              const value = e.target.value;
-              setTemplateUuid(value);
-              const selected = templates.data?.items.find((item) => item.uuid === value);
-              if (selected) setLetterType(selected.letter_type);
-            }} className="h-9 rounded-md border border-input bg-background px-3 text-sm" disabled={templates.isLoading}>
-              <option value="">Select letter template</option>
-              {(templates.data?.items ?? []).filter((item) => item.is_active).map((item) => <option key={item.uuid} value={item.uuid}>{item.name}</option>)}
-            </select>
-            <select value={letterType} onChange={(e) => setLetterType(e.target.value as HrLetterType)} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              {HR_LETTER_TYPES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </select>
-            <Button onClick={() => create.mutate()} disabled={create.isPending || !templateUuid || templates.isLoading}>
-              <Plus className="mr-1.5 h-4 w-4" /> Create Draft
-            </Button>
-          </div>
-          {templates.isError && <p className="text-sm text-destructive">Could not load letter templates.</p>}
-          {!templates.isLoading && (templates.data?.items.filter((item) => item.is_active).length ?? 0) === 0 && (
-            <p className="text-sm text-muted-foreground">No active templates. Create a template in Letter Templates first.</p>
-          )}
-        </CardContent>
-      </Card>
+      {canCreateLetter ? (
+        <Card className="border-border/70 shadow-none">
+          <CardContent className="space-y-3 p-4">
+            <div>
+              <h3 className="text-sm font-semibold">Assign a Letter</h3>
+              <p className="text-xs text-muted-foreground">
+                Choose a template to create a draft for this employee. Review and issue it after checking the preview.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-[1fr_220px_auto]">
+              <select
+                value={templateUuid}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setTemplateUuid(value);
+                  const selected = templates.data?.items.find((item) => item.uuid === value);
+                  if (selected) setLetterType(selected.letter_type);
+                }}
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                disabled={templates.isLoading}
+              >
+                <option value="">Select letter template</option>
+                {(templates.data?.items ?? [])
+                  .filter((item) => item.is_active)
+                  .map((item) => <option key={item.uuid} value={item.uuid}>{item.name}</option>)}
+              </select>
+              <select
+                value={letterType}
+                onChange={(e) => setLetterType(e.target.value as HrLetterType)}
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {HR_LETTER_TYPES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+              </select>
+              <Button
+                onClick={() => create.mutate()}
+                disabled={create.isPending || !templateUuid || templates.isLoading}
+              >
+                <Plus className="mr-1.5 h-4 w-4" /> Create Draft
+              </Button>
+            </div>
+            {templates.isError && <p className="text-sm text-destructive">Could not load letter templates.</p>}
+            {!templates.isLoading && (templates.data?.items.filter((item) => item.is_active).length ?? 0) === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No active templates. Ask an Org Admin to add one.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+      {permissions.hasGranular("hr_letters.create_draft", "hr_letters") && !hasTemplateScope ? (
+        <p className="text-sm text-muted-foreground">{t("letters.templateScopeRequiredDescription")}</p>
+      ) : null}
 
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">Assigned Letters</h3>
@@ -119,29 +153,35 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
                   <Badge variant={letter.status === "issued" ? "default" : letter.status === "revoked" ? "destructive" : "secondary"}>{letter.status}</Badge>
                   {letter.status === "draft" && (
                     <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
-                      >
-                        <Pencil className="mr-1.5 h-3.5 w-3.5" /> {t("letters.editDraft")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
-                      >
-                        <Send className="mr-1.5 h-3.5 w-3.5" /> {t("letters.reviewIssue")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          remove.reset();
-                          setDeleteTarget(letter);
-                        }}
-                      >
-                        <Trash2 className="mr-1.5 h-3.5 w-3.5" /> {t("letters.deleteDraft")}
-                      </Button>
+                      {canEditDraft ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
+                        >
+                          <Pencil className="mr-1.5 h-3.5 w-3.5" /> {t("letters.editDraft")}
+                        </Button>
+                      ) : null}
+                      {canIssue ? (
+                        <Button
+                          size="sm"
+                          onClick={() => { setReviewLetter(letter); setReviewOpen(true); }}
+                        >
+                          <Send className="mr-1.5 h-3.5 w-3.5" /> {t("letters.reviewIssue")}
+                        </Button>
+                      ) : null}
+                      {permissions.isOrgAdmin ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            remove.reset();
+                            setDeleteTarget(letter);
+                          }}
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" /> {t("letters.deleteDraft")}
+                        </Button>
+                      ) : null}
                     </>
                   )}
                   {letter.status !== "draft" && <Button size="sm" variant="outline" onClick={() => download.mutate(letter.uuid)} disabled={download.isPending}><Download className="mr-1.5 h-3.5 w-3.5" /> PDF</Button>}
@@ -154,6 +194,7 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
       <IssueLetterDialog
         letter={reviewLetter}
         open={reviewOpen}
+        canSaveDraft={canEditDraft}
         onOpenChange={setReviewOpen}
         onIssued={() => { refresh(); setReviewLetter(null); }}
         onDraftSaved={() => { refresh(); setReviewLetter(null); }}

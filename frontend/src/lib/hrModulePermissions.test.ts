@@ -68,6 +68,8 @@ type Expectation = {
   path: string;
   /** Backend requirePermission() key, or null when the route is role-only. */
   permission: FeatureKey | null;
+  /** Required data scope for shared resources. */
+  scope?: string;
   /** Personas that may open it. */
   allowed: Persona[];
 };
@@ -81,6 +83,7 @@ const MATRIX: Expectation[] = [
   {
     path: "/org/letter-templates",
     permission: "hr_letters",
+    scope: "hr_letters",
     allowed: ["org_admin", "sub_admin_permitted"],
   },
   {
@@ -173,7 +176,7 @@ const MODULE_PERMISSION_KEYS: FeatureKey[] = [
   "create_expenses",
 ];
 
-function user(orgRole: OrgRole, feature_access: FeatureAccessMap | null): AuthUser {
+function user(orgRole: OrgRole, feature_access: AuthUser["feature_access"]): AuthUser {
   return {
     uuid: "u-1",
     full_name: "Test",
@@ -186,7 +189,7 @@ function user(orgRole: OrgRole, feature_access: FeatureAccessMap | null): AuthUs
 }
 
 /** The persona a row grants its permission to, holding nothing else. */
-function persona(p: Persona, grant?: FeatureKey): AuthUser {
+function persona(p: Persona, grant?: FeatureKey, scope?: string): AuthUser {
   switch (p) {
     case "org_admin":
       // Deliberately ALL_OFF: org_admin must pass on the ROLE alone. If a test only
@@ -194,8 +197,18 @@ function persona(p: Persona, grant?: FeatureKey): AuthUser {
       // a permission would pass and org_admins would be locked out of their own
       // company in production.
       return user("org_admin", ALL_OFF);
-    case "sub_admin_permitted":
-      return user("sub_admin", { ...ALL_OFF, [grant!]: true });
+    case "sub_admin_permitted": {
+      const access = { ...ALL_OFF, [grant!]: true };
+      return user(
+        "sub_admin",
+        scope
+          ? {
+              ...access,
+              data_scopes: { [scope]: "entire_organization" },
+            } as unknown as AuthUser["feature_access"]
+          : access,
+      );
+    }
     case "sub_admin_unpermitted":
       return user("sub_admin", ALL_OFF);
     case "employee":
@@ -219,7 +232,7 @@ describe("every audited HR module route answers identically for all four persona
     for (const p of PERSONAS) {
       it(`${p} ${p === "sub_admin_permitted" ? "WITH" : "without"} ${row.permission ?? "a permission"} -> ${row.path} = ${row.allowed.includes(p)}`, () => {
         expect(
-          canAccessRoute(persona(p, row.permission ?? undefined), row.path),
+          canAccessRoute(persona(p, row.permission ?? undefined, row.scope), row.path),
           `${p} -> ${row.path}`,
         ).toBe(row.allowed.includes(p));
       });
@@ -242,6 +255,16 @@ describe("the specific failures this audit found are closed", () => {
     ]) {
       expect(canAccessRoute(bare, p), `bare sub-admin reached ${p}`).toBe(false);
     }
+  });
+
+  it("a sub-admin with HR Letters View and Own Records scope cannot open shared templates", () => {
+    const scoped = user("sub_admin", {
+      ...ALL_OFF,
+      hr_letters: true,
+      data_scopes: { hr_letters: "own_records" },
+    } as unknown as AuthUser["feature_access"]);
+    expect(canAccessRoute(scoped, "/org/hr-letters")).toBe(true);
+    expect(canAccessRoute(scoped, "/org/letter-templates")).toBe(false);
   });
 
   it("an employee is refused EVERY org module, permission or not", () => {

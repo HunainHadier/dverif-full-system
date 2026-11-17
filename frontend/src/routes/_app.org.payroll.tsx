@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 
 import { authStore, useAuth } from "@/lib/auth";
 import { canAccessRoute } from "@/lib/routeAccess";
-import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
+import { usePermissions } from "@/lib/permissions";
 import { useOrgSubscription } from "@/hooks/useOrgSubscription";
 import { AccessDenied } from "@/components/common/RequireOrgFeature";
 import { ModuleFeatureLockedCard } from "@/components/common/SubscriptionLocked";
@@ -316,9 +316,8 @@ function OrgPayrollPage() {
   const canViewPayroll = perms.hasGranular("payroll.view", "payroll");
   const canGeneratePayroll = perms.hasGranular("payroll.generate", "payroll");
   const canExportPayroll = perms.hasGranular("reports.export");
-  const hasEntirePayrollScope = hasEntireOrganizationScope(user, "payroll");
   const canManagePayrollSettings = perms.hasGranular("payroll.manage_settings", "payroll");
-  const canEditPayrollSettings = canManagePayrollSettings && hasEntirePayrollScope;
+  const canEditPayrollSettings = canManagePayrollSettings;
 
   useEffect(() => {
     if ((tab === "components" || tab === "policies") && !canManagePayrollSettings) {
@@ -969,7 +968,7 @@ function OrgPayrollPage() {
             {canManagePayrollSettings ? <TabsTrigger value="components">Salary Components</TabsTrigger> : null}
             {canManagePayrollSettings ? <TabsTrigger value="policies">
               <SlidersHorizontal className="mr-1.5 h-4 w-4" />
-              Policies
+              Payroll Settings
             </TabsTrigger> : null}
           </TabsList>
 
@@ -1453,20 +1452,12 @@ function OrgPayrollPage() {
           </TabsContent> : null}
           {canManagePayrollSettings ? (
           <TabsContent value="components">
-            {hasEntirePayrollScope ? (
-              <SalaryComponentsManager canManage={canEditPayrollSettings} />
-            ) : (
-              <PayrollScopeRequiredNotice />
-            )}
+            <SalaryComponentsManager canManage={canEditPayrollSettings} />
           </TabsContent>
           ) : null}
           {canManagePayrollSettings ? (
           <TabsContent value="policies">
-            {hasEntirePayrollScope ? (
-              <PayrollPoliciesPanel canManage={canEditPayrollSettings} />
-            ) : (
-              <PayrollScopeRequiredNotice />
-            )}
+            <PayrollPoliciesPanel canManage={canEditPayrollSettings} />
           </TabsContent>
           ) : null}
         </Tabs>
@@ -2075,16 +2066,6 @@ function OrgPayrollPage() {
   );
 }
 
-
-function PayrollScopeRequiredNotice() {
-  return (
-    <Card className="border-border/70 shadow-none">
-      <CardContent className="p-4 text-sm text-muted-foreground">
-        Payroll policies and shared salary components require Entire Organization data scope.
-      </CardContent>
-    </Card>
-  );
-}
 
 function PayrollPoliciesPanel({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();

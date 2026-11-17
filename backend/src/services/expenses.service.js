@@ -192,6 +192,7 @@ export async function createClaim({
   orgId,
   actorUuid,
   employeeUuid,
+  employeeName,
   expenseName,
   amount,
   expenseDate,
@@ -226,9 +227,14 @@ export async function createClaim({
     );
   }
 
-
-
-  const employee = await employeeOnRoster(orgId, employeeUuid, conn);
+  const employee = employeeUuid
+    ? await employeeOnRoster(orgId, employeeUuid, conn)
+    : null;
+  const claimantName = employee?.full_name ?? String(employeeName ?? "").trim();
+  if (!claimantName) throw new ApiError(400, "A claimant name is required");
+  if (!employee && paymentMode !== "direct") {
+    throw new ApiError(400, "Claims without an employee record must use direct payment");
+  }
   const uuid = randomUUID();
 
   await conn.query(
@@ -239,8 +245,8 @@ export async function createClaim({
     [
       uuid,
       orgId,
-      employee.uuid,
-      employee.full_name,
+      employee?.uuid ?? null,
+      claimantName,
       String(expenseName ?? "").trim(),
       money(value),
       expenseDate,
@@ -300,7 +306,7 @@ export async function getClaim({ orgId, claimUuid, conn = pool }) {
 
 /** Paginated claims for the org, optionally filtered. */
 export async function listClaims(
-  { orgId, status, employeeUuid, month, fromDate, toDate, page, limit, offset, scopeFilter, conn = pool },
+  { orgId, status, employeeUuid, createdByUuid, month, fromDate, toDate, page, limit, offset, scopeFilter, conn = pool },
 ) {
   const clauses = ["c.organization_id = ?"];
   const params = [orgId];
@@ -312,10 +318,17 @@ export async function listClaims(
     clauses.push("c.status = ?");
     params.push(status);
   }
-  if (employeeUuid) {
+  if (employeeUuid && createdByUuid) {
+    assertUuid(employeeUuid, "Employee UUID");
+    clauses.push("(c.employee_uuid = ? OR c.created_by = ?)");
+    params.push(employeeUuid, createdByUuid);
+  } else if (employeeUuid) {
     assertUuid(employeeUuid, "Employee UUID");
     clauses.push("c.employee_uuid = ?");
     params.push(employeeUuid);
+  } else if (createdByUuid) {
+    clauses.push("c.created_by = ?");
+    params.push(createdByUuid);
   }
   if (scopeFilter) {
     clauses.push(scopeFilter.sql);
@@ -339,14 +352,14 @@ export async function listClaims(
   if (fromDate && toDate && fromDate > toDate) throw new ApiError(400, "from_date cannot be after to_date");
 
   const where = clauses.join(" AND ");
-  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c JOIN employees e ON e.uuid=c.employee_uuid WHERE ${where}`, params);
+  const [[{ total }]] = await conn.query(`SELECT COUNT(*) AS total FROM expense_claims c LEFT JOIN employees e ON e.uuid=c.employee_uuid WHERE ${where}`, params);
   const [rows] = await conn.query(
     `SELECT c.*,
             (SELECT COUNT(*) FROM attachments a
               WHERE a.entity_type='expense_claim' AND a.entity_uuid=c.uuid AND a.deleted_at IS NULL
             ) AS receipt_count
        FROM expense_claims c
-       JOIN employees e ON e.uuid=c.employee_uuid
+       LEFT JOIN employees e ON e.uuid=c.employee_uuid
       WHERE ${where}
       ORDER BY c.expense_date DESC, c.id DESC
       LIMIT ? OFFSET ?`,
