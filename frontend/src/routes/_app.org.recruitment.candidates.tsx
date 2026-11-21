@@ -33,6 +33,7 @@ import {
 import { RESUME_ACCEPT } from "@/lib/documentTypes";
 import { cnicError, formatCNIC, normalizeCNIC, phoneError } from "@/lib/contactFormat";
 import { apiErrorMessage, formatDate } from "@/lib/utils";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/org/recruitment/candidates")({
   head: () => ({ meta: [{ title: "Candidates â€” Dverif" }] }),
@@ -77,6 +78,8 @@ const STAGE_LABEL: Record<CandidateStage, string> = {
 export function CandidatesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canManageCandidates = permissions.hasGranular("recruitment.manage_candidates", "manage_recruitment");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<CandidateStage | "">("");
@@ -175,7 +178,7 @@ export function CandidatesPage() {
             <Eye className="mr-2 h-3.5 w-3.5" />
             {t("recruitment.resume")}
           </Button>
-          {c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
+          {canManageCandidates && c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
             <Button variant="ghost" size="sm" onClick={() => setEditingCandidate(c)}>
               <Pencil className="mr-2 h-3.5 w-3.5" />
               {t("recruitment.editCandidate")}
@@ -192,7 +195,7 @@ export function CandidatesPage() {
         <PageHeader
           title={t("recruitment.candidatesTitle")}
           description={t("recruitment.candidatesDescription")}
-          actions={<Button onClick={() => setAdding(true)}>{t("recruitment.newCandidate")}</Button>}
+          actions={canManageCandidates ? <Button onClick={() => setAdding(true)}>{t("recruitment.newCandidate")}</Button> : undefined}
         />
 
         <RecruitmentTabs />
@@ -260,7 +263,7 @@ export function CandidatesPage() {
           emptyTitle={t("recruitment.noCandidates")}
           emptyDescription={t("recruitment.noCandidatesDescription")}
           emptyAction={
-            <Button onClick={() => setAdding(true)}>{t("recruitment.newCandidate")}</Button>
+            canManageCandidates ? <Button onClick={() => setAdding(true)}>{t("recruitment.newCandidate")}</Button> : undefined
           }
         />
       </div>
@@ -846,6 +849,8 @@ function CandidateSheet({
   onEdit: (candidate: CandidateDetail) => void;
 }) {
   const { t } = useTranslation();
+  const permissions = usePermissions();
+  const canManageCandidates = permissions.hasGranular("recruitment.manage_candidates", "manage_recruitment");
   const open = Boolean(candidateUuid);
 
   const detail = useQuery({
@@ -868,7 +873,7 @@ function CandidateSheet({
 
         {c ? (
           <div className="space-y-4">
-            {c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
+            {canManageCandidates && c.offer_status !== "sent" && c.offer_status !== "hired" && c.stage !== "hired" ? (
               <Button className="w-full" variant="outline" onClick={() => onEdit(c)}>
                 <Pencil className="mr-2 h-4 w-4" />
                 {t("recruitment.editCandidate")}

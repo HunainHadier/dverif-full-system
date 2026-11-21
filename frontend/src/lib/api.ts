@@ -90,13 +90,14 @@ api.interceptors.response.use(
           withCredentials: true,
         });
         const newToken = data?.data?.accessToken ?? data?.accessToken;
+        const refreshedUser = data?.data?.user ?? data?.user;
         if (newToken) {
           // Only re-seed the refreshed token (in memory) if a live session is
           // still present. After a logout the user object is removed, so we
           // must NOT write the refreshed token back, otherwise the login
           // page's beforeLoad would see it and bounce the user away.
           if (authStore.get().user) {
-            authStore.setToken(newToken);
+            authStore.refreshSession(newToken, refreshedUser);
           }
           processQueue(null, newToken);
           originalRequest.headers.Authorization = `Bearer ${newToken}`;

@@ -94,11 +94,13 @@ export function AttachmentCard({
   attachment,
   onDeleted,
   handlers = ASSET_ATTACHMENT_HANDLERS,
+  canRemove = true,
 }: {
   attachment: AssetAttachment;
   onDeleted: () => void;
   /** Omit for asset attachments; expense receipts pass the expense service. */
   handlers?: AttachmentCardHandlers;
+  canRemove?: boolean;
 }) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
@@ -318,7 +320,7 @@ export function AttachmentCard({
             <Download className="h-4 w-4" />
           )}
         </Button>
-        <Button
+        {canRemove ? <Button
           variant="ghost"
           size="icon"
           title={t("assets.attachmentDelete")}
@@ -332,7 +334,7 @@ export function AttachmentCard({
           ) : (
             <Trash2 className="h-4 w-4" />
           )}
-        </Button>
+        </Button> : null}
       </div>
 
       {downloadError ? (

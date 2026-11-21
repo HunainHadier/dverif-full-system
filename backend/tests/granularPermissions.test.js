@@ -35,7 +35,7 @@ describe("granular permission catalog", () => {
     const keys = Object.entries(GRANULAR_PERMISSION_CATALOG).flatMap(([module, actions]) =>
       actions.map((action) => `${module}.${action}`),
     );
-    expect(keys.length).toBe(61);
+    expect(keys.length).toBe(55);
     expect(new Set(keys).size).toBe(keys.length);
     expect(GRANULAR_PERMISSION_CATALOG.leave_management).not.toContain("submit_on_behalf");
     expect(ADMIN_PERMISSION_UI).not.toContain("submit_on_behalf");
@@ -175,7 +175,7 @@ describe("granular permission catalog", () => {
 
   it("shows payroll controls only for their exact grants", () => {
     expect(PAYROLL_UI).toContain('perms.hasGranular("payroll.generate", "payroll")');
-    expect(PAYROLL_UI).toContain('perms.hasGranular("reports.export")');
+    expect(PAYROLL_UI).toContain("const canExportPayroll = canViewPayroll");
     expect(PAYROLL_UI).toContain("canViewPayroll ? <TabsTrigger value=\"employees\"");
     expect(PAYROLL_UI).toContain("canManagePayrollSettings ? <TabsTrigger value=\"components\"");
     expect(PAYROLL_UI).toContain("canManagePayrollSettings ? <TabsTrigger value=\"policies\"");
@@ -185,7 +185,7 @@ describe("granular permission catalog", () => {
     expect(SALARY_COMPONENTS_UI).toContain("canManage ? <Button size=\"sm\"");
   });
 
-  it("gates HR letter controls by their exact grants and shared template scope", () => {
+  it("gates HR letter controls by exact grants while keeping shared templates accessible", () => {
     for (const permission of [
       "hr_letters.create_draft",
       "hr_letters.edit_draft",
@@ -202,9 +202,8 @@ describe("granular permission catalog", () => {
     expect(EMPLOYEE_LETTERS_UI).toContain("permissions.isOrgAdmin ? (");
     expect(ISSUE_LETTER_DIALOG).toContain("canSaveDraft = true");
     expect(LETTER_TEMPLATES_UI).toContain('permissions.hasGranular("hr_letters.manage_templates", "hr_letters")');
-    expect(LETTER_TEMPLATES_UI).toContain("enabled: hasTemplateScope");
-    expect(LETTER_TEMPLATES_UI).toContain("!hasTemplateScope");
-    expect(ORG_ROUTES).toContain('requireEntireModuleScope("hr_letters")');
+    expect(LETTER_TEMPLATES_UI).toContain("enabled: permissions.hr_letters");
+    expect(ORG_ROUTES).not.toContain('router.get("/letter-templates", [...hrLetterView, hrLettersOrgWideScope]');
     expect(ORG_ROUTES).toContain('requirePermission("hr_letters.manage_templates")');
   });
 

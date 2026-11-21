@@ -22,6 +22,7 @@ import { RecruitmentTabs } from "@/components/hr/RecruitmentTabs";
 import { offersService, type Offer } from "@/services";
 import { apiErrorMessage, formatDate, formatDateTime } from "@/lib/utils";
 import { cnicError, formatCNIC, normalizeCNIC } from "@/lib/contactFormat";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/org/recruitment/offers")({
   head: () => ({ meta: [{ title: "Offers — Dverif" }] }),
@@ -52,6 +53,9 @@ export function OffersPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canManageOffers = permissions.hasGranular("recruitment.manage_offers", "manage_recruitment");
+  const canHire = permissions.hasGranular("recruitment.hire", "manage_recruitment");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Offer | null>(null);
   const [hireCnic, setHireCnic] = useState("");
@@ -253,21 +257,21 @@ export function OffersPage() {
               </section>
             ) : null}
 
-            {SENDABLE_STATUSES.includes(selected?.offer_status ?? "") ? (
+            {canManageOffers && SENDABLE_STATUSES.includes(selected?.offer_status ?? "") ? (
               <Button disabled={send.isPending || Number(selected?.feedback_recorded_interviews ?? 0) < 1} onClick={() => selected && send.mutate(selected)}>
                 {send.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                 {send.isPending ? t("recruitment.sendingOffer", "Sending…") : t("recruitment.sendOffer", "Send Offer Letter")}
               </Button>
-            ) : selected?.offer_status === "sent" ? (
+            ) : canManageOffers && selected?.offer_status === "sent" ? (
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" disabled={send.isPending || Number(selected?.feedback_recorded_interviews ?? 0) < 1} onClick={() => selected && send.mutate(selected)}>
                   {send.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                   {send.isPending ? t("recruitment.sendingOffer", "Sending…") : t("recruitment.resendOffer", "Resend offer")}
                 </Button>
-                <Button disabled={hire.isPending || Number(selected?.feedback_recorded_interviews ?? 0) < 1} onClick={() => selected && startHiring(selected)}>
+                {canHire ? <Button disabled={hire.isPending || Number(selected?.feedback_recorded_interviews ?? 0) < 1} onClick={() => selected && startHiring(selected)}>
                   <UserCheck className="mr-2 h-4 w-4" />
                   {t("recruitment.markHired", "Hired")}
-                </Button>
+                </Button> : null}
               </div>
             ) : null}
 

@@ -98,11 +98,9 @@ export const GRANULAR_PERMISSION_CATALOG = Object.freeze({
   payroll: ["view", "generate", "manage_settings", "manage_employee_components", "adjust_salary"],
   expenses: ["view", "create_own", "approve_employee", "process_payment"],
   hr_letters: ["view", "create_draft", "edit_draft", "issue", "revoke", "manage_templates"],
-  assets: ["view", "create", "edit", "assign", "return", "retire", "manage_categories"],
+  assets: ["view", "create", "edit", "assign", "return", "retire"],
   offboarding: ["view", "initiate", "manage_checklist", "draft_settlement", "approve_settlement", "complete_exit"],
   recruitment: ["view", "create_job", "edit_job", "manage_candidates", "schedule_interview", "record_feedback", "manage_offers", "hire"],
-  reports: ["view", "export", "view_org_analytics"],
-  organization_settings: ["view", "edit"],
 });
 
 export const DATA_SCOPES = Object.freeze(["own_records", "entire_organization"]);
@@ -176,7 +174,6 @@ const LEGACY_GRANT_MAP = Object.freeze({
   "assets.assign": "manage_assets",
   "assets.return": "manage_assets",
   "assets.retire": "manage_assets",
-  "assets.manage_categories": "manage_assets",
   "offboarding.view": "manage_separation",
   "offboarding.initiate": "manage_separation",
   "offboarding.manage_checklist": "manage_separation",

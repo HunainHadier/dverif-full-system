@@ -1,5 +1,10 @@
 import { ok, created } from "../../utils/response.js";
-import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
+import {
+  employeeScopeCondition,
+  assertEmployeeInDataScope,
+  assertCreatedRecordInDataScope,
+  getDataScope,
+} from "../../utils/dataScopes.js";
 import { parsePagination } from "../../utils/pagination.js";
 import ApiError from "../../utils/ApiError.js";
 import { sendPdf } from "../../utils/exportBuilders.js";
@@ -45,6 +50,9 @@ export async function listTemplates(req, res) {
     orgId: req.scopeOrgId,
     letterType: req.query.letter_type || undefined,
     includeInactive: req.query.include_inactive === "1",
+    createdByUuid: getDataScope(req.user, "hr_letters") === "own_records"
+      ? req.user.uuid
+      : undefined,
   });
   // `manual_tags` is deliberately NOT sent. It used to ship on every template-list
     // response and nothing ever read it: the dialog derives manual-vs-auto from each
@@ -56,6 +64,7 @@ export async function listTemplates(req, res) {
 }
 
 export async function getTemplate(req, res) {
+  await assertCreatedRecordInDataScope(req, "hr_letters", "letter_templates", req.params.uuid);
   const template = await letters.getTemplate({
     orgId: req.scopeOrgId,
     templateUuid: req.params.uuid,
@@ -73,6 +82,7 @@ export async function createTemplate(req, res) {
 }
 
 export async function updateTemplate(req, res) {
+  await assertCreatedRecordInDataScope(req, "hr_letters", "letter_templates", req.params.uuid);
   const template = await letters.updateTemplate({
     orgId: req.scopeOrgId,
     templateUuid: req.params.uuid,
@@ -83,6 +93,7 @@ export async function updateTemplate(req, res) {
 }
 
 export async function deleteTemplate(req, res) {
+  await assertCreatedRecordInDataScope(req, "hr_letters", "letter_templates", req.params.uuid);
   await letters.deleteTemplate({
     orgId: req.scopeOrgId,
     templateUuid: req.params.uuid,
@@ -205,6 +216,7 @@ export async function downloadLetterPdf(req, res) {
 
 export async function previewTemplate(req, res) {
   if (!req.body?.employee_uuid) throw new ApiError(400, "employee_uuid is required");
+  await assertCreatedRecordInDataScope(req, "hr_letters", "letter_templates", req.params.uuid);
   await assertEmployeeInDataScope(req, "hr_letters", req.body.employee_uuid);
   const preview = await letters.previewTemplate({
     orgId: req.scopeOrgId,

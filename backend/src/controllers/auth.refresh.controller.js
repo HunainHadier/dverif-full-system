@@ -61,16 +61,19 @@ res.clearCookie(cookieName, { path: "/api/v1" });
 
   if (type === "user") {
     const [rows] = await pool.query(
-      "SELECT id, uuid, status, organization, org_role FROM users WHERE uuid=?",
+      `SELECT id, uuid, full_name, email, status, profile_image, organization,
+              org_role, feature_access, preferred_language
+       FROM users WHERE uuid=?`,
       [decoded.userId]
     );
     if (!rows.length || rows[0].status !== "active") {
       throw new ApiError(401, "User account is no longer active");
     }
+    const user = rows[0];
 
     const rememberMe = (decoded.exp - decoded.iat) > 8 * 24 * 60 * 60;
 
-    const newAccessToken = signAccessToken({ type: "user", userId: decoded.userId, role: "user", organization: rows[0].organization, org_role: rows[0].org_role });
+    const newAccessToken = signAccessToken({ type: "user", userId: decoded.userId, role: "user", organization: user.organization, org_role: user.org_role });
     const newRefreshToken = signRefreshToken({ type: "user", userId: decoded.userId, role: "user" }, rememberMe);
 
     const refreshDecoded = JSON.parse(Buffer.from(newRefreshToken.split(".")[1], "base64url").toString());
@@ -78,7 +81,20 @@ res.clearCookie(cookieName, { path: "/api/v1" });
     await storeRefreshToken({ token: newRefreshToken, type: "user", identifier: decoded.userId, expiresAt });
 
     res.cookie(cookieName, newRefreshToken, getRefreshCookieOptions(rememberMe));
-    return ok(res, { accessToken: newAccessToken }, "Token refreshed");
+    return ok(res, {
+      accessToken: newAccessToken,
+      user: {
+        uuid: user.uuid,
+        full_name: user.full_name,
+        email: user.email,
+        profile_image: user.profile_image,
+        organization: user.organization,
+        org_role: user.org_role,
+        feature_access: user.feature_access,
+        preferred_language: user.preferred_language || "en",
+        role: "user",
+      },
+    }, "Token refreshed");
   } else {
     const [rows] = await pool.query(
       "SELECT id, uuid, email, full_name, status FROM admin_profiles WHERE uuid=?",

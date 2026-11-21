@@ -26,6 +26,7 @@ import {
   type JobStatus,
 } from "@/services";
 import { apiErrorMessage, formatDate } from "@/lib/utils";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/org/recruitment/openings")({
   head: () => ({ meta: [{ title: "Job Openings — Dverif" }] }),
@@ -50,6 +51,9 @@ export const Route = createFileRoute("/_app/org/recruitment/openings")({
 export function OpeningsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canCreate = permissions.hasGranular("recruitment.create_job", "manage_recruitment");
+  const canEdit = permissions.hasGranular("recruitment.edit_job", "manage_recruitment");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<JobOpening | null>(null);
   const [creating, setCreating] = useState(false);
@@ -154,10 +158,10 @@ export function OpeningsPage() {
       className: "w-[260px] text-center",
       render: (o) => (
         <div className="flex items-center justify-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setEditing(o)}>
+          {canEdit ? <Button variant="ghost" size="sm" onClick={() => setEditing(o)}>
             {t("recruitment.editOpening")}
-          </Button>
-          {o.status === "open" ? (
+          </Button> : null}
+          {canEdit ? o.status === "open" ? (
             <Button
               variant="ghost"
               size="sm"
@@ -175,7 +179,7 @@ export function OpeningsPage() {
             >
               {t("recruitment.reactivateOpening")}
             </Button>
-          )}
+          ) : null}
         </div>
       ),
     },
@@ -187,7 +191,7 @@ export function OpeningsPage() {
         <PageHeader
           title={t("recruitment.openingsTitle")}
           description={t("recruitment.openingsDescription")}
-          actions={<Button onClick={() => setCreating(true)}>{t("recruitment.newOpening")}</Button>}
+          actions={canCreate ? <Button onClick={() => setCreating(true)}>{t("recruitment.newOpening")}</Button> : undefined}
         />
 
         <RecruitmentTabs />
@@ -206,7 +210,7 @@ export function OpeningsPage() {
           emptyTitle={t("recruitment.noOpenings")}
           emptyDescription={t("recruitment.noOpeningsDescription")}
           emptyAction={
-            <Button onClick={() => setCreating(true)}>{t("recruitment.newOpening")}</Button>
+            canCreate ? <Button onClick={() => setCreating(true)}>{t("recruitment.newOpening")}</Button> : undefined
           }
         />
       </div>

@@ -28,6 +28,7 @@ import {
 } from "@/services";
 import { apiErrorMessage } from "@/lib/utils";
 import { cnicError, formatCNIC, normalizeCNIC } from "@/lib/contactFormat";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/org/recruitment/pipeline")({
   head: () => ({ meta: [{ title: "Recruitment Pipeline — Dverif" }] }),
@@ -63,6 +64,10 @@ export function RecruitmentPipelinePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canManageCandidates = permissions.hasGranular("recruitment.manage_candidates", "manage_recruitment");
+  const canManageOffers = permissions.hasGranular("recruitment.manage_offers", "manage_recruitment");
+  const canHire = permissions.hasGranular("recruitment.hire", "manage_recruitment");
   const [openingUuid, setOpeningUuid] = useState("");
   const [search, setSearch] = useState("");
   const [dragOver, setDragOver] = useState<CandidateStage | null>(null);
@@ -198,6 +203,9 @@ export function RecruitmentPipelinePage() {
                   candidates={col.candidates}
                   isDragOver={dragOver === col.stage}
                   busy={move.isPending}
+                  canMove={canManageCandidates}
+                  canPrepareOffer={canManageOffers}
+                  canHire={canHire}
                   onDragOverState={(on) => setDragOver(on ? col.stage : null)}
                   onDropCandidate={(uuid) => {
                     setDragOver(null);
@@ -228,7 +236,12 @@ export function RecruitmentPipelinePage() {
                 <ul className="flex flex-wrap gap-2">
                   {rejected.map((c) => (
                     <li key={c.uuid}>
-                      <PipelineCard candidate={c} draggable={false} />
+                      <PipelineCard
+                        candidate={c}
+                        draggable={false}
+                        canPrepareOffer={false}
+                        canHire={false}
+                      />
                     </li>
                   ))}
                 </ul>
@@ -257,6 +270,9 @@ function PipelineColumn({
   candidates,
   isDragOver,
   busy,
+  canMove,
+  canPrepareOffer,
+  canHire,
   onDragOverState,
   onDropCandidate,
   onHire,
@@ -266,6 +282,9 @@ function PipelineColumn({
   candidates: Candidate[];
   isDragOver: boolean;
   busy: boolean;
+  canMove: boolean;
+  canPrepareOffer: boolean;
+  canHire: boolean;
   onDragOverState: (on: boolean) => void;
   onDropCandidate: (uuid: string) => void;
   onHire: (c: Candidate) => void;
@@ -275,17 +294,17 @@ function PipelineColumn({
 
   return (
     <div
-      onDragOver={(e) => {
+      onDragOver={canMove ? (e) => {
         e.preventDefault();
         onDragOverState(true);
-      }}
-      onDragLeave={() => onDragOverState(false)}
-      onDrop={(e) => {
+      } : undefined}
+      onDragLeave={() => canMove && onDragOverState(false)}
+      onDrop={canMove ? (e) => {
         e.preventDefault();
         onDragOverState(false);
         const uuid = e.dataTransfer.getData("text/plain");
         if (uuid) onDropCandidate(uuid);
-      }}
+      } : undefined}
       className={[
         "flex min-h-40 flex-col gap-2 rounded-lg border p-2 transition-colors",
         isDragOver ? "border-primary bg-primary/5" : "border-border bg-card",
@@ -300,7 +319,15 @@ function PipelineColumn({
       </div>
 
       {candidates.map((c) => (
-        <PipelineCard key={c.uuid} candidate={c} draggable={!busy} onHire={() => onHire(c)} onViewOffer={onViewOffer} />
+        <PipelineCard
+          key={c.uuid}
+          candidate={c}
+          draggable={canMove && !busy}
+          canPrepareOffer={canPrepareOffer}
+          canHire={canHire}
+          onHire={() => onHire(c)}
+          onViewOffer={onViewOffer}
+        />
       ))}
 
       {isDragOver && !candidates.length ? (
@@ -315,11 +342,15 @@ function PipelineColumn({
 function PipelineCard({
   candidate,
   draggable,
+  canPrepareOffer,
+  canHire,
   onHire,
   onViewOffer,
 }: {
   candidate: Candidate;
   draggable: boolean;
+  canPrepareOffer: boolean;
+  canHire: boolean;
   onHire?: () => void;
   onViewOffer?: () => void;
 }) {
@@ -365,7 +396,7 @@ function PipelineCard({
           <Eye className="mr-2 h-3.5 w-3.5" />
           {t("recruitment.viewOffer", "View offer")}
         </Button>
-      ) : (candidate.stage === "selected" || candidate.stage === "offered") && onHire ? (
+      ) : (candidate.stage === "selected" || candidate.stage === "offered") && onHire && canPrepareOffer && canHire ? (
         <Button size="sm" className="w-full" onClick={onHire} disabled={Number(candidate.feedback_recorded_interviews ?? 0) < 1} title={Number(candidate.feedback_recorded_interviews ?? 0) < 1 ? "Record the interview feedback and select Passed or Failed before moving this candidate forward." : undefined}>
           <UserPlus className="mr-2 h-3.5 w-3.5" />
           {t("recruitment.prepareOffer", "Prepare offer")}

@@ -73,6 +73,14 @@ export const authStore = {
     inMemoryToken = token;
     emit();
   },
+  refreshSession(token: string, refreshedUser?: Partial<AuthUser>) {
+    inMemoryToken = token;
+    const currentUser = userFromStorage();
+    if (currentUser && refreshedUser) {
+      window.localStorage.setItem("Dverif_user", JSON.stringify({ ...currentUser, ...refreshedUser }));
+    }
+    emit();
+  },
   updateUser(user: AuthUser) {
     window.localStorage.setItem("Dverif_user", JSON.stringify(user));
     emit();
@@ -139,10 +147,11 @@ export function ensureAuthenticated(): Promise<void> {
         withCredentials: true,
       });
       const token = data?.data?.accessToken ?? data?.accessToken;
+      const refreshedUser = data?.data?.user ?? data?.user;
       // Only re-seed when the profile is STILL present: a logout that happened
       // mid-flight must not resurrect the token.
       if (token && window.localStorage.getItem("Dverif_user")) {
-        authStore.setToken(token);
+        authStore.refreshSession(token, refreshedUser);
       }
     } catch (error) {
       // The cookie was explicitly rejected (HTTP response) -> the session is

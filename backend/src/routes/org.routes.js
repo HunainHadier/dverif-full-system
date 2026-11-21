@@ -217,8 +217,6 @@ const requireEntireModuleScope = (moduleKey) => (req, res, next) => {
 const employeeOrgWideScope = requireEntireModuleScope("employees");
 const attendanceOrgWideScope = requireEntireModuleScope("attendance");
 const leaveOrgWideScope = requireEntireModuleScope("leave_management");
-const hrLettersOrgWideScope = requireEntireModuleScope("hr_letters");
-const offboardingOrgWideScope = requireEntireModuleScope("offboarding");
 
 const employeeView = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.view")];
 const employeeCreate = [...staff, requireModuleFeature("employee_management"), requirePermission("employees.create")];
@@ -250,12 +248,6 @@ const payrollEmployeeScope = employeeDataScope("payroll");
 const requireOrganizationWideReportsScope = (req, res, next) => {
   if (getDataScope(req.user, "reports") !== "entire_organization") {
     return next(new ApiError(403, "Organization-wide analytics require Entire Organization data scope."));
-  }
-  return next();
-};
-const requireOrganizationSettingsScope = (req, res, next) => {
-  if (getDataScope(req.user, "organization_settings") !== "entire_organization") {
-    return next(new ApiError(403, "Organization settings require Entire Organization data scope."));
   }
   return next();
 };
@@ -363,7 +355,7 @@ router.put("/payroll-schedule", payrollSettingsAccess, asyncHandler(saveMonthlyW
 
 // ---- Salary records / payroll ledger (staff view+export+build; delete period = org_admin) ----
 router.get("/salary-records", payrollView, asyncHandler(listOrgSalaryRecords));
-router.get("/salary-records/export", [...payrollView, requirePermission("reports.export")], asyncHandler(exportOrgSalaryRecords));
+router.get("/salary-records/export", payrollView, asyncHandler(exportOrgSalaryRecords));
 router.get("/salary-records/:uuid/payslip", payrollView, asyncHandler(downloadPayslip));
 router.delete("/salary-records/:uuid", payrollMgmtOwner, asyncHandler(deleteSalaryRecord));
 router.delete("/salary-records/period/:year/:month", payrollMgmtOwner, asyncHandler(deleteSalaryPeriod));
@@ -394,8 +386,8 @@ router.delete("/employees/:uuid/monthly-salary-variables/:variableUuid", payroll
 import { getApprovalPolicyHandler, updateApprovalPolicyHandler } from "../controllers/org/approvalPolicy.controller.js";
 
 // ---- Approval policy (org_admin) ----
-router.get("/approval-policy", [...staff, requirePermission("organization_settings.view"), requireOrganizationSettingsScope], asyncHandler(getApprovalPolicyHandler));
-router.put("/approval-policy", [...staff, requirePermission("organization_settings.edit"), requireOrganizationSettingsScope], asyncHandler(updateApprovalPolicyHandler));
+router.get("/approval-policy", orgAdminsOnly, asyncHandler(getApprovalPolicyHandler));
+router.put("/approval-policy", orgAdminsOnly, asyncHandler(updateApprovalPolicyHandler));
 
 // ---- Payroll auto-generation (staff) ----
 // Preview is registered before generate and, more importantly, is POST because it
@@ -429,10 +421,10 @@ const offboardingDraftSettlement = [...staff, requireModuleFeature("separation_m
 const offboardingApproveSettlement = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.approve_settlement")];
 const offboardingComplete = [...staff, requireModuleFeature("separation_management"), requirePermission("offboarding.complete_exit")];
 
-router.get("/offboarding/clearance-templates", [...offboardingView, offboardingOrgWideScope], asyncHandler(listExitClearanceTemplates));
-router.post("/offboarding/clearance-templates", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(createExitClearanceTemplate));
-router.put("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(updateExitClearanceTemplate));
-router.delete("/offboarding/clearance-templates/:uuid", [...staff, requireModuleFeature("separation_management"), requirePermission("manage_separation"), requireRole("org_admin")], asyncHandler(deleteExitClearanceTemplate));
+router.get("/offboarding/clearance-templates", [...offboardingView], asyncHandler(listExitClearanceTemplates));
+router.post("/offboarding/clearance-templates", [...offboardingChecklist], asyncHandler(createExitClearanceTemplate));
+router.put("/offboarding/clearance-templates/:uuid", [...offboardingChecklist], asyncHandler(updateExitClearanceTemplate));
+router.delete("/offboarding/clearance-templates/:uuid", [...offboardingChecklist], asyncHandler(deleteExitClearanceTemplate));
 
 router.get("/offboarding/clearances", offboardingView, asyncHandler(listExitChecklistPending));
 router.get("/offboarding/exit-requests", offboardingView, asyncHandler(listExitRequests));
@@ -458,14 +450,14 @@ router.post("/offboarding/exit-requests/:uuid/complete", offboardingComplete, as
 // Ordering note: the literal "/letter-templates" and "/hr-letters/preview" paths
 // are registered BEFORE the "/:uuid" patterns so they cannot be swallowed by the
 // uuid matcher. Same defensive pattern used for "/employees/reference".
-router.get("/letter-templates", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(listTemplates));
-router.post("/letter-templates", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(createTemplate));
-router.post("/letter-templates/preview-pdf", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(previewTemplatePdf));
-router.get("/letter-templates/:uuid", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(getTemplate));
-router.put("/letter-templates/:uuid", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(updateTemplate));
-router.delete("/letter-templates/:uuid", [...hrLetterTemplates, hrLettersOrgWideScope], asyncHandler(deleteTemplate));
+router.get("/letter-templates", hrLetterView, asyncHandler(listTemplates));
+router.post("/letter-templates", hrLetterTemplates, asyncHandler(createTemplate));
+router.post("/letter-templates/preview-pdf", hrLetterView, asyncHandler(previewTemplatePdf));
+router.get("/letter-templates/:uuid", hrLetterView, asyncHandler(getTemplate));
+router.put("/letter-templates/:uuid", hrLetterTemplates, asyncHandler(updateTemplate));
+router.delete("/letter-templates/:uuid", hrLetterTemplates, asyncHandler(deleteTemplate));
 
-router.post("/letter-templates/:uuid/preview", [...hrLetterView, hrLettersOrgWideScope], asyncHandler(previewTemplate));
+router.post("/letter-templates/:uuid/preview", hrLetterView, asyncHandler(previewTemplate));
 
 router.get("/hr-letters", hrLetterView, asyncHandler(listLetters));
 router.post("/hr-letters", hrLetterCreate, asyncHandler(createLetter));
@@ -486,7 +478,6 @@ const assetEdit = [...staff, requireModuleFeature("asset_management"), requirePe
 const assetAssign = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.assign")];
 const assetReturn = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.return")];
 const assetRetire = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.retire")];
-const assetCategories = [...staff, requireModuleFeature("asset_management"), requirePermission("assets.manage_categories")];
 
 // ---- Recruitment ----------------------------------------------------------
 // ONE GATE FOR THE WHOLE MODULE, named once.
@@ -672,7 +663,7 @@ router.get(
 );
 
 // ---- Org dashboard analytics (staff) ----
-router.get("/dashboard/analytics", [...staff, requirePermission("reports.view_org_analytics"), requireOrganizationWideReportsScope], asyncHandler(orgDashboardAnalytics));
+router.get("/dashboard/analytics", [...orgAdminsOnly, requireOrganizationWideReportsScope], asyncHandler(orgDashboardAnalytics));
 
 import {
   uploadReceipts,

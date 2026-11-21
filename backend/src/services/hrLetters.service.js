@@ -215,9 +215,13 @@ async function buildReferenceNumber(conn, orgId) {
 // Templates
 // ---------------------------------------------------------------------------
 
-export async function listTemplates({ orgId, letterType, includeInactive = false }) {
+export async function listTemplates({ orgId, letterType, includeInactive = false, createdByUuid }) {
   const clauses = ["organization_id=?"];
   const params = [orgId];
+  if (createdByUuid) {
+    clauses.push("created_by_uuid=?");
+    params.push(createdByUuid);
+  }
   if (letterType) {
     clauses.push("letter_type=?");
     params.push(letterType);

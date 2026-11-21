@@ -256,6 +256,7 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
   const canIssue = permissions.hasGranular("hr_letters.issue", "hr_letters");
   const canRevoke = permissions.hasGranular("hr_letters.revoke", "hr_letters");
   const [confirm, setConfirm] = useState<null | "delete" | "revoke" | "revert">(null);
+  const [revokeReason, setRevokeReason] = useState("");
   /**
    * Issue opens a dialog rather than firing straight at the API. The backend
    * refuses to issue while any merge tag is unresolved, so a bare POST returned
@@ -416,8 +417,15 @@ export function RowActions({ row }: { row: HrLetterListItem }) {
         title={t("letters.revoke")}
         description={t("letters.revokeDescription")}
         confirmLabel={t("letters.revoke")}
+        inputLabel="Revoke reason"
+        inputPlaceholder="Explain why this letter is being revoked"
+        inputValue={revokeReason}
+        onInputChange={setRevokeReason}
+        inputRequired
+        loading={revoke.isPending}
+        error={revoke.isError ? apiErrorMessage(revoke.error, "Could not revoke letter") : null}
         onConfirm={async () => {
-          await revoke.mutateAsync("");
+          await revoke.mutateAsync(revokeReason.trim());
         }}
         onOpenChange={(v) => !v && setConfirm(null)}
       />
@@ -589,7 +597,7 @@ function CreateLetterDialog({
       form={form}
       title={t("letters.newLetter")}
       description={t("letters.newLetterDescription")}
-      submitLabel={t("letters.createDraft")}
+      submitLabel="Assign Letter"
       cancelLabel={t("common.cancel")}
       onSubmit={(values) =>
         create.mutateAsync({

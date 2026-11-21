@@ -18,8 +18,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ModuleGate } from "@/components/hr/ModuleGate";
 import { DataTable, DataTableToolbar, type DataTableColumn } from "@/components/hr/DataTable";
 import { FormDialog } from "@/components/hr/FormDialog";
-import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
-import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/lib/permissions";
 import { letterTemplatesService, HR_LETTER_TYPES } from "@/services";
 import type { LetterTemplate, UUID } from "@/services";
 
@@ -36,12 +35,9 @@ export const Route = createFileRoute("/_app/org/letter-templates")({
 function LetterTemplatesPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const { user } = useAuth();
   const permissions = usePermissions();
-  const hasTemplateScope =
-    permissions.isOrgAdmin || hasEntireOrganizationScope(user, "hr_letters");
   const canManageTemplates =
-    hasTemplateScope && permissions.hasGranular("hr_letters.manage_templates", "hr_letters");
+    permissions.hasGranular("hr_letters.manage_templates", "hr_letters");
   const [editing, setEditing] = useState<LetterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<LetterTemplate | null>(null);
@@ -49,7 +45,7 @@ function LetterTemplatesPage() {
   const query = useQuery({
     queryKey: ["letter-templates"],
     queryFn: () => letterTemplatesService.list({ include_inactive: true }),
-    enabled: hasTemplateScope,
+    enabled: permissions.hr_letters,
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["letter-templates"] });
@@ -150,13 +146,7 @@ function LetterTemplatesPage() {
           <p className="text-xs text-muted-foreground">{t("letters.templatesHint")}</p>
         </DataTableToolbar>
 
-        {!hasTemplateScope ? (
-          <EmptyState
-            icon={FileText}
-            title={t("letters.templateScopeRequired")}
-            description={t("letters.templateScopeRequiredDescription")}
-          />
-        ) : query.isError ? (
+        {query.isError ? (
           <EmptyState
             icon={FileText}
             title={t("letters.loadFailed")}

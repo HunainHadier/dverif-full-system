@@ -74,6 +74,24 @@ describe("asset detail panel is a real side panel", () => {
   });
 });
 
+describe("asset action permissions", () => {
+  it("gates create and every row transition on exact asset grants", () => {
+    expect(ASSETS).toContain('permissions.hasGranular("assets.create", "manage_assets")');
+    expect(ASSETS).toContain('permissions.hasGranular("assets.edit", "manage_assets")');
+    expect(ASSETS).toContain('permissions.hasGranular("assets.assign", "manage_assets")');
+    expect(ASSETS).toContain('permissions.hasGranular("assets.return", "manage_assets")');
+    expect(ASSETS).toContain('permissions.hasGranular("assets.retire", "manage_assets")');
+  });
+
+  it("does not expose create or write controls to view-only sub-admins", () => {
+    expect(ASSETS).toMatch(/actions=\{canCreate\s*\?/);
+    expect(ASSETS).toContain("canEdit &&");
+    expect(ASSETS).toContain("canAssign &&");
+    expect(ASSETS).toContain("canReturn &&");
+    expect(ASSETS).toContain("canRetire &&");
+  });
+});
+
 describe("asset category removal", () => {
   it("removes category APIs and category controls from the asset screens", () => {
     expect(ASSETS).not.toMatch(/assetCategoriesService|category_uuid|assets\.category/);

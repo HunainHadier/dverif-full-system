@@ -68,15 +68,24 @@ export function daysUntilLastWorkingDay(fromIso, toIso) {
 
 const CLEARANCE_DEPARTMENTS = new Set(["IT", "Finance", "Assets", "HR"]);
 
-export async function listClearanceTemplates({ orgId, conn = pool }) {
+export async function listClearanceTemplates({ orgId, createdByUuid, conn = pool }) {
+  const clauses = ["organization_id=?"];
+  const params = [orgId];
+  if (createdByUuid) {
+    clauses.push("created_by_uuid=?");
+    params.push(createdByUuid);
+  }
   const [rows] = await conn.query(
-    "SELECT uuid, department, task_name, is_active, sort_order, created_at, updated_at FROM offboarding_clearance_templates WHERE organization_id=? ORDER BY sort_order ASC, id ASC",
-    [orgId],
+    `SELECT uuid, department, task_name, is_active, sort_order, created_at, updated_at
+       FROM offboarding_clearance_templates
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY sort_order ASC, id ASC`,
+    params,
   );
   return rows;
 }
 
-export async function createClearanceTemplate({ orgId, department, taskName, conn = pool }) {
+export async function createClearanceTemplate({ orgId, createdByUuid, department, taskName, conn = pool }) {
   const name = typeof taskName === "string" ? taskName.trim() : "";
   if (!CLEARANCE_DEPARTMENTS.has(department)) throw new ApiError(400, "department must be IT, Finance, Assets or HR");
   if (!name || name.length > 200) throw new ApiError(400, "task_name is required and must be at most 200 characters");
@@ -86,8 +95,8 @@ export async function createClearanceTemplate({ orgId, department, taskName, con
     [orgId],
   );
   await conn.query(
-    "INSERT INTO offboarding_clearance_templates (uuid, organization_id, department, task_name, is_active, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, NOW(), NOW())",
-    [uuid, orgId, department, name, nextOrder],
+    "INSERT INTO offboarding_clearance_templates (uuid, organization_id, created_by_uuid, department, task_name, is_active, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, NOW(), NOW())",
+    [uuid, orgId, createdByUuid ?? null, department, name, nextOrder],
   );
   const [rows] = await conn.query(
     "SELECT uuid, department, task_name, is_active, sort_order, created_at, updated_at FROM offboarding_clearance_templates WHERE uuid=? AND organization_id=?",
@@ -96,11 +105,13 @@ export async function createClearanceTemplate({ orgId, department, taskName, con
   return rows[0];
 }
 
-export async function updateClearanceTemplate({ orgId, uuid, department, taskName, isActive, conn = pool }) {
+export async function updateClearanceTemplate({ orgId, createdByUuid, uuid, department, taskName, isActive, conn = pool }) {
   assertUuid(uuid, "Clearance template UUID");
+  const ownerClause = createdByUuid ? " AND created_by_uuid=? " : "";
+  const ownerParams = createdByUuid ? [createdByUuid] : [];
   const [existing] = await conn.query(
-    "SELECT uuid FROM offboarding_clearance_templates WHERE uuid=? AND organization_id=?",
-    [uuid, orgId],
+    `SELECT uuid FROM offboarding_clearance_templates WHERE uuid=? AND organization_id=?${ownerClause}`,
+    [uuid, orgId, ...ownerParams],
   );
   if (!existing.length) throw new ApiError(404, "Clearance template task not found");
   const name = typeof taskName === "string" ? taskName.trim() : "";
@@ -117,11 +128,13 @@ export async function updateClearanceTemplate({ orgId, uuid, department, taskNam
   return rows[0];
 }
 
-export async function deleteClearanceTemplate({ orgId, uuid, conn = pool }) {
+export async function deleteClearanceTemplate({ orgId, createdByUuid, uuid, conn = pool }) {
   assertUuid(uuid, "Clearance template UUID");
+  const ownerClause = createdByUuid ? " AND created_by_uuid=? " : "";
+  const ownerParams = createdByUuid ? [createdByUuid] : [];
   const [result] = await conn.query(
-    "DELETE FROM offboarding_clearance_templates WHERE uuid=? AND organization_id=?",
-    [uuid, orgId],
+    `DELETE FROM offboarding_clearance_templates WHERE uuid=? AND organization_id=?${ownerClause}`,
+    [uuid, orgId, ...ownerParams],
   );
   if (!result.affectedRows) throw new ApiError(404, "Clearance template task not found");
   return { uuid };
@@ -191,6 +204,7 @@ export async function createExitRequest({
   lastWorkingDay,
   reason,
   hrNotes,
+  templateOwnerUuid,
   status = "pending",
   decidedBy = null,
   conn = pool,
@@ -257,9 +271,18 @@ export async function createExitRequest({
       ],
     );
 
+    const templateClauses = ["organization_id=?", "is_active=1"];
+    const templateParams = [orgId];
+    if (templateOwnerUuid) {
+      templateClauses.push("created_by_uuid=?");
+      templateParams.push(templateOwnerUuid);
+    }
     const [template] = await db.query(
-      "SELECT department, task_name FROM offboarding_clearance_templates WHERE organization_id=? AND is_active=1 ORDER BY sort_order ASC, id ASC",
-      [orgId],
+      `SELECT department, task_name
+         FROM offboarding_clearance_templates
+        WHERE ${templateClauses.join(" AND ")}
+        ORDER BY sort_order ASC, id ASC`,
+      templateParams,
     );
     for (const item of template) {
       await db.query(

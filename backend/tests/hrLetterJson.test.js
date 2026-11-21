@@ -70,6 +70,14 @@ describe("normalizeTemplate", () => {
 });
 
 describe("listTemplates — the endpoint that crashed the page", () => {
+  it("filters templates to their creator for an Own Records sub-admin", async () => {
+    pool.query.mockResolvedValueOnce([[], []]);
+    await listTemplates({ orgId: 2, createdByUuid: "sub-admin-uuid" });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toContain("created_by_uuid=?");
+    expect(params).toContain("sub-admin-uuid");
+  });
+
   it("returns real arrays, not JSON text", async () => {
     pool.query.mockResolvedValueOnce([
       [{ uuid: TEMPLATE, name: "Increment", merge_fields: '["employee_name","new_salary"]' }],

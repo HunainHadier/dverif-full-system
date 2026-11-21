@@ -94,11 +94,9 @@ const PERMISSION_MODULES = [
   { key: "payroll", label: "Payroll", actions: [["view","View"],["generate","Generate"],["manage_settings","Manage Payroll Settings"],["manage_employee_components","Manage Employee Salary Components"],["adjust_salary","Adjust Employee Salary"]] },
   { key: "expenses", label: "Expenses", actions: [["view","View"],["create_own","Create Own Expense"],["approve_employee","Approve Employee Expenses"],["process_payment","Process Payment"]] },
   { key: "hr_letters", label: "HR Letters", actions: [["view","View"],["create_draft","Create Letter"],["edit_draft","Edit Draft"],["issue","Issue"],["revoke","Revoke"],["manage_templates","Manage Templates"]] },
-  { key: "assets", label: "Assets", actions: [["view","View"],["create","Create"],["edit","Edit"],["assign","Assign"],["return","Return"],["retire","Retire"],["manage_categories","Manage Categories"]] },
-  { key: "offboarding", label: "Offboarding", actions: [["view","View"],["initiate","Initiate"],["manage_checklist","Manage Checklist"],["draft_settlement","Draft Settlement"],["approve_settlement","Approve Settlement"],["complete_exit","Complete Exit"]] },
-  { key: "recruitment", label: "Recruitment", actions: [["view","View"],["create_job","Create Job"],["edit_job","Edit Job"],["manage_candidates","Manage Candidates"],["schedule_interview","Schedule Interview"],["record_feedback","Record Feedback"],["manage_offers","Manage Offers"],["hire","Hire"]] },
-  { key: "reports", label: "Reports", actions: [["view","View Reports"],["export","Export Reports"],["view_org_analytics","View Organization-wide Analytics"]] },
-  { key: "organization_settings", label: "Organization Settings", actions: [["view","View Settings"],["edit","Edit Settings"]] },
+  { key: "assets", label: "Assets", actions: [["view","View"],["create","Create"],["edit","Edit"],["assign","Assign"],["return","Return"],["retire","Retire"]] },
+  { key: "offboarding", label: "Offboarding", actions: [["view","View Exit Requests"],["initiate","Create Exit Request"],["manage_checklist","Manage Clearance Checklist"],["draft_settlement","Draft Final Settlement"],["approve_settlement","Approve / Pay Settlement"],["complete_exit","Complete Exit"]] },
+  { key: "recruitment", label: "Recruitment", actions: [["view","View Recruitment"],["create_job","Create Job Opening"],["edit_job","Edit Job Opening"],["manage_candidates","Manage Candidates"],["schedule_interview","Schedule Interviews"],["record_feedback","Record Interview Feedback"],["manage_offers","Manage / Send Offers"],["hire","Hire Candidates"]] },
 ] as const;
 
 const ALL_GRANULAR_KEYS = PERMISSION_MODULES.flatMap((module) => module.actions.map(([action]) => `${module.key}.${action}`));
@@ -140,7 +138,7 @@ function permissionAccess(raw?: OrgAdminUserRecord["feature_access"]): Permissio
     "payroll.view":"payroll","payroll.generate":"payroll","payroll.manage_settings":"payroll","payroll.manage_employee_components":"payroll","payroll.adjust_salary":"payroll",
     "expenses.view":"approve_expenses","expenses.create_own":"create_expenses","expenses.approve_employee":"approve_expenses","expenses.process_payment":"approve_expenses",
     "hr_letters.view":"hr_letters","hr_letters.create_draft":"hr_letters","hr_letters.edit_draft":"hr_letters","hr_letters.issue":"hr_letters","hr_letters.revoke":"hr_letters","hr_letters.manage_templates":"hr_letters",
-    "assets.view":"manage_assets","assets.create":"manage_assets","assets.edit":"manage_assets","assets.assign":"manage_assets","assets.return":"manage_assets","assets.retire":"manage_assets","assets.manage_categories":"manage_assets",
+    "assets.view":"manage_assets","assets.create":"manage_assets","assets.edit":"manage_assets","assets.assign":"manage_assets","assets.return":"manage_assets","assets.retire":"manage_assets",
     "offboarding.view":"manage_separation","offboarding.initiate":"manage_separation","offboarding.manage_checklist":"manage_separation","offboarding.draft_settlement":"manage_separation","offboarding.approve_settlement":"manage_separation","offboarding.complete_exit":"manage_separation",
     "recruitment.view":"manage_recruitment","recruitment.create_job":"manage_recruitment","recruitment.edit_job":"manage_recruitment","recruitment.manage_candidates":"manage_recruitment","recruitment.schedule_interview":"manage_recruitment","recruitment.record_feedback":"manage_recruitment","recruitment.manage_offers":"manage_recruitment","recruitment.hire":"manage_recruitment",
   };

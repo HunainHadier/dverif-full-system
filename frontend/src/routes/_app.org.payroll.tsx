@@ -315,7 +315,7 @@ function OrgPayrollPage() {
   const canDelete = user?.org_role === "org_admin";
   const canViewPayroll = perms.hasGranular("payroll.view", "payroll");
   const canGeneratePayroll = perms.hasGranular("payroll.generate", "payroll");
-  const canExportPayroll = perms.hasGranular("reports.export");
+  const canExportPayroll = canViewPayroll;
   const canManagePayrollSettings = perms.hasGranular("payroll.manage_settings", "payroll");
   const canEditPayrollSettings = canManagePayrollSettings;
 

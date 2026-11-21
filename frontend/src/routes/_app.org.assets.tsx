@@ -40,6 +40,7 @@ import {
 import { PageHeader } from "@/components/common/PageHeader";
 import { SearchInput } from "@/components/common/SearchInput";
 import { SearchableSelect, type SearchableSelectItem } from "@/components/common/SearchableSelect";
+import { usePermissions } from "@/lib/permissions";
 import {
   ASSET_STATUS_VARIANT,
   assetsService,
@@ -81,6 +82,8 @@ const PAGE_SIZE = 20;
 function AssetsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canCreate = permissions.hasGranular("assets.create", "manage_assets");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<AssetStatus | "">("");
@@ -91,7 +94,7 @@ function AssetsPage() {
   >(null);
   const [active, setActive] = useState<Asset | null>(null);
 
-  const employeesQ = useQuery({ queryKey: ["assetFilterEmployees"], queryFn: () => orgService.employees({ page: 1, limit: 1000, scope: "org" }) });
+  const employeesQ = useQuery({ queryKey: ["assetFilterEmployees"], queryFn: () => orgService.employees({ page: 1, limit: 100, scope: "org" }) });
 
   const list = useQuery({
     queryKey: ["assets", page, search, status, employeeUuid],
@@ -183,7 +186,7 @@ function AssetsPage() {
         <PageHeader
           title={t("assets.title")}
           description={t("assets.description")}
-          actions={
+          actions={canCreate ? (
             <Button
               onClick={() => {
                 setActive(null);
@@ -193,7 +196,7 @@ function AssetsPage() {
               <Plus className="mr-2 h-4 w-4" />
               {t("assets.newAsset")}
             </Button>
-          }
+          ) : undefined}
         />
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -325,6 +328,11 @@ function RowActions({
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canEdit = permissions.hasGranular("assets.edit", "manage_assets");
+  const canAssign = permissions.hasGranular("assets.assign", "manage_assets");
+  const canReturn = permissions.hasGranular("assets.return", "manage_assets");
+  const canRetire = permissions.hasGranular("assets.retire", "manage_assets");
   const [busy, setBusy] = useState(false);
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -365,14 +373,14 @@ function RowActions({
           {t("assets.viewDetails")}
         </DropdownMenuItem>
 
-        {row.status === "available" || row.status === "assigned" ? (
+        {canEdit && (row.status === "available" || row.status === "assigned") ? (
           <DropdownMenuItem onSelect={() => onDialog("edit")}>
             <FileText className="mr-2 h-4 w-4" />
             {t("common.edit")}
           </DropdownMenuItem>
         ) : null}
 
-        {row.status === "available" ? (
+        {canAssign && row.status === "available" ? (
           <>
             <DropdownMenuItem onSelect={() => onDialog("assign")}>
               <Send className="mr-2 h-4 w-4" />
@@ -381,7 +389,7 @@ function RowActions({
           </>
         ) : null}
 
-        {row.status === "assigned" ? (
+        {canReturn && row.status === "assigned" ? (
           <DropdownMenuItem onSelect={() => onDialog("return")}>
             <Undo2 className="mr-2 h-4 w-4" />
             {t("assets.returnAsset")}
@@ -389,14 +397,14 @@ function RowActions({
         ) : null}
 
         {/* Retire is available-only: return assigned assets first. */}
-        {row.status === "available" ? (
+        {canRetire && row.status === "available" ? (
           <DropdownMenuItem onSelect={() => onDialog("retire")}>
             <Trash2 className="mr-2 h-4 w-4" />
             {t("assets.retire")}
           </DropdownMenuItem>
         ) : null}
 
-        {row.status === "retired" ? (
+        {canRetire && row.status === "retired" ? (
           <DropdownMenuItem onSelect={() => void run(() => assetsService.reinstate(row.uuid))}>
             <RotateCcw className="mr-2 h-4 w-4" />
             {t("assets.reinstate")}
@@ -422,6 +430,8 @@ function AssetDetailDrawer({
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canEdit = permissions.hasGranular("assets.edit", "manage_assets");
   const open = Boolean(uuid);
 
   const detail = useQuery({
@@ -578,6 +588,7 @@ function AssetDetailDrawer({
                 </div>
               )}
 
+              {canEdit ? (
               <div className="pt-2 border-t space-y-2">
                 <FileDropzone
                   value={receiptFiles}
@@ -595,6 +606,7 @@ function AssetDetailDrawer({
                   {t("assets.upload")}
                 </Button>
               </div>
+              ) : null}
               {uploadReceipt.isError ? (
                 <p className="mt-2 text-sm text-destructive">
                   {apiErrorMessage(uploadReceipt.error, t("assets.uploadFailed"))}
@@ -619,9 +631,14 @@ function AssetDetailDrawer({
  * screen until the panel was reopened.
  */
 function AttachmentRow({ file, refresh }: { file: AssetAttachment; refresh: () => void }) {
+  const permissions = usePermissions();
   return (
     <div className="mt-2">
-      <AttachmentCard attachment={file} onDeleted={refresh} />
+      <AttachmentCard
+        attachment={file}
+        onDeleted={refresh}
+        canRemove={permissions.hasGranular("assets.edit", "manage_assets")}
+      />
     </div>
   );
 }

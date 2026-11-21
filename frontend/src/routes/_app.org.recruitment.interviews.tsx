@@ -22,6 +22,7 @@ import {
   type InterviewMode,
 } from "@/services";
 import { apiErrorMessage, formatDateTime } from "@/lib/utils";
+import { usePermissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/org/recruitment/interviews")({
   head: () => ({ meta: [{ title: "Interviews — Dverif" }] }),
@@ -53,6 +54,9 @@ export const Route = createFileRoute("/_app/org/recruitment/interviews")({
 export function InterviewsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canSchedule = permissions.hasGranular("recruitment.schedule_interview", "manage_recruitment");
+  const canFeedback = permissions.hasGranular("recruitment.record_feedback", "manage_recruitment");
   const [scheduling, setScheduling] = useState(false);
   const [feedbackFor, setFeedbackFor] = useState<Interview | null>(null);
   const [detailsFor, setDetailsFor] = useState<Interview | null>(null);
@@ -189,19 +193,19 @@ export function InterviewsPage() {
             <Eye className="mr-1 h-3.5 w-3.5" />
             Details
           </Button>
-          {i.status === "scheduled" ? (
+          {i.status === "scheduled" && (canFeedback || canSchedule) ? (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setFeedbackFor(i)}>
+              {canFeedback ? <Button variant="ghost" size="sm" onClick={() => setFeedbackFor(i)}>
                 {t("recruitment.recordFeedback")}
-              </Button>
-              <Button
+              </Button> : null}
+              {canSchedule ? <Button
                 variant="ghost"
                 size="sm"
                 disabled={cancel.isPending}
                 onClick={() => cancel.mutate(i)}
               >
                 {t("recruitment.cancelInterview")}
-              </Button>
+              </Button> : null}
             </>
           ) : null}
         </div>
@@ -215,11 +219,11 @@ export function InterviewsPage() {
         <PageHeader
           title={t("recruitment.interviewsTitle")}
           description={t("recruitment.interviewsDescription")}
-          actions={
+          actions={canSchedule ? (
             <Button onClick={() => setScheduling(true)}>
               {t("recruitment.scheduleInterview")}
             </Button>
-          }
+          ) : undefined}
         />
 
         <RecruitmentTabs />

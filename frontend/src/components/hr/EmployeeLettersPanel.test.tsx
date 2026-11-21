@@ -4,9 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { authStore, type AuthUser } from "@/lib/auth";
 
-const { listLetters, removeLetter } = vi.hoisted(() => ({
+const { listLetters, removeLetter, revokeLetter, createLetter, listTemplates } = vi.hoisted(() => ({
   listLetters: vi.fn(),
   removeLetter: vi.fn(),
+  revokeLetter: vi.fn(),
+  createLetter: vi.fn(),
+  listTemplates: vi.fn(),
 }));
 
 vi.mock("@/services", async (importOriginal) => {
@@ -17,10 +20,12 @@ vi.mock("@/services", async (importOriginal) => {
       ...actual.hrLettersService,
       list: listLetters,
       remove: removeLetter,
+      revoke: revokeLetter,
+      create: createLetter,
     },
     letterTemplatesService: {
       ...actual.letterTemplatesService,
-      list: vi.fn(async () => ({ items: [] })),
+      list: listTemplates,
     },
   };
 });
@@ -38,6 +43,12 @@ const draft = {
   created_at: "2026-01-01T00:00:00Z",
   template_uuid: "template-1",
   payload: {},
+};
+
+const issued = {
+  ...draft,
+  uuid: "letter-issued",
+  status: "issued" as const,
 };
 
 function renderPanel() {
@@ -64,6 +75,9 @@ describe("EmployeeLettersPanel draft actions", () => {
     });
     listLetters.mockResolvedValue({ items: [draft], total: 1, totalPages: 1, page: 1 });
     removeLetter.mockResolvedValue({});
+    revokeLetter.mockResolvedValue({});
+    createLetter.mockResolvedValue(draft);
+    listTemplates.mockResolvedValue({ items: [] });
   });
 
   afterEach(() => authStore.clear());
@@ -78,6 +92,33 @@ describe("EmployeeLettersPanel draft actions", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(removeLetter).toHaveBeenCalledWith("letter-draft"));
+  });
+
+  it("offers and submits Revoke for an issued letter", async () => {
+    const orgAdmin = authStore.get().user!;
+    authStore.updateUser({
+      ...orgAdmin,
+      org_role: "sub_admin",
+      feature_access: {
+        granular_permissions: {
+          "hr_letters.view": true,
+          "hr_letters.revoke": true,
+        },
+      } as unknown as AuthUser["feature_access"],
+    });
+    listLetters.mockResolvedValue({ items: [issued], total: 1, totalPages: 1, page: 1 });
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Revoke letter" }));
+    expect(revokeLetter).not.toHaveBeenCalled();
+
+    await user.type(screen.getByPlaceholderText("Explain why this letter is being revoked"), "Incorrect salary");
+    await user.click(screen.getByRole("button", { name: "Revoke letter" }));
+
+    await waitFor(() =>
+      expect(revokeLetter).toHaveBeenCalledWith("letter-issued", "Incorrect salary"),
+    );
   });
 
   it("does not show create, edit, issue, or delete controls with view-only access", async () => {

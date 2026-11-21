@@ -36,6 +36,7 @@ import {
 } from "@/services";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { authStore } from "@/lib/auth";
+import { usePermissions } from "@/lib/permissions";
 import { apiErrorMessage, formatCurrency, formatDate } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/org/offboarding")({
@@ -77,6 +78,9 @@ const STATUS_VARIANT: Record<ExitStatus, "default" | "secondary" | "outline" | "
 function OrgOffboardingPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canInitiate = permissions.hasGranular("offboarding.initiate", "manage_separation");
+  const canManageChecklist = permissions.hasGranular("offboarding.manage_checklist", "manage_separation");
   const [tab, setTab] = useState("requests");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -89,7 +93,6 @@ function OrgOffboardingPage() {
   const [detailUuid, setDetailUuid] = useState<string | null>(null);
   const [confirmComplete, setConfirmComplete] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
-  const isOrgAdmin = authStore.get().user?.org_role === "org_admin";
 
   useEffect(() => {
     setPage(1);
@@ -99,7 +102,7 @@ function OrgOffboardingPage() {
 
   const employees = useQuery({
     queryKey: ["offboarding-filter-employees"],
-    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+    queryFn: () => orgService.employees({ page: 1, limit: 100 }),
   });
 
   const list = useQuery({
@@ -199,12 +202,12 @@ function OrgOffboardingPage() {
         <PageHeader
           title={t("offboarding.title")}
           description={t("offboarding.description")}
-          actions={
+          actions={canInitiate ? (
             <Button onClick={() => setNewOpen(true)}>
               <LogOut className="mr-2 h-4 w-4" />
               {t("offboarding.newExitRequest")}
             </Button>
-          }
+          ) : undefined}
         />
 
         <Tabs value={tab} onValueChange={setTab}>
@@ -214,7 +217,7 @@ function OrgOffboardingPage() {
               {t("offboarding.clearances")}
               {queue.length > 0 ? <Badge variant="outline" className="ml-2">{queue.length}</Badge> : null}
             </TabsTrigger>
-            {isOrgAdmin ? <TabsTrigger value="templates">Clearance Settings</TabsTrigger> : null}
+            {canManageChecklist ? <TabsTrigger value="templates">Clearance Settings</TabsTrigger> : null}
           </TabsList>
 
           <TabsContent value="requests">
@@ -287,7 +290,7 @@ function OrgOffboardingPage() {
             </Card>
           </TabsContent>
 
-          {isOrgAdmin ? (
+          {canManageChecklist ? (
             <TabsContent value="templates">
               <ClearanceTemplatePanel />
             </TabsContent>
@@ -474,6 +477,11 @@ function ExitDetailSheet({
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const permissions = usePermissions();
+  const canManageChecklist = permissions.hasGranular("offboarding.manage_checklist", "manage_separation");
+  const canDraftSettlement = permissions.hasGranular("offboarding.draft_settlement", "manage_separation");
+  const canApproveSettlement = permissions.hasGranular("offboarding.approve_settlement", "manage_separation");
+  const canCompleteExit = permissions.hasGranular("offboarding.complete_exit", "manage_separation");
   const [reviewOpen, setReviewOpen] = useState(false);
 
   const detail = useQuery({
@@ -514,6 +522,32 @@ function ExitDetailSheet({
   });
 
   const d = detail.data;
+  const settlementPreview = useQuery({
+    queryKey: ["exit-settlement", uuid],
+    queryFn: () => offboardingService.previewSettlement(uuid as UUID),
+    enabled: Boolean(uuid) && Boolean(d) && (d?.status === "approved" || d?.status === "completed") &&
+      (canDraftSettlement || canApproveSettlement),
+  });
+  const draftSettlement = useMutation({
+    mutationFn: () => offboardingService.draftSettlement(uuid as UUID),
+    onSuccess: () => {
+      toast.success("Settlement drafted");
+      onChanged();
+      void qc.invalidateQueries({ queryKey: ["exit-request", uuid] });
+      void qc.invalidateQueries({ queryKey: ["exit-settlement", uuid] });
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Could not draft settlement")),
+  });
+  const advanceSettlement = useMutation({
+    mutationFn: (target: "processed" | "paid") => offboardingService.advanceSettlement(uuid as UUID, target),
+    onSuccess: () => {
+      toast.success("Settlement updated");
+      onChanged();
+      void qc.invalidateQueries({ queryKey: ["exit-request", uuid] });
+      void qc.invalidateQueries({ queryKey: ["exit-settlement", uuid] });
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Could not update settlement")),
+  });
 
   return (
     <Sheet open={Boolean(uuid)} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -542,10 +576,10 @@ function ExitDetailSheet({
                 </Badge>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {d.status === "pending" ? (
+                {d.status === "pending" && canManageChecklist ? (
                   <Button size="sm" onClick={() => setReviewOpen(true)} className="shadow-sm">{t("offboarding.review")}</Button>
                 ) : null}
-                {d.status === "approved" ? (
+                {d.status === "approved" && canCompleteExit ? (
                   <Button size="sm" variant="secondary" onClick={() => onRequestComplete(d.uuid)}>
                     <LogOut className="mr-1.5 h-4 w-4" />
                     {t("offboarding.completeExit")}
@@ -609,7 +643,7 @@ function ExitDetailSheet({
                         <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                         <span>Cleared</span>
                       </div>
-                    ) : (
+                    ) : canManageChecklist ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -621,12 +655,80 @@ function ExitDetailSheet({
                       >
                         {t("offboarding.markCleared")}
                       </Button>
-                    )}
+                    ) : null}
                   </li>
                 ))}
               </ul>
               {clearTask.isError ? <p className="mt-2 text-sm text-destructive">{apiErrorMessage(clearTask.error, t("offboarding.clearFailed"))}</p> : null}
             </section>
+
+            {(d.status === "approved" || d.status === "completed") &&
+              (canDraftSettlement || canApproveSettlement) ? (
+              <section className="space-y-3 rounded-xl border bg-card p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">Final Settlement</h3>
+                  {d.settlement?.status ? (
+                    <Badge variant="outline" className="capitalize">{d.settlement.status}</Badge>
+                  ) : null}
+                </div>
+                {settlementPreview.isLoading ? (
+                  <p className="text-sm text-muted-foreground">Calculating settlement…</p>
+                ) : settlementPreview.error ? (
+                  <p className="text-sm text-destructive">{apiErrorMessage(settlementPreview.error, "Could not calculate settlement")}</p>
+                ) : settlementPreview.data ? (
+                  <dl className="grid grid-cols-2 gap-3 text-sm">
+                    <Field label="Basic salary"><span className="font-medium">{formatCurrency(settlementPreview.data.basic_salary)}</span></Field>
+                    <Field label="Leave encashment"><span className="font-medium">{formatCurrency(settlementPreview.data.leave.amount)}</span></Field>
+                    <Field label="Asset deduction"><span className="font-medium">{formatCurrency(settlementPreview.data.assets.applied)}</span></Field>
+                    <Field label="Net FnF"><span className="font-semibold">{formatCurrency(settlementPreview.data.net_fnf_amount)}</span></Field>
+                  </dl>
+                ) : null}
+                {settlementPreview.data && settlementPreview.data.assets.count > 0 ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Settlement is blocked while {settlementPreview.data.assets.count} asset(s) are held.
+                  </p>
+                ) : null}
+                {settlementPreview.data?.assets.capped ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Asset deduction is capped; {formatCurrency(settlementPreview.data.assets.withheld_amount)} remains outstanding.
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                  {canDraftSettlement ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={draftSettlement.isPending}
+                      disabled={settlementPreview.isLoading || Boolean(settlementPreview.data?.assets.count)}
+                      onClick={() => draftSettlement.mutate()}
+                    >
+                      Draft Settlement
+                    </Button>
+                  ) : null}
+                  {canApproveSettlement && d.settlement?.status === "draft" ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={advanceSettlement.isPending}
+                        disabled={Boolean(settlementPreview.data?.assets.count)}
+                        onClick={() => advanceSettlement.mutate("processed")}
+                      >
+                        Mark Processed
+                      </Button>
+                      <Button
+                        size="sm"
+                        loading={advanceSettlement.isPending}
+                        disabled={Boolean(settlementPreview.data?.assets.count)}
+                        onClick={() => advanceSettlement.mutate("paid")}
+                      >
+                        Mark Paid
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
 
             {d.hr_notes ? (
               <section className="space-y-2 rounded-xl border bg-card p-4">
@@ -733,7 +835,7 @@ function NewExitDialog({
 
   const employees = useQuery({
     queryKey: ["exit-request-employees"],
-    queryFn: () => orgService.employees({ page: 1, limit: 1000 }),
+    queryFn: () => orgService.employees({ page: 1, limit: 100 }),
     enabled: open,
   });
 

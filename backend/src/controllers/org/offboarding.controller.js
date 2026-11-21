@@ -1,6 +1,6 @@
 import ApiError from "../../utils/ApiError.js";
 import { pool } from "../../config/db.js";
-import { employeeScopeCondition, assertEmployeeInDataScope } from "../../utils/dataScopes.js";
+import { employeeScopeCondition, assertEmployeeInDataScope, getDataScope } from "../../utils/dataScopes.js";
 import { ok, created } from "../../utils/response.js";
 import { assertUuid } from "../../utils/publicResponse.js";
 import { parsePagination, paginatedResponse } from "../../utils/pagination.js";
@@ -209,6 +209,10 @@ export async function submitExitRequest(req, res) {
   const result = await createExitRequest({
     orgId,
     actorUuid: req.user?.uuid ?? null,
+    templateOwnerUuid:
+      req.user?.org_role === "sub_admin" && getDataScope(req.user, "offboarding") === "own_records"
+        ? req.user.uuid
+        : undefined,
     employeeUuid: employee_uuid,
     requestType: request_type,
     lastWorkingDay: last_working_day,
@@ -418,13 +422,20 @@ export async function completeExitRequest(req, res) {
 // ---------------------------------------------------------------------------
 
 export async function listExitClearanceTemplates(req, res) {
-  const items = await listClearanceTemplates({ orgId: req.scopeOrgId });
+  const items = await listClearanceTemplates({
+    orgId: req.scopeOrgId,
+    createdByUuid:
+      req.user.org_role === "sub_admin" && getDataScope(req.user, "offboarding") === "own_records"
+        ? req.user.uuid
+        : undefined,
+  });
   return ok(res, { items }, "Clearance template tasks");
 }
 
 export async function createExitClearanceTemplate(req, res) {
   const item = await createClearanceTemplate({
     orgId: req.scopeOrgId,
+    createdByUuid: req.user.uuid,
     department: req.body?.department,
     taskName: req.body?.task_name,
   });
@@ -435,6 +446,10 @@ export async function createExitClearanceTemplate(req, res) {
 export async function updateExitClearanceTemplate(req, res) {
   const item = await updateClearanceTemplate({
     orgId: req.scopeOrgId,
+    createdByUuid:
+      req.user.org_role === "sub_admin" && getDataScope(req.user, "offboarding") === "own_records"
+        ? req.user.uuid
+        : undefined,
     uuid: req.params.uuid,
     department: req.body?.department,
     taskName: req.body?.task_name,
@@ -445,7 +460,14 @@ export async function updateExitClearanceTemplate(req, res) {
 }
 
 export async function deleteExitClearanceTemplate(req, res) {
-  const result = await deleteClearanceTemplate({ orgId: req.scopeOrgId, uuid: req.params.uuid });
+  const result = await deleteClearanceTemplate({
+    orgId: req.scopeOrgId,
+    createdByUuid:
+      req.user.org_role === "sub_admin" && getDataScope(req.user, "offboarding") === "own_records"
+        ? req.user.uuid
+        : undefined,
+    uuid: req.params.uuid,
+  });
   logAudit({ ...getActorFromReq(req), action: "offboarding.clearance_template.delete", entityType: "offboarding_clearance_template", entityId: result.uuid, req });
   return ok(res, result, "Clearance task deleted");
 }

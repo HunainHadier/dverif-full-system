@@ -83,18 +83,12 @@ const MATRIX: Expectation[] = [
   {
     path: "/org/letter-templates",
     permission: "hr_letters",
-    scope: "hr_letters",
     allowed: ["org_admin", "sub_admin_permitted"],
   },
   {
     path: "/org/assets",
     permission: "manage_assets",
     allowed: ["org_admin", "sub_admin_permitted"],
-  },
-  {
-    path: "/org/asset-categories",
-    permission: null,
-    allowed: ["org_admin"],
   },
   {
     path: "/org/offboarding",
@@ -257,14 +251,14 @@ describe("the specific failures this audit found are closed", () => {
     }
   });
 
-  it("a sub-admin with HR Letters View and Own Records scope cannot open shared templates", () => {
+  it("a sub-admin with HR Letters View and Own Records scope can open shared templates", () => {
     const scoped = user("sub_admin", {
       ...ALL_OFF,
       hr_letters: true,
       data_scopes: { hr_letters: "own_records" },
     } as unknown as AuthUser["feature_access"]);
     expect(canAccessRoute(scoped, "/org/hr-letters")).toBe(true);
-    expect(canAccessRoute(scoped, "/org/letter-templates")).toBe(false);
+    expect(canAccessRoute(scoped, "/org/letter-templates")).toBe(true);
   });
 
   it("an employee is refused EVERY org module, permission or not", () => {
@@ -275,7 +269,6 @@ describe("the specific failures this audit found are closed", () => {
       "/org/hr-letters",
       "/org/letter-templates",
       "/org/assets",
-      "/org/asset-categories",
       "/org/offboarding",
       "/org/expense-claims",
       "/org/recruitment/openings",
@@ -347,7 +340,6 @@ describe("the specific failures this audit found are closed", () => {
       "/org/hr-letters",
       "/org/letter-templates",
       "/org/assets",
-      "/org/asset-categories",
       "/org/offboarding",
       "/org/expense-claims",
     ]) {

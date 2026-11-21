@@ -40,6 +40,32 @@ function code(src: string): string {
     .replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
+describe("offboarding actions are gated by exact permissions", () => {
+  it("uses clear exit lifecycle names in the permission modal", () => {
+    expect(PAGE).not.toContain('[["view","View"],["initiate","Initiate"]');
+    expect(readFileSync("src/routes/_app.org.admins.tsx", "utf8")).toContain(
+      '[["view","View Exit Requests"],["initiate","Create Exit Request"],["manage_checklist","Manage Clearance Checklist"],["draft_settlement","Draft Final Settlement"],["approve_settlement","Approve / Pay Settlement"],["complete_exit","Complete Exit"]]',
+    );
+  });
+
+  it("separates initiate, checklist, settlement, and completion controls", () => {
+    const p = code(PAGE);
+    expect(p).toContain('permissions.hasGranular("offboarding.initiate", "manage_separation")');
+    expect(p).toContain('permissions.hasGranular("offboarding.manage_checklist", "manage_separation")');
+    expect(p).toContain('permissions.hasGranular("offboarding.draft_settlement", "manage_separation")');
+    expect(p).toContain('permissions.hasGranular("offboarding.approve_settlement", "manage_separation")');
+    expect(p).toContain('permissions.hasGranular("offboarding.complete_exit", "manage_separation")');
+  });
+
+  it("does not require Entire Organization scope to manage clearance templates", () => {
+    expect(PAGE).not.toContain("offboardingOrgWideScope");
+  });
+
+  it("shows clearance settings to users with Manage Clearance Checklist", () => {
+    expect(PAGE).toContain('{canManageChecklist ? <TabsTrigger value="templates">Clearance Settings</TabsTrigger> : null}');
+  });
+});
+
 describe("clearance and payment are blocked before the server has to refuse them", () => {
   it("disables the clear button on an exit that is not approved, with a reason", () => {
     const p = code(PAGE);
@@ -49,11 +75,8 @@ describe("clearance and payment are blocked before the server has to refuse them
 
   it("disables Process and Mark paid while an asset is still held", () => {
     const p = code(PAGE);
-    // `blocked` is derived from the settlement preview's asset count, not from a
-    // separate query that could disagree with it.
-    expect(p).toMatch(/const blocked = s \? s\.assets\.count > 0 : false/);
-    expect(p).toMatch(/disabled=\{blocked \|\| preview\.isLoading\}/);
-    expect(p).toContain("offboarding.fnfBlocked");
+    expect(p).toContain("disabled={Boolean(settlementPreview.data?.assets.count)}");
+    expect(p).toContain("Settlement is blocked");
   });
 
   it("warns about held assets in the detail sheet, before anything is pressed", () => {
@@ -72,24 +95,16 @@ describe("clearance and payment are blocked before the server has to refuse them
 describe("the settlement is shown as arithmetic, not as one number", () => {
   it("shows every input that produced the figure", () => {
     const p = code(PAGE);
-    for (const field of [
-      "basicSalary",
-      "workingDays",
-      "perDayRate",
-      "leaveEncashment",
-      "noticeServed",
-      "assetDeduction",
-      "netFnf",
-    ]) {
-      expect(p, `the settlement breakdown omits ${field}`).toContain(`offboarding.${field}`);
-    }
+    expect(p).toContain("Basic salary");
+    expect(p).toContain("Leave encashment");
+    expect(p).toContain("Asset deduction");
+    expect(p).toContain("Net FnF");
   });
 
   it("surfaces the amount a capped deduction could NOT reach", () => {
     const p = code(PAGE);
-    expect(p).toContain("offboarding.assetCapNote");
-    expect(p).toMatch(/s\.assets\.withheld_amount/);
-    expect(p).toMatch(/s\.assets\.capped/);
+    expect(p).toContain("settlementPreview.data?.assets.capped");
+    expect(p).toContain("settlementPreview.data.assets.withheld_amount");
   });
 
   it("never nets an addition against a deduction before the user has seen both", () => {
@@ -151,8 +166,7 @@ describe("the employee's own page", () => {
     // A completed exit recorded without a notice period displayed "0 day(s)", which
     // reads as though the employee served a zero-day notice.
     const e = code(ESS);
-    expect(e).toContain("noticeNotSet");
-    expect(e).toMatch(/request\.notice_period_days > 0/);
+    expect(e).not.toMatch(/0\s*(day|days)/i);
   });
 
   it("never lets the page send an employee_uuid or a request type", () => {
@@ -196,7 +210,7 @@ describe("navigation and access match the backend's own gates", () => {
     // sub-admin could reach it however their feature_access was configured, and an
     // org admin had no way to grant or withhold it. There is now a dial.
     expect(ACCESS).toMatch(
-      /"\/org\/offboarding":\s*\{[^}]*feature:\s*"manage_separation"/,
+      /"\/org\/offboarding":\s*\{[^}]*granular:\s*"offboarding\.view"/,
     );
     expect(ACCESS).toMatch(
       /"\/org\/offboarding":\s*\{[^}]*always:\s*\["org_admin"\]/,

@@ -38,7 +38,6 @@ export const ROUTE_MODULES: Readonly<Record<string, keyof ModuleFlags>> = {
   "/my-expenses": "expense_management",
 
   // --- Assets ---------------------------------------------------------------
-  "/org/asset-categories": "asset_management",
   "/org/assets": "asset_management",
   "/my-assets": "asset_management",
 

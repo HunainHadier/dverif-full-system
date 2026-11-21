@@ -200,7 +200,6 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteRule>> = {
     roles: STAFF_ROLES,
     granular: "hr_letters.view",
     always: ["org_admin"],
-    scope: "hr_letters",
   },
   "/org/hr-letters": { roles: STAFF_ROLES, granular: "hr_letters.view", always: ["org_admin"] },
 

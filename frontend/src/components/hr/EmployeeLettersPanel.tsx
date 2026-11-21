@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileSignature, Plus, Download, Send, Pencil, Trash2 } from "lucide-react";
+import { FileSignature, Plus, Download, Send, Pencil, Trash2, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 
@@ -10,31 +10,30 @@ import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { IssueLetterDialog } from "@/components/hr/IssueLetterDialog";
 import { apiErrorMessage } from "@/lib/utils";
-import { hasEntireOrganizationScope, usePermissions } from "@/lib/permissions";
-import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/lib/permissions";
 import { letterTemplatesService, hrLettersService, HR_LETTER_TYPES, type HrLetterListItem, type HrLetterType, type UUID } from "@/services";
 
 export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const { user } = useAuth();
   const permissions = usePermissions();
-  const hasTemplateScope =
-    permissions.isOrgAdmin || hasEntireOrganizationScope(user, "hr_letters");
   const canCreateLetter =
-    hasTemplateScope && permissions.hasGranular("hr_letters.create_draft", "hr_letters");
+    permissions.hasGranular("hr_letters.create_draft", "hr_letters");
   const canEditDraft = permissions.hasGranular("hr_letters.edit_draft", "hr_letters");
   const canIssue = permissions.hasGranular("hr_letters.issue", "hr_letters");
+  const canRevoke = permissions.hasGranular("hr_letters.revoke", "hr_letters");
   const [templateUuid, setTemplateUuid] = useState("");
   const [letterType, setLetterType] = useState<HrLetterType>("custom");
   const [reviewLetter, setReviewLetter] = useState<HrLetterListItem | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<HrLetterListItem | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<HrLetterListItem | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
 
   const templates = useQuery({
     queryKey: ["employee-letter-templates"],
     queryFn: () => letterTemplatesService.list(),
-    enabled: hasTemplateScope,
+    enabled: canCreateLetter,
   });
   const letters = useQuery({
     queryKey: ["hr-letters", "employee", employeeUuid],
@@ -52,11 +51,9 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
       template_uuid: templateUuid || undefined,
       letter_type: letterType,
     }),
-    onSuccess: (letter) => {
-      toast.success("Letter draft created");
+    onSuccess: () => {
+      toast.success("Letter assigned as draft");
       refresh();
-      setReviewLetter(letter as HrLetterListItem);
-      setReviewOpen(true);
       setTemplateUuid("");
     },
     onError: (error: unknown) =>
@@ -79,6 +76,17 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
       toast.success(t("letters.draftDeleted"));
       refresh();
       setDeleteTarget(null);
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: ({ uuid, reason }: { uuid: UUID; reason: string }) =>
+      hrLettersService.revoke(uuid, reason),
+    onSuccess: () => {
+      toast.success("Letter revoked");
+      refresh();
+      setRevokeTarget(null);
+      setRevokeReason("");
     },
   });
 
@@ -121,7 +129,7 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
                 onClick={() => create.mutate()}
                 disabled={create.isPending || !templateUuid || templates.isLoading}
               >
-                <Plus className="mr-1.5 h-4 w-4" /> Create Draft
+                <Plus className="mr-1.5 h-4 w-4" /> Assign Letter
               </Button>
             </div>
             {templates.isError && <p className="text-sm text-destructive">Could not load letter templates.</p>}
@@ -133,10 +141,6 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
           </CardContent>
         </Card>
       ) : null}
-      {permissions.hasGranular("hr_letters.create_draft", "hr_letters") && !hasTemplateScope ? (
-        <p className="text-sm text-muted-foreground">{t("letters.templateScopeRequiredDescription")}</p>
-      ) : null}
-
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">Assigned Letters</h3>
         {letters.isLoading ? <p className="text-sm text-muted-foreground">Loading letters…</p> :
@@ -184,7 +188,29 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
                       ) : null}
                     </>
                   )}
-                  {letter.status !== "draft" && <Button size="sm" variant="outline" onClick={() => download.mutate(letter.uuid)} disabled={download.isPending}><Download className="mr-1.5 h-3.5 w-3.5" /> PDF</Button>}
+                  {letter.status !== "draft" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => download.mutate(letter.uuid)}
+                      disabled={download.isPending}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" /> PDF
+                    </Button>
+                  )}
+                  {letter.status === "issued" && canRevoke ? (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => {
+                        revoke.reset();
+                        setRevokeReason("");
+                        setRevokeTarget(letter);
+                      }}
+                    >
+                      <Ban className="mr-1.5 h-3.5 w-3.5" /> {t("letters.revoke")}
+                    </Button>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
@@ -210,6 +236,26 @@ export function EmployeeLettersPanel({ employeeUuid }: { employeeUuid: UUID }) {
         }}
         loading={remove.isPending}
         error={remove.isError ? apiErrorMessage(remove.error, t("letters.deleteDraftFailed")) : null}
+      />
+      <ConfirmDialog
+        open={Boolean(revokeTarget)}
+        title={t("letters.revoke")}
+        description={t("letters.revokeDescription")}
+        confirmLabel={t("letters.revoke")}
+        inputLabel="Revoke reason"
+        inputPlaceholder="Explain why this letter is being revoked"
+        inputValue={revokeReason}
+        onInputChange={setRevokeReason}
+        inputRequired
+        loading={revoke.isPending}
+        error={revoke.isError ? apiErrorMessage(revoke.error, "Could not revoke letter") : null}
+        onConfirm={() => revoke.mutateAsync({ uuid: revokeTarget!.uuid, reason: revokeReason.trim() })}
+        onOpenChange={(open) => {
+          if (!open && !revoke.isPending) {
+            setRevokeTarget(null);
+            setRevokeReason("");
+          }
+        }}
       />
     </div>
   );

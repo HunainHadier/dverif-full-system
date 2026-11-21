@@ -80,7 +80,7 @@ describe("HR letter route action dependencies", () => {
     expect(hasGranularPermission(subAdmin, "hr_letters.view", "hr_letters")).toBe(true);
   });
 
-  it("denies shared templates unless the sub-admin has Entire Organization scope", () => {
+  it("allows shared templates for a sub-admin with HR Letters View regardless of employee scope", () => {
     const subAdmin = user({
       org_role: "sub_admin",
       feature_access: {
@@ -89,7 +89,7 @@ describe("HR letter route action dependencies", () => {
       } as unknown as AuthUser["feature_access"],
     });
     expect(canAccessRoute(subAdmin, "/org/hr-letters")).toBe(true);
-    expect(canAccessRoute(subAdmin, "/org/letter-templates")).toBe(false);
+    expect(canAccessRoute(subAdmin, "/org/letter-templates")).toBe(true);
   });
 });
 

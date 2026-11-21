@@ -37,6 +37,11 @@ export function ConfirmDialog({
   destructive = true,
   loading = false,
   error = null,
+  inputLabel,
+  inputValue,
+  onInputChange,
+  inputPlaceholder,
+  inputRequired = false,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -62,6 +67,11 @@ export function ConfirmDialog({
    * the dialog looking like it worked.
    */
   error?: string | null;
+  inputLabel?: string;
+  inputValue?: string;
+  onInputChange?: (value: string) => void;
+  inputPlaceholder?: string;
+  inputRequired?: boolean;
 }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
@@ -111,6 +121,8 @@ export function ConfirmDialog({
   };
 
   const busy = pending || loading;
+  const missingRequiredInput =
+    inputRequired && (!inputValue || inputValue.trim().length === 0);
 
   return (
     <AlertDialog open={open} onOpenChange={handleOpenChange}>
@@ -119,6 +131,18 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description ? <AlertDialogDescription>{description}</AlertDialogDescription> : null}
         </AlertDialogHeader>
+          {inputLabel && onInputChange ? (
+            <label className="grid gap-1.5 text-sm">
+              <span>{inputLabel}</span>
+              <textarea
+                value={inputValue ?? ""}
+                onChange={(event) => onInputChange(event.target.value)}
+                placeholder={inputPlaceholder}
+                required={inputRequired}
+                className="min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+          ) : null}
         {error ? (
           <p
             role="alert"
@@ -130,7 +154,7 @@ export function ConfirmDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            disabled={busy}
+            disabled={busy || missingRequiredInput}
             onClick={(e) => {
               // Prevent Radix closing on click; runConfirm decides, based on
               // whether the action actually succeeded.

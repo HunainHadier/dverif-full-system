@@ -190,27 +190,21 @@ describe("asset actions match the server's transitions", () => {
   }
 
   it("offers Assign only when available", () => {
-    const branch = branchFor("available");
-    expect(branch.length, "available branch not found").toBeGreaterThan(40);
-    expect(branch).toContain("assets.assign");
-    expect(branch).not.toContain("maintenance");
+    expect(ASSETS_PAGE).toContain('canAssign && row.status === "available"');
+    expect(ASSETS_PAGE).toContain("assets.assign");
+    expect(ASSETS_PAGE).not.toContain("maintenance");
   });
 
   it("offers Return only when assigned", () => {
-    const branch = branchFor("assigned");
-    expect(branch.length, "assigned branch not found").toBeGreaterThan(20);
-    expect(branch).toContain("assets.returnAsset");
+    expect(ASSETS_PAGE).toContain('canReturn && row.status === "assigned"');
+    expect(ASSETS_PAGE).toContain("assets.returnAsset");
   });
 
   it("offers Retire only when available, and Reinstate only when retired", () => {
     // retireAsset refuses an assigned asset, so return it before retiring.
     expect(ASSETS_PAGE).not.toContain('row.status !== "retired"');
-    expect(ASSETS_PAGE).toMatch(
-      /\{row\.status === "available" \? \(\s*<DropdownMenuItem onSelect=\{\(\) => onDialog\("retire"\)\}/,
-    );
-    expect(ASSETS_PAGE).toMatch(
-      /\{row\.status === "retired" \? \(\s*<DropdownMenuItem onSelect=\{\(\) => void run\(\(\) => assetsService\.reinstate/,
-    );
+    expect(ASSETS_PAGE).toContain('canRetire && row.status === "available"');
+    expect(ASSETS_PAGE).toContain('canRetire && row.status === "retired"');
 
     expect(branchFor("assigned"), "a retire action leaked into the assigned row").not.toContain(
       "assets.retire",
@@ -290,7 +284,7 @@ describe("navigation and access control", () => {
     // different axes, and only module_flags was actually enforced. The route named a
     // ROLE and nothing else, so any sub-admin could open the inventory however their
     // feature_access was configured — which is what this audit found.
-    expect(ACCESS).toMatch(/"\/org\/assets":\s*\{[^}]*feature:\s*"manage_assets"/);
+    expect(ACCESS).toMatch(/"\/org\/assets":\s*\{[^}]*granular:\s*"assets\.view"/);
     expect(ACCESS).toMatch(/"\/org\/assets":\s*\{[^}]*always:\s*\["org_admin"\]/);
   });
 
